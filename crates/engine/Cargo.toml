@@ -1,0 +1,20 @@
+[package]
+name = "shipdeck-engine"
+description = "Builds, packs and ships releases over SSH; everything shipdeck does except the screen."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+flate2.workspace = true
+object.workspace = true
+russh.workspace = true
+russh-sftp.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tar.workspace = true
+tokio.workspace = true
+toml.workspace = true

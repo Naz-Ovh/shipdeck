@@ -1,0 +1,19 @@
+[package]
+name = "shipdeck"
+description = "Terminal UI that builds locally, deploys over SSH and rolls back any release."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+shipdeck-engine.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+crossterm.workspace = true
+futures.workspace = true
+ratatui.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
