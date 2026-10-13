@@ -1,9 +1,12 @@
 //! SSH: one session per `user@host:port`, opened once and reused for every
 //! command and upload.
 
+mod endpoint;
 mod handler;
 mod login;
+pub mod ssh_config;
 
+pub use endpoint::Endpoint;
 pub use login::{Login, Question};
 
 use std::collections::HashMap;
@@ -17,7 +20,6 @@ use russh_sftp::client::SftpSession;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::config::SshTarget;
 use handler::Client;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -212,7 +214,7 @@ pub struct Pool {
     login: Login,
     asker: UnboundedSender<Question>,
     secrets: Arc<login::Secrets>,
-    slots: Mutex<HashMap<SshTarget, Slot>>,
+    slots: Mutex<HashMap<Endpoint, Slot>>,
 }
 
 impl Pool {
@@ -231,7 +233,7 @@ impl Pool {
 
     /// The open session for `target`, connecting first if needed. Two callers
     /// for the same target share one connection attempt.
-    pub async fn get(&self, target: &SshTarget) -> Result<Arc<Session>> {
+    pub async fn get(&self, target: &Endpoint) -> Result<Arc<Session>> {
         let slot = {
             let mut slots = self.slots.lock().expect("pool lock");
             slots.entry(target.clone()).or_default().clone()
@@ -247,8 +249,14 @@ impl Pool {
         Ok(session)
     }
 
-    async fn connect(&self, target: &SshTarget) -> Result<Session> {
+    async fn connect(&self, target: &Endpoint) -> Result<Session> {
         let label = target.label();
+        // Errors name the alias and the address it stands for.
+        let place = if target.is_alias() {
+            format!("{label} ({})", target.address())
+        } else {
+            label.clone()
+        };
         let config = Arc::new(client::Config {
             keepalive_interval: Some(Duration::from_secs(15)),
             keepalive_max: 4,
@@ -259,14 +267,14 @@ impl Pool {
         let connecting = client::connect(config, (target.host.as_str(), target.port), client);
         let mut handle = match tokio::time::timeout(CONNECT_TIMEOUT, connecting).await {
             Err(_) => bail!(
-                "connecting to {label} timed out after {}s",
+                "connecting to {place} timed out after {}s",
                 CONNECT_TIMEOUT.as_secs()
             ),
             Ok(Err(err)) => {
                 if let Some(reason) = rejected.lock().expect("rejection lock").take() {
                     bail!("{reason}");
                 }
-                return Err(anyhow!(err).context(format!("connecting to {label}")));
+                return Err(anyhow!(err).context(format!("connecting to {place}")));
             }
             Ok(Ok(handle)) => handle,
         };

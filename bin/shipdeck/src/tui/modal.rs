@@ -9,6 +9,7 @@ use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph, Wrap};
 
 use shipdeck_engine::release::ReleaseName;
 use shipdeck_engine::remote::Kind;
+use shipdeck_engine::setup::SetupCommand;
 
 use super::app::{App, Live, Modal};
 use super::theme::{self, ACCENT, ERR, INK, MUTED, SURFACE, TEXT, VIOLET, WARN};
@@ -25,6 +26,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
             kind,
             current,
         } => confirm_rollback(app, *deployable, target, *kind, current.as_deref()),
+        Modal::Setup { deployable, setup } => setup_dialog(app, *deployable, setup),
         Modal::ConfirmQuit => (
             "Quit now?".to_string(),
             WARN,
@@ -179,7 +181,7 @@ fn confirm_deploy(app: &App, index: usize) -> Dialog {
         Line::default(),
         row(
             "to",
-            format!("{}:{}", config.ssh.label(), config.remote.dir),
+            format!("{}:{}", deployable.endpoint.label(), config.remote.dir),
         ),
         row("service", config.remote.service.clone()),
         row("build", config.build.command.join(" ")),
@@ -195,7 +197,7 @@ fn confirm_deploy(app: &App, index: usize) -> Dialog {
         lines.push(Line::default());
         lines.push(Line::from(Span::styled(
             format!(
-                "Missing bundle files: {}. The deploy will stop at Pack.",
+                "Missing bundle files: {}. The deploy stops at Preflight, before connecting or building.",
                 missing.join(", ")
             ),
             Style::new().fg(ERR),
@@ -246,6 +248,58 @@ fn confirm_rollback(
         WARN,
         lines,
         vec![("y", "roll back"), ("n", "cancel")],
+    )
+}
+
+fn setup_dialog(app: &App, index: usize, setup: &SetupCommand) -> Dialog {
+    let deployable = &app.deployables[index];
+    let config = &deployable.config;
+    let user = &deployable.endpoint.user;
+    let mut lines = vec![
+        Line::from(Span::styled(
+            "Run this once on the server as root:",
+            theme::bold(TEXT),
+        )),
+        Line::default(),
+        Line::from(Span::styled(setup.command.clone(), theme::bold(ACCENT))),
+        Line::default(),
+        Line::from(Span::styled(
+            format!(
+                "It fetches server-setup.sh from shipdeck v{} on GitHub, creates the user {user}, \
+                 authorizes its key, creates {} owned by {user}, and installs the sudo rule \
+                 for {} (checked by visudo first). Running it again changes nothing already \
+                 in place. Not root? Put sudo before bash.",
+                env!("CARGO_PKG_VERSION"),
+                config.remote.dir,
+                config.remote.service
+            ),
+            theme::muted(),
+        )),
+        Line::default(),
+    ];
+    match &setup.key {
+        Some(key) => lines.push(row(
+            "authorizes",
+            format!("the public half of {}", key.display()),
+        )),
+        None => lines.push(Line::from(Span::styled(
+            format!(
+                "No key to authorize: no --key, and ~/.ssh/config has no IdentityFile for {}. \
+                 The script tells you to set a password for {user} instead.",
+                deployable.endpoint.name
+            ),
+            Style::new().fg(WARN),
+        ))),
+    }
+    lines.push(Line::from(Span::styled(
+        "Then press ⏎ on the deployable to deploy as that user.",
+        theme::muted(),
+    )));
+    (
+        "Server setup".into(),
+        ACCENT,
+        lines,
+        vec![("c", "copy"), ("⏎", "close")],
     )
 }
 

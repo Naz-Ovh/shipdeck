@@ -14,7 +14,8 @@ rolls back any release. Design and decisions: `docs/plan.md`. Usage: `README.md`
 
 - `crates/engine/` (`shipdeck-engine`): `config` (deploy.json), `build`
   (version, cargo, ELF checks), `bundle` (tar.gz, unit), `ssh` (sessions,
-  login, host keys), `remote` (server scripts), `release` (ids, release.json),
+  login, host keys, `~/.ssh/config` aliases), `remote` (server scripts),
+  `release` (ids, release.json), `setup` (the server setup command),
   `deploy` (the deploy and rollback flows, `report` for progress).
 - `bin/shipdeck/`: flags and the TUI. It only shows what the engine reports.
 
@@ -24,8 +25,14 @@ rolls back any release. Design and decisions: `docs/plan.md`. Usage: `README.md`
   `config::DeployConfig::validate`, checked with `release::is_safe_id`, or
   quoted with `ssh::sh_quote`. Keep it that way.
 - Remote scripts are POSIX `sh`; they run through `sh -c`, whatever the login shell.
-- The sudo commands in `remote::Server::sudo_commands` are a contract with the
-  sudoers line people install. Changing one breaks every existing server.
+- The sudo commands in `remote::sudo_commands` are a contract with the sudoers
+  line people install. Changing one breaks every existing server, and
+  `server-setup.sh` must change with it (`setup_test.rs` checks they match).
+- `server-setup.sh` at the repository root is public and runs as root through
+  `curl | bash`, pinned to a release tag. It validates every argument before
+  doing anything; keep it that way, and tag every release (`v<version>`).
+- Tests and docs use neutral examples (`my-api`, `203.0.113.x`), never real
+  hosts, IPs or project names.
 - Release ids and the `current`/`releases`/`backups`/`shared` layout are a
   contract with servers already deployed to. Change them only on purpose.
 - Tests live next to the code in `<module>_test.rs`:

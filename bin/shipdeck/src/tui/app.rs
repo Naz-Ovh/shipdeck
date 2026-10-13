@@ -16,6 +16,9 @@ use shipdeck_engine::deploy::report::{
 };
 use shipdeck_engine::deploy::{self, DEPLOY_STEPS, ROLLBACK_STEPS};
 use shipdeck_engine::remote::{Kind, Listing, Server, Status};
+use shipdeck_engine::setup::{self, SetupCommand};
+
+use super::clipboard;
 use shipdeck_engine::ssh::{Pool, Question};
 
 /// Log lines kept per operation; older ones scroll away.
@@ -257,6 +260,11 @@ pub enum Modal {
         current: Option<String>,
     },
     ConfirmQuit,
+    /// The one-time server setup command for a deployable.
+    Setup {
+        deployable: usize,
+        setup: SetupCommand,
+    },
     Secret {
         title: String,
         prompt: String,
@@ -296,6 +304,8 @@ pub struct App {
     pub toast: Option<Toast>,
     pub tick: u64,
     pub quit: bool,
+    /// The last setup command shown, with its deployable's name; printed on quit.
+    pub last_setup: Option<(String, String)>,
     pub pool: Arc<Pool>,
     ops: UnboundedSender<OpUpdate>,
     fetched: UnboundedSender<Fetched>,
@@ -328,6 +338,7 @@ impl App {
             toast: None,
             tick: 0,
             quit: false,
+            last_setup: None,
             pool,
             ops,
             fetched,
@@ -378,7 +389,7 @@ impl App {
         let (pool, tx) = (self.pool.clone(), self.fetched.clone());
         tokio::spawn(async move {
             let result = async {
-                let session = pool.get(&deployable.config.ssh).await?;
+                let session = pool.get(&deployable.endpoint).await?;
                 Server::new(session, &deployable.config.remote)
                     .status()
                     .await
@@ -411,7 +422,7 @@ impl App {
         let (pool, tx) = (self.pool.clone(), self.fetched.clone());
         tokio::spawn(async move {
             let result = async {
-                let session = pool.get(&deployable.config.ssh).await?;
+                let session = pool.get(&deployable.endpoint).await?;
                 Server::new(session, &deployable.config.remote).list().await
             }
             .await
@@ -530,6 +541,20 @@ impl App {
         ));
     }
 
+    /// Shows the one-time server setup command for one deployable. It is
+    /// also printed when shipdeck quits, ready to copy.
+    fn show_setup(&mut self, index: usize) {
+        let setup = setup::command(&self.deployables[index], self.pool.login());
+        self.last_setup = Some((
+            self.deployables[index].config.name.clone(),
+            setup.command.clone(),
+        ));
+        self.modals.push_back(Modal::Setup {
+            deployable: index,
+            setup,
+        });
+    }
+
     fn next_op_id(&mut self) -> OpId {
         let id = self.next_op;
         self.next_op += 1;
@@ -638,6 +663,11 @@ impl App {
             KeyCode::Char('s') => {
                 self.refresh_all();
                 self.notify("Refreshing live status", Tone::Info);
+            }
+            KeyCode::Char('u') => {
+                if let Some(index) = self.selected() {
+                    self.show_setup(index);
+                }
             }
             _ => {}
         }
@@ -807,6 +837,22 @@ impl App {
                         self.modals.pop_front();
                     }
                     _ => {}
+                }
+            }
+            Modal::Setup { setup, .. } => {
+                let command = setup.command.clone();
+                if key.code == KeyCode::Char('c') {
+                    match clipboard::copy(&command) {
+                        Ok(()) => self.notify(
+                            "Copied, if your terminal allows it; it is also printed when you quit",
+                            Tone::Info,
+                        ),
+                        Err(err) => self.notify(format!("Could not copy: {err}"), Tone::Warn),
+                    }
+                } else if matches!(key.code, KeyCode::Enter | KeyCode::Esc | KeyCode::Char('q'))
+                    || ctrl_c
+                {
+                    self.modals.pop_front();
                 }
             }
             Modal::ConfirmQuit => match key.code {

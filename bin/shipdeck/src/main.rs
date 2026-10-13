@@ -49,7 +49,7 @@ async fn main() -> Result<()> {
             Login::Key(key)
         }
         (None, Some(password)) => Login::Password(password),
-        (None, None) => Login::Prompt,
+        (None, None) => Login::Auto,
     };
     let discovery = config::discover(&cli.root)
         .with_context(|| format!("looking for deployables in {}", cli.root.display()))?;

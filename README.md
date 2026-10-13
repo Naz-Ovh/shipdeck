@@ -13,7 +13,7 @@ It exists for servers too small to compile Rust: only the finished binary, its
 cargo run --release -p shipdeck -- <deploy-root> [--key <path> | --password <value>]
 
 # or install it once
-cargo install --path bin/shipdeck
+cargo install --git https://github.com/Naz-Ovh/shipdeck shipdeck
 shipdeck ./scripts/deploy --key ~/.ssh/id_ed25519
 shipdeck ./scripts/deploy                 # asks for the password in the TUI
 ```
@@ -22,7 +22,13 @@ shipdeck ./scripts/deploy                 # asks for the password in the TUI
 | --- | --- |
 | `--key <path>` | Private key file. An encrypted key asks for its passphrase in the TUI. |
 | `--password <value>` | Password. It lands in your shell history; in zsh with `HIST_IGNORE_SPACE`, start the command with a space. |
-| neither | The TUI asks for the password once per `user@host` and keeps it in memory for the run. |
+| neither | The host's `IdentityFile` from `~/.ssh/config` if it has one; if there is none or the server refuses it, the TUI asks for the password once per `user@host` and keeps it in memory for the run. |
+
+`ssh.host` may be an alias from `~/.ssh/config`, so `"host": "prod"` works
+like `ssh prod`: `HostName`, `Port`, `User` and `IdentityFile` come from the
+alias, and anything set in `deploy.json` wins. `Include` files are read,
+`Match` blocks are not, and an alias that needs `ProxyJump` or `ProxyCommand`
+is refused with a clear error.
 
 The first connection to a server shows its host key fingerprint and asks
 before saving it to `~/.ssh/known_hosts`. A changed key is refused.
@@ -46,17 +52,17 @@ scripts/deploy/
 
 ```json
 {
-  "name": "Fugitive Server (prod)",
+  "name": "My API (prod)",
   "ssh": { "host": "203.0.113.10", "port": 22, "user": "deploy" },
   "build": {
-    "cwd": "../../../Server",
-    "command": ["cargo", "build", "--release", "-p", "fugitive-server"],
-    "binary": "target/release/server",
-    "version_from": "../../../Server/bin/server/Cargo.toml"
+    "cwd": "../../../my-api",
+    "command": ["cargo", "build", "--release", "-p", "my-api"],
+    "binary": "target/release/my-api",
+    "version_from": "../../../my-api/Cargo.toml"
   },
   "remote": {
-    "dir": "/opt/fugitive-server",
-    "service": "fugitive-server",
+    "dir": "/opt/my-api",
+    "service": "my-api",
     "args": ["-E=.env"]
   },
   "releases": { "open": 5, "compressed": 15 },
@@ -68,8 +74,9 @@ scripts/deploy/
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `name` | | Shown in the TUI and in the unit's `Description=` |
-| `ssh.host`, `ssh.user` | | Where to log in. The login method comes from the flags. |
-| `ssh.port` | `22` | |
+| `ssh.host` | | An address or a `~/.ssh/config` alias |
+| `ssh.user` | alias `User` | Who to log in as. Required if the alias has no `User`. |
+| `ssh.port` | alias `Port`, else `22` | |
 | `build.cwd` | `.` | Where the build runs, relative to the deployable folder |
 | `build.command` | | Run as given. Cargo's progress bar becomes the step's progress. |
 | `build.binary` | | The built binary, relative to `build.cwd`. Its file name is its name on the server. |
@@ -101,23 +108,43 @@ An unknown placeholder stops the deploy at Pack.
 
 ## One-time server setup
 
-shipdeck never changes `/etc/sudoers` or creates folders as root; preflight
-checks these and prints the exact commands when something is missing.
+The deploy user has to exist before shipdeck can log in as it, and only root
+can create it. Press `u` on a deployable and shipdeck shows the one command
+to run on the server as root, with that deployable's values filled in:
 
 ```sh
-sudo adduser deploy                                  # the user shipdeck logs in as
-sudo mkdir -p /opt/my-app && sudo chown deploy: /opt/my-app
-sudo visudo -f /etc/sudoers.d/shipdeck-my-app        # paste the line preflight prints
+curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.1.0/server-setup.sh \
+  | bash -s -- --user deploy --dir /opt/my-api --service my-api --key 'ssh-ed25519 AAAA... me@pc'
 ```
 
-The sudoers line allows exactly what shipdeck needs, nothing more:
+`c` copies it, and shipdeck prints it again when you quit. Not root? Put
+`sudo` before `bash`. The link is pinned to the release tag of your shipdeck
+version, so what runs as root only changes with a new release. Read
+[`server-setup.sh`](server-setup.sh) first if you like; it is short.
+
+The script checks every value first (the same rules as `deploy.json`), then:
+
+1. creates the deploy user (no password; key login only),
+2. authorizes the key: the public half of `--key`, or of the alias's
+   `IdentityFile` (from its `.pub` file, or read from the private key itself),
+3. creates `--dir` owned by that user,
+4. installs `/etc/sudoers.d/shipdeck-<service>` after `visudo` accepts it, so
+   a mistake can never break sudo on the server,
+5. warns if `sshd` only lets listed users in.
+
+Running it again changes nothing that is already in place.
+
+The sudo rule allows exactly what shipdeck needs, nothing more:
 
 ```
 deploy ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload, /usr/bin/systemctl enable my-app, /usr/bin/systemctl restart my-app, /usr/bin/install -m 0644 /opt/my-app/current/my-app.service /etc/systemd/system/my-app.service, /usr/bin/journalctl -u my-app -n 30 --no-pager
 ```
 
-Because `deploy` writes the unit file it installs, `deploy` can run anything
+Because the deploy user writes the unit file it installs, it can run anything
 as the service user. Give it to nobody you would not give that power.
+
+Preflight checks all of this on every deploy and points at `u` when
+something is missing.
 
 ## What a deploy does
 
@@ -159,6 +186,7 @@ shows what is live.
 | `⏎` | deploy (asks first) | | roll back to the selected release (asks first) |
 | `r` | open releases | open releases | refresh |
 | `s` | refresh live status | | |
+| `u` | show the server setup command (`c` copies it) | | |
 | `G` | | follow the log again | |
 | `esc` | | back | back |
 | `tab`, `1` `2` `3` | switch screens | | |
@@ -180,3 +208,16 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 SHIPDECK_DUMP=/tmp/frames cargo test -p shipdeck   # writes every screen as text
 ```
+
+### Releasing
+
+The setup command fetches `server-setup.sh` at the tag `v<version>`, so every
+release needs its tag pushed before its setup command works:
+
+```sh
+# bump [workspace.package] version in Cargo.toml, commit, then
+git tag v0.2.0 && git push origin main v0.2.0
+```
+
+`setup_test.rs` fails if `server-setup.sh` and `remote::sudo_commands` ever
+disagree, so the script and the preflight check cannot drift apart.

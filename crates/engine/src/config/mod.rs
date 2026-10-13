@@ -10,6 +10,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail, ensure};
 use serde::Deserialize;
 
+use crate::release::MANIFEST_FILE;
+use crate::ssh::Endpoint;
+
 /// The file that marks a folder as a deployable.
 pub const FILE_NAME: &str = "deploy.json";
 /// Optional file next to `deploy.json` that replaces the built-in systemd unit.
@@ -30,24 +33,16 @@ pub struct DeployConfig {
     pub health: HealthConfig,
 }
 
+/// The `ssh` block. `host` may be a `~/.ssh/config` alias; `port` and
+/// `user` fall back to that alias, then to 22 and nothing.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SshTarget {
     pub host: String,
-    #[serde(default = "default_port")]
-    pub port: u16,
-    pub user: String,
-}
-
-impl SshTarget {
-    /// `user@host` or `user@host:port`, as people write it.
-    pub fn label(&self) -> String {
-        if self.port == 22 {
-            format!("{}@{}", self.user, self.host)
-        } else {
-            format!("{}@{}:{}", self.user, self.host, self.port)
-        }
-    }
+    #[serde(default)]
+    pub port: Option<u16>,
+    #[serde(default)]
+    pub user: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -113,9 +108,6 @@ impl Default for HealthConfig {
     }
 }
 
-fn default_port() -> u16 {
-    22
-}
 fn default_cwd() -> String {
     ".".into()
 }
@@ -136,6 +128,8 @@ pub struct Deployable {
     /// The folder name, used as a short handle in the UI.
     pub slug: String,
     pub config: DeployConfig,
+    /// `config.ssh` with `~/.ssh/config` applied.
+    pub endpoint: Endpoint,
 }
 
 impl Deployable {
@@ -146,6 +140,7 @@ impl Deployable {
         let config: DeployConfig =
             serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
         config.validate()?;
+        let endpoint = Endpoint::resolve(&config.ssh)?;
         let slug = folder
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -154,6 +149,7 @@ impl Deployable {
             folder: folder.to_path_buf(),
             slug,
             config,
+            endpoint,
         })
     }
 
@@ -193,7 +189,7 @@ impl Deployable {
             .remote
             .run_as
             .as_deref()
-            .unwrap_or(&self.config.ssh.user)
+            .unwrap_or(&self.endpoint.user)
     }
 
     /// Each `bundle` entry with whether it exists locally.
@@ -204,6 +200,50 @@ impl Deployable {
             .map(|entry| (entry.clone(), self.folder.join(entry).exists()))
             .collect()
     }
+
+    /// Checks every `bundle` entry exists and can be read, and names all the
+    /// problems at once rather than the first.
+    pub fn check_bundle(&self) -> Result<()> {
+        let mut problems = Vec::new();
+        for entry in &self.config.bundle {
+            let path = self.folder.join(entry);
+            let readable = match std::fs::metadata(&path) {
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    problems.push(format!("{entry}: missing"));
+                    continue;
+                }
+                Err(err) => Err(err),
+                Ok(meta) if meta.is_dir() => std::fs::read_dir(&path).map(|_| ()),
+                Ok(_) => std::fs::File::open(&path).map(|_| ()),
+            };
+            if let Err(err) = readable {
+                problems.push(format!("{entry}: {err}"));
+            }
+        }
+        if problems.is_empty() {
+            return Ok(());
+        }
+        bail!(
+            "{} of {} bundle entries cannot be shipped from {}: {}",
+            problems.len(),
+            self.config.bundle.len(),
+            self.folder.display(),
+            problems.join("; ")
+        )
+    }
+}
+
+/// A `bundle` entry as it is stored in the release: `./files/` → `files`.
+/// Empty for an entry that names the deployable folder itself.
+pub fn bundle_path(entry: &str) -> String {
+    Path::new(entry)
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 impl DeployConfig {
@@ -217,10 +257,12 @@ impl DeployConfig {
         );
 
         ensure!(!self.ssh.host.is_empty(), "`ssh.host` is empty");
-        ensure!(
-            is_plain_name(&self.ssh.user),
-            "`ssh.user` may only use letters, digits, `.`, `_` and `-`"
-        );
+        if let Some(user) = &self.ssh.user {
+            ensure!(
+                is_plain_name(user),
+                "`ssh.user` may only use letters, digits, `.`, `_` and `-`"
+            );
+        }
 
         ensure!(!self.build.command.is_empty(), "`build.command` is empty");
         ensure!(!self.build.binary.is_empty(), "`build.binary` is empty");
@@ -282,16 +324,7 @@ impl DeployConfig {
             "`releases.open` must be at least 1"
         );
 
-        for entry in &self.bundle {
-            let path = Path::new(entry);
-            if path.is_absolute()
-                || path
-                    .components()
-                    .any(|c| matches!(c, std::path::Component::ParentDir))
-            {
-                bail!("`bundle` entry {entry:?} must be a path inside the deployable folder");
-            }
-        }
+        self.validate_bundle()?;
 
         if let Some(url) = &self.health.url {
             ensure!(
@@ -307,6 +340,58 @@ impl DeployConfig {
             self.health.timeout_secs >= 3,
             "`health.timeout_secs` must be at least 3"
         );
+        Ok(())
+    }
+}
+
+impl DeployConfig {
+    /// Every entry names a file or folder inside the deployable folder, once,
+    /// without clashing with the files every release carries.
+    fn validate_bundle(&self) -> Result<()> {
+        let binary = Path::new(&self.build.binary)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let unit = format!("{}.service", self.remote.service);
+        let reserved = [binary.as_str(), MANIFEST_FILE, unit.as_str()];
+
+        let mut seen: Vec<(String, &str)> = Vec::new();
+        for entry in &self.bundle {
+            let path = Path::new(entry);
+            if path.is_absolute()
+                || path
+                    .components()
+                    .any(|c| matches!(c, std::path::Component::ParentDir))
+            {
+                bail!("`bundle` entry {entry:?} must be a path inside the deployable folder");
+            }
+            let stored = bundle_path(entry);
+            if stored.is_empty() {
+                bail!(
+                    "`bundle` entry {entry:?} names the whole deployable folder, \
+                     which would ship deploy.json too; list the files instead"
+                );
+            }
+            if reserved.contains(&stored.as_str()) {
+                bail!("`bundle` entry {entry:?} would replace the release's own {stored}");
+            }
+            for (other, original) in &seen {
+                if *other == stored {
+                    bail!("`bundle` lists {stored:?} twice ({original:?} and {entry:?})");
+                }
+                let (outer, inner) = if stored.len() < other.len() {
+                    (&stored, other)
+                } else {
+                    (other, &stored)
+                };
+                if inner.starts_with(&format!("{outer}/")) {
+                    bail!(
+                        "`bundle` entries {original:?} and {entry:?} overlap; {outer:?} already includes {inner:?}"
+                    );
+                }
+            }
+            seen.push((stored, entry));
+        }
         Ok(())
     }
 }

@@ -9,4 +9,5 @@ pub mod deploy;
 pub mod human;
 pub mod release;
 pub mod remote;
+pub mod setup;
 pub mod ssh;

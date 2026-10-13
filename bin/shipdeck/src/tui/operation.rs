@@ -79,7 +79,7 @@ fn banner(frame: &mut Frame, area: Rect, app: &App, op: &Operation) {
                 Span::styled(config.name.clone(), theme::bold(TEXT)),
                 Span::styled("  →  ", theme::faint()),
                 Span::styled(
-                    format!("{}:{}", config.ssh.label(), config.remote.dir),
+                    format!("{}:{}", deployable.endpoint.label(), config.remote.dir),
                     theme::muted(),
                 ),
             ],

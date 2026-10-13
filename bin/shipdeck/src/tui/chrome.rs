@@ -115,6 +115,7 @@ fn operation_status(app: &App) -> Line<'static> {
 pub fn footer(frame: &mut Frame, area: Rect, app: &App) {
     let hints: &[(&str, &str)] = match app.modals.front() {
         Some(Modal::Secret { .. }) => &[("⏎", "submit"), ("esc", "cancel"), ("ctrl+u", "clear")],
+        Some(Modal::Setup { .. }) => &[("c", "copy"), ("⏎", "close")],
         Some(_) => &[("y", "yes"), ("n", "no")],
         None => match app.screen {
             Screen::Deployables => &[
@@ -122,6 +123,7 @@ pub fn footer(frame: &mut Frame, area: Rect, app: &App) {
                 ("⏎", "deploy"),
                 ("r", "releases"),
                 ("s", "refresh"),
+                ("u", "server setup"),
                 ("tab", "screens"),
                 ("q", "quit"),
             ],

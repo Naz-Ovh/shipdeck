@@ -7,14 +7,12 @@ use std::io::{self, Read};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use flate2::Compression;
 use flate2::write::GzEncoder;
 
-use crate::config::Deployable;
-use crate::release::Manifest;
-
-pub const MANIFEST_NAME: &str = "release.json";
+use crate::config::{Deployable, bundle_path};
+use crate::release::{MANIFEST_FILE, Manifest};
 
 /// A packed release, ready to upload.
 #[derive(Debug)]
@@ -111,7 +109,6 @@ pub fn pack(
 fn collect(deployable: &Deployable, manifest: &Manifest, unit: &str) -> Result<Vec<Entry>> {
     let binary_name = deployable.binary_name();
     let unit_name = format!("{}.service", deployable.config.remote.service);
-    let reserved = [binary_name.as_str(), MANIFEST_NAME, unit_name.as_str()];
 
     let binary = deployable.binary_path();
     let binary_size = std::fs::metadata(&binary)
@@ -127,7 +124,7 @@ fn collect(deployable: &Deployable, manifest: &Manifest, unit: &str) -> Result<V
             size: binary_size,
         },
         Entry {
-            path: MANIFEST_NAME.into(),
+            path: MANIFEST_FILE.into(),
             size: manifest_json.len() as u64,
             source: Source::Bytes(manifest_json),
             mode: 0o644,
@@ -140,19 +137,15 @@ fn collect(deployable: &Deployable, manifest: &Manifest, unit: &str) -> Result<V
         },
     ];
 
+    // Entries were validated when deploy.json loaded and checked at preflight;
+    // this catches a file that vanished during the build.
+    deployable.check_bundle()?;
     for item in &deployable.config.bundle {
-        let archive_path = normalize(item);
-        if reserved.contains(&archive_path.as_str()) {
-            bail!("bundle entry {item:?} would overwrite the release's own {archive_path}");
-        }
-        let local = deployable.folder.join(item);
-        if !local.exists() {
-            bail!(
-                "bundle entry {item:?} is missing: {} does not exist",
-                local.display()
-            );
-        }
-        add(&local, archive_path, &mut entries)?;
+        add(
+            &deployable.folder.join(item),
+            bundle_path(item),
+            &mut entries,
+        )?;
     }
     Ok(entries)
 }
@@ -194,13 +187,6 @@ fn add(local: &Path, archive_path: String, entries: &mut Vec<Entry>) -> Result<(
         });
     }
     Ok(())
-}
-
-/// `./files/` → `files`
-fn normalize(item: &str) -> String {
-    let trimmed = item.trim_end_matches('/');
-    let trimmed = trimmed.strip_prefix("./").unwrap_or(trimmed);
-    trimmed.to_string()
 }
 
 struct Counting<R, F> {

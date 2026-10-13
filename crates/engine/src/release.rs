@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 
 const STAMP_FORMAT: &str = "%Y%m%d.%H%M%S";
 
+/// The file each release carries at its root.
+pub const MANIFEST_FILE: &str = "release.json";
+
 /// The parts a release id is made of. Ids sort by `stamp`, never by text:
 /// `v0.10.0` must count as newer than `v0.9.0`.
 #[derive(Debug, Clone, PartialEq, Eq)]

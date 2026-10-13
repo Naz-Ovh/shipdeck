@@ -26,7 +26,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     let config = &deployable.config;
     let block = theme::panel(format!("Releases · {}", config.name), true).title(
         Line::from(Span::styled(
-            format!(" {}:{} ", config.ssh.label(), config.remote.dir),
+            format!(" {}:{} ", deployable.endpoint.label(), config.remote.dir),
             theme::muted(),
         ))
         .right_aligned(),

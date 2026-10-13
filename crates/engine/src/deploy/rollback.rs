@@ -107,17 +107,19 @@ async fn connect(
     report: &Reporter,
 ) -> Result<(Server, Kind, Option<String>)> {
     let config = &deployable.config;
-    report.log(LogKind::Command, format!("connect {}", config.ssh.label()));
-    let session = pool.get(&config.ssh).await?;
+    let endpoint = &deployable.endpoint;
+    report.log(LogKind::Command, format!("connect {}", endpoint.label()));
+    let session = pool.get(endpoint).await?;
     let server = Server::new(session, &config.remote);
-    let facts = server.facts(&config.ssh.user).await?;
+    let facts = server.facts(&endpoint.user).await?;
     if !facts.sudo_missing.is_empty() {
-        report.log(LogKind::Info, "add this sudoers line on the server:");
-        report.log(LogKind::Command, facts.sudoers_line.clone());
-        bail!(
-            "{} may not run the commands shipdeck needs",
-            config.ssh.user
+        super::setup_hint(
+            deployable,
+            pool.login(),
+            report,
+            "the server needs its one-time setup",
         );
+        bail!("{} may not run the commands shipdeck needs", endpoint.user);
     }
     let listing = server.list().await?;
     let Some(entry) = listing.entries.iter().find(|e| e.id == target) else {

@@ -2,7 +2,7 @@
 //! password asked for in the TUI.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, bail};
@@ -11,8 +11,8 @@ use russh::keys::{PrivateKey, PrivateKeyWithHashAlg, load_secret_key};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 
+use super::Endpoint;
 use super::handler::Client;
-use crate::config::SshTarget;
 
 const ATTEMPTS: usize = 3;
 
@@ -21,8 +21,9 @@ const ATTEMPTS: usize = 3;
 pub enum Login {
     Key(PathBuf),
     Password(String),
-    /// Ask in the TUI when connecting.
-    Prompt,
+    /// The `IdentityFile` from `~/.ssh/config` if the host has one, then a
+    /// password asked in the TUI.
+    Auto,
 }
 
 impl Login {
@@ -30,7 +31,7 @@ impl Login {
         match self {
             Login::Key(path) => format!("key {}", path.display()),
             Login::Password(_) => "password from --password".into(),
-            Login::Prompt => "password, asked when connecting".into(),
+            Login::Auto => "~/.ssh/config key, else password prompt".into(),
         }
     }
 }
@@ -72,84 +73,115 @@ impl Secrets {
 
 pub async fn authenticate(
     handle: &mut Handle<Client>,
-    target: &SshTarget,
+    target: &Endpoint,
     login: &Login,
     asker: &UnboundedSender<Question>,
     secrets: &Secrets,
 ) -> Result<()> {
     match login {
         Login::Key(path) => {
-            let key = load_key(path, asker, secrets).await?;
-            let hash = handle.best_supported_rsa_hash().await?.flatten();
-            let result = handle
-                .authenticate_publickey(
-                    &target.user,
-                    PrivateKeyWithHashAlg::new(Arc::new(key), hash),
-                )
-                .await?;
-            if !result.success() {
+            if !with_key(handle, target, path, asker, secrets).await? {
                 bail!(
                     "{} refused the key {} for user {}",
-                    target.host,
+                    target.name,
                     path.display(),
                     target.user
                 );
             }
+            Ok(())
         }
         Login::Password(password) => {
             let result = handle.authenticate_password(&target.user, password).await?;
             if !result.success() {
                 bail!(
                     "{} refused the password for user {}",
-                    target.host,
+                    target.name,
                     target.user
                 );
             }
+            Ok(())
         }
-        Login::Prompt => {
-            let cache_key = format!("password:{}", target.label());
-            for attempt in 1..=ATTEMPTS {
-                let password = match secrets.get(&cache_key) {
-                    Some(password) => password,
-                    None => {
-                        let note = if attempt > 1 {
-                            " (wrong, try again)"
-                        } else {
-                            ""
-                        };
-                        let Some(password) = ask(
-                            asker,
-                            "SSH password",
-                            format!("Password for {}{note}", target.label()),
-                        )
-                        .await
-                        else {
-                            bail!("login to {} cancelled", target.label());
-                        };
-                        password
-                    }
-                };
-                let result = handle
-                    .authenticate_password(&target.user, &password)
-                    .await?;
-                if result.success() {
-                    secrets.put(&cache_key, &password);
-                    return Ok(());
+        Login::Auto => {
+            // Like ssh: the alias's key first, a password if that does not work.
+            let mut note = String::new();
+            if let Some(identity) = &target.identity {
+                match with_key(handle, target, identity, asker, secrets).await {
+                    Ok(true) => return Ok(()),
+                    Ok(false) => note = format!(" (key {} was refused)", identity.display()),
+                    Err(err) => note = format!(" (key {}: {err})", identity.display()),
                 }
-                secrets.forget(&cache_key);
             }
-            bail!(
-                "{} refused the password for user {} {ATTEMPTS} times",
-                target.host,
-                target.user
-            );
+            with_password_prompt(handle, target, &note, asker, secrets).await
         }
     }
-    Ok(())
+}
+
+/// Offers the key at `path`; `Ok(false)` when the server refuses it.
+async fn with_key(
+    handle: &mut Handle<Client>,
+    target: &Endpoint,
+    path: &Path,
+    asker: &UnboundedSender<Question>,
+    secrets: &Secrets,
+) -> Result<bool> {
+    let key = load_key(path, asker, secrets).await?;
+    let hash = handle.best_supported_rsa_hash().await?.flatten();
+    let result = handle
+        .authenticate_publickey(
+            &target.user,
+            PrivateKeyWithHashAlg::new(Arc::new(key), hash),
+        )
+        .await?;
+    Ok(result.success())
+}
+
+async fn with_password_prompt(
+    handle: &mut Handle<Client>,
+    target: &Endpoint,
+    note: &str,
+    asker: &UnboundedSender<Question>,
+    secrets: &Secrets,
+) -> Result<()> {
+    let cache_key = format!("password:{}", target.label());
+    for attempt in 1..=ATTEMPTS {
+        let password = match secrets.get(&cache_key) {
+            Some(password) => password,
+            None => {
+                let note = if attempt > 1 {
+                    " (wrong, try again)"
+                } else {
+                    note
+                };
+                let Some(password) = ask(
+                    asker,
+                    "SSH password",
+                    format!("Password for {}{note}", target.label()),
+                )
+                .await
+                else {
+                    bail!("login to {} cancelled", target.label());
+                };
+                password
+            }
+        };
+        let result = handle
+            .authenticate_password(&target.user, &password)
+            .await?;
+        if result.success() {
+            secrets.put(&cache_key, &password);
+            return Ok(());
+        }
+        secrets.forget(&cache_key);
+    }
+    bail!(
+        "{} refused the password for user {} {ATTEMPTS} times",
+        target.name,
+        target.user
+    )
 }
 
 async fn load_key(
-    path: &PathBuf,
+    path: &Path,
     asker: &UnboundedSender<Question>,
     secrets: &Secrets,
 ) -> Result<PrivateKey> {

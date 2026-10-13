@@ -13,11 +13,13 @@ files go to the server.
 | Topic | Decision |
 | --- | --- |
 | Name | `shipdeck` |
-| Repository | `Naz-Ovh/shipdeck` (private), added to the Fugitive workspace as the submodule `scripts/shipdeck` |
+| Repository | `Naz-Ovh/shipdeck`, public, so servers can fetch `server-setup.sh` from it; projects add it as a git submodule |
 | Language and libraries | Rust: `ratatui` + `crossterm` for the TUI, `russh` + `russh-sftp` for SSH, `tar` + `flate2` for bundles, `clap` for flags, `serde_json` for config |
 | Code layout | A Cargo workspace: `crates/engine` does the work, `bin/shipdeck` is the TUI, so screen changes recompile only the small crate |
 | SSH session | One session per deployable, opened once and reused for every command and upload |
-| SSH login | `--key <path>` or `--password <value>`; with neither flag, the TUI asks for the password when it connects |
+| SSH login | `--key <path>` or `--password <value>`; with neither flag, the alias's `IdentityFile` from `~/.ssh/config`, then a password asked in the TUI |
+| SSH host | `ssh.host` may be a `~/.ssh/config` alias (`"host": "prod"`); its `HostName`, `Port`, `User` and `IdentityFile` apply, and `deploy.json` wins |
+| Server setup | `server-setup.sh` in the repo, fetched with `curl ... \| bash -s -- <values>` and run once as root; pinned to the release tag. `u` shows the command with the deployable's values |
 | Configuration | One folder per deployable under a root folder passed on the command line |
 | What is committed | `deploy.json` and extra files are committed; `.env` and other secrets are gitignored |
 | Server location | `/opt/<app>` |
@@ -61,17 +63,17 @@ back in.
 
 ```json
 {
-  "name": "Fugitive Server (prod)",
+  "name": "My API (prod)",
   "ssh": { "host": "1.2.3.4", "port": 22, "user": "deploy" },
   "build": {
-    "cwd": "../../../Server",
+    "cwd": "../../../my-api",
     "command": ["cargo", "zigbuild", "--release",
                 "--target", "x86_64-unknown-linux-gnu.2.31",
-                "-p", "fugitive-server"],
+                "-p", "my-api"],
     "binary": "target/x86_64-unknown-linux-gnu/release/server",
-    "version_from": "../../../Server/bin/server/Cargo.toml"
+    "version_from": "../../../my-api/Cargo.toml"
   },
-  "remote": { "dir": "/opt/fugitive-server", "service": "fugitive-server", "args": ["-E=.env"] },
+  "remote": { "dir": "/opt/my-api", "service": "my-api", "args": ["-E=.env"] },
   "releases": { "open": 5, "compressed": 15 },
   "bundle": [".env", "files/"],
   "health": { "url": "http://127.0.0.1:8080/health", "timeout_secs": 20 }
@@ -98,13 +100,13 @@ back in.
 ## Layout on the server
 
 ```
-/opt/fugitive-server/
+/opt/my-api/
 ├── current -> releases/v0.3.1-ab12cd3-20261014.153012
 ├── releases/                 newest `open` releases, unpacked
 │   ├── v0.3.1-ab12cd3-20261014.153012/
-│   │   ├── server
+│   │   ├── my-api
 │   │   ├── .env
-│   │   ├── fugitive-server.service
+│   │   ├── my-api.service
 │   │   ├── release.json
 │   │   └── ...extra files
 │   └── v0.3.0-9f8e7d6-20261012.091000/
@@ -119,11 +121,11 @@ nothing else:
 
 ```ini
 [Unit]
-Description=Fugitive Server v0.3.1 (ab12cd3)
+Description=My API (prod) v0.3.1 (ab12cd3)
 
 [Service]
-WorkingDirectory=/opt/fugitive-server/current
-ExecStart=/opt/fugitive-server/current/server -E=.env
+WorkingDirectory=/opt/my-api/current
+ExecStart=/opt/my-api/current/my-api -E=.env
 Environment=APP_RELEASE=v0.3.1-ab12cd3-20261014.153012
 ```
 
@@ -189,22 +191,37 @@ current one marked. Select one to roll back to it.
 
 ## One-time server setup
 
-shipdeck prints these steps; it never runs them for you.
+Only root can create the deploy user, so this runs once as root.
+`server-setup.sh` lives at the root of this repository. Press `u` on a
+deployable and shipdeck shows the command to run on the server:
 
-1. Create a `deploy` user to log in as.
-2. Create `/opt/<app>` and make `deploy` its owner.
-3. Give `deploy` passwordless sudo for only the commands shipdeck needs, in
-   `/etc/sudoers.d/shipdeck-<app>`: `systemctl daemon-reload`,
-   `systemctl restart <service>`, `systemctl enable <service>`, installing
+```sh
+curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v<version>/server-setup.sh \
+  | bash -s -- --user deploy --dir /opt/<app> --service <service> --key '<public key>'
+```
+
+The link is pinned to the release tag of the shipdeck build, so what runs as
+root changes only with a release. The script validates every value with the
+same rules as `deploy.json`, then:
+
+1. Creates the deploy user, with key login only.
+2. Authorizes the key shipdeck logs in with (its public half).
+3. Creates `/opt/<app>` and makes the deploy user its owner.
+4. Installs `/etc/sudoers.d/shipdeck-<service>` after `visudo` accepts it,
+   allowing only: `systemctl daemon-reload`, `systemctl enable <service>`,
+   `systemctl restart <service>`, installing
    `<dir>/current/<service>.service` as `/etc/systemd/system/<service>.service`,
-   and reading the service's last 30 journal lines.
+   and reading the service's last 30 journal lines. Dots in the service name
+   become `_` in the file name, because sudo skips files whose names contain one.
 
-Every file operation inside `/opt/<app>` then runs as `deploy` without sudo.
-If the sudo rule is missing, preflight fails and shows the exact line to add.
+A test fails if the script's sudo commands and shipdeck's own list differ.
+Running it again changes nothing already in place. Every file operation
+inside `/opt/<app>` then runs as the deploy user without sudo. Preflight
+checks all of this and shows the setup command when something is missing.
 
 ## Code layout
 
-Organised by subject, like the Fugitive repositories, in a Cargo workspace
+Organised by subject, in a Cargo workspace
 so the TUI recompiles on its own.
 
 ```
@@ -216,8 +233,9 @@ crates/engine/src/
 ├── build/         release name, running the build, ELF arch and glibc checks
 ├── bundle/        tar.gz, rendering the systemd unit
 ├── release.rs     release ids and release.json
-├── ssh/           the russh session, login, host keys, commands, SFTP upload
+├── ssh/           the russh session, ~/.ssh/config aliases, login, host keys, commands, SFTP upload
 ├── remote/        preflight, unpack, switch, unit, health, rotate, listing releases
+├── setup.rs       the server setup command (the script is server-setup.sh at the root)
 └── deploy/        the deploy and rollback flows, and the progress reports
 ```
 
@@ -244,11 +262,5 @@ compressed release, and the missing-sudo preflight.
 - **Server glibc.** Run `ldd --version | head -1` on the server. If the build
   needs a newer glibc than the server has, the Build step stops and prints the
   `cargo zigbuild` target to use instead.
-- **Health endpoints.** The proxy has `/healthz`. The API server has no health
-  route yet, so its deployable checks only `systemctl is-active` until one is
-  added.
-- **GitLab backup.** `scripts/setup-remotes.sh` sets up GitLab backups for
-  Client and Server only. shipdeck needs a GitLab project if it should be
-  backed up there too.
 - **Later, not in the first version.** A live `journalctl -f` view, deploying
-  the Client's static build, and several hosts per deployable.
+  static sites, and several hosts per deployable.

@@ -13,7 +13,9 @@ use shipdeck_engine::deploy::DEPLOY_STEPS;
 use shipdeck_engine::deploy::report::{LogKind, OpEvent, OpUpdate, Outcome, StepState, Unit};
 use shipdeck_engine::release::ReleaseName;
 use shipdeck_engine::remote::{Kind, Listing, ReleaseEntry, Status};
-use shipdeck_engine::ssh::{Login, Pool};
+use shipdeck_engine::setup;
+use shipdeck_engine::ssh::ssh_config::HostConfig;
+use shipdeck_engine::ssh::{Endpoint, Login, Pool};
 
 use super::app::{App, Fetch, Live, Modal, OpKind, Operation, ReleasesView, Screen};
 use super::draw;
@@ -28,10 +30,10 @@ const RELEASES: [&str; 4] = [
 fn deployable(slug: &str, name: &str, host: &str) -> Deployable {
     let config: DeployConfig = serde_json::from_value(serde_json::json!({
         "name": name,
-        "ssh": { "host": host, "user": "deploy" },
+        "ssh": { "host": slug.split('-').next().unwrap(), "user": "deploy" },
         "build": {
             "cwd": "../../../Server",
-            "command": ["cargo", "zigbuild", "--release", "-p", "fugitive-server"],
+            "command": ["cargo", "zigbuild", "--release", "-p", "my-api"],
             "binary": "target/release/server"
         },
         "remote": { "dir": format!("/opt/{slug}"), "service": slug, "args": ["-E=.env"] },
@@ -39,10 +41,21 @@ fn deployable(slug: &str, name: &str, host: &str) -> Deployable {
         "health": { "url": "http://127.0.0.1:6520/", "timeout_secs": 20 }
     }))
     .unwrap();
+    let endpoint = Endpoint::from_config(
+        &config.ssh,
+        HostConfig {
+            host_name: Some(host.into()),
+            user: Some("root".into()),
+            identity_file: Some(PathBuf::from("/home/me/.ssh/id_deploy")),
+            ..HostConfig::default()
+        },
+    )
+    .unwrap();
     Deployable {
         folder: PathBuf::from(format!("scripts/deploy/{slug}")),
         slug: slug.into(),
         config,
+        endpoint,
     }
 }
 
@@ -52,16 +65,16 @@ fn app() -> App {
     let (fetched, _) = unbounded_channel();
     let discovery = Discovery {
         deployables: vec![
-            deployable("server-prod", "Fugitive Server (prod)", "203.0.113.10"),
-            deployable("proxy-prod", "Fugitive Proxy (prod)", "203.0.113.11"),
-            deployable("server-beta", "Fugitive Server (beta)", "203.0.113.12"),
+            deployable("api-prod", "My API (prod)", "203.0.113.10"),
+            deployable("proxy-prod", "My Proxy (prod)", "203.0.113.11"),
+            deployable("api-beta", "My API (beta)", "203.0.113.12"),
         ],
         broken: vec![(
             PathBuf::from("scripts/deploy/old"),
             "parsing deploy.json: unknown field `colour`".into(),
         )],
     };
-    let pool = Arc::new(Pool::new(Login::Prompt, questions));
+    let pool = Arc::new(Pool::new(Login::Auto, questions));
     let mut app = App::new(
         PathBuf::from("./scripts/deploy"),
         discovery,
@@ -156,10 +169,7 @@ fn running_deploy(app: &mut App) {
         ),
         (LogKind::Info, "server: x86_64 · glibc 2.39 · 41.2 GiB free"),
         (LogKind::Step, "Build: compiling on this machine"),
-        (
-            LogKind::Err,
-            "   Compiling fugitive-server v0.3.2 (/home/me/Server/bin/server)",
-        ),
+        (LogKind::Err, "   Compiling my-api v0.3.2 (/home/me/my-api)"),
         (
             LogKind::Err,
             "    Finished `release` profile [optimized] target(s) in 1m 04s",
@@ -171,7 +181,7 @@ fn running_deploy(app: &mut App) {
         (LogKind::Step, "Upload: sending the release"),
         (
             LogKind::Command,
-            "deploy@203.0.113.10 › upload 11.8 MiB to /opt/server-prod/releases/.v0.3.2.tar.gz",
+            "deploy@203.0.113.10 › upload 11.8 MiB to /opt/api-prod/releases/.v0.3.2.tar.gz",
         ),
     ] {
         send(
@@ -306,6 +316,17 @@ async fn draws_every_screen_at_common_and_small_sizes() {
             reply: None,
         });
         render(&mut app, width, height, "trust-host");
+        let mut setup = setup::command(&app.deployables[0], &Login::Auto);
+        setup.command.push_str(
+            " --key 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPR1CM562x94ekkDx8f2 me@laptop'",
+        );
+        setup.key = Some(PathBuf::from("/home/me/.ssh/id_deploy"));
+        app.modals.push_front(Modal::Setup {
+            deployable: 0,
+            setup,
+        });
+        render(&mut app, width, height, "setup");
+        app.modals.pop_front();
         app.modals.pop_front();
         render(&mut app, width, height, "password");
     }
@@ -316,7 +337,7 @@ async fn draws_an_empty_root() {
     let (questions, _) = unbounded_channel();
     let (ops, _) = unbounded_channel();
     let (fetched, _) = unbounded_channel();
-    let pool = Arc::new(Pool::new(Login::Prompt, questions));
+    let pool = Arc::new(Pool::new(Login::Auto, questions));
     let mut app = App::new(
         PathBuf::from("./scripts/deploy"),
         Discovery::default(),

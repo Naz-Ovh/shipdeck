@@ -17,7 +17,8 @@ use crate::config::{Deployable, HealthConfig};
 use crate::human;
 use crate::release::Manifest;
 use crate::remote::{Facts, HttpCheck, Server, plan_rotation};
-use crate::ssh::Pool;
+use crate::setup;
+use crate::ssh::{Login, Pool};
 use report::{LogKind, Outcome, Reporter, Unit};
 
 pub const DEPLOY_STEPS: [&str; 8] = [
@@ -267,17 +268,35 @@ async fn preflight(
     report: &Reporter,
 ) -> Result<(Server, Facts)> {
     let config = &deployable.config;
+    check_local(deployable, report)?;
+    let endpoint = &deployable.endpoint;
+    let address = if endpoint.is_alias() {
+        format!(" → {}", endpoint.address())
+    } else {
+        String::new()
+    };
     report.log(
         LogKind::Command,
         format!(
-            "connect {} ({})",
-            config.ssh.label(),
+            "connect {}{address} ({})",
+            endpoint.label(),
             pool.login().describe()
         ),
     );
-    let session = pool.get(&config.ssh).await?;
+    let session = match pool.get(endpoint).await {
+        Ok(session) => session,
+        Err(err) => {
+            setup_hint(
+                deployable,
+                pool.login(),
+                report,
+                "if the server is not set up yet",
+            );
+            return Err(err);
+        }
+    };
     let server = Server::new(session, &config.remote);
-    let facts = server.facts(&config.ssh.user).await?;
+    let facts = server.facts(&endpoint.user).await?;
 
     let glibc = facts
         .glibc
@@ -306,12 +325,13 @@ async fn preflight(
     );
 
     let dir = &config.remote.dir;
-    let user = &config.ssh.user;
+    let user = &endpoint.user;
     if !facts.dir_exists || !facts.dir_writable {
-        report.log(LogKind::Info, "one-time setup, run on the server:");
-        report.log(
-            LogKind::Command,
-            format!("sudo mkdir -p {dir} && sudo chown {user}: {dir}"),
+        setup_hint(
+            deployable,
+            pool.login(),
+            report,
+            "the server needs its one-time setup",
         );
         if !facts.dir_exists {
             bail!("{dir} does not exist on the server");
@@ -322,10 +342,18 @@ async fn preflight(
         for command in &facts.sudo_missing {
             report.log(LogKind::Warn, format!("sudo not allowed: {command}"));
         }
-        let file = format!("/etc/sudoers.d/shipdeck-{}", config.remote.service);
+        setup_hint(
+            deployable,
+            pool.login(),
+            report,
+            "the server needs its one-time setup",
+        );
         report.log(
             LogKind::Info,
-            format!("one-time setup, run on the server: sudo visudo -f {file}  and add:"),
+            format!(
+                "or add this line yourself with: sudo visudo -f {}",
+                setup::sudoers_file(&config.remote.service)
+            ),
         );
         report.log(LogKind::Command, facts.sudoers_line.clone());
         bail!(
@@ -341,6 +369,41 @@ async fn preflight(
 
     report.finish(PREFLIGHT, format!("{} · {glibc} · {free} free", facts.arch));
     Ok((server, facts))
+}
+
+/// Shows the one-time setup command; `u` on the Deployables screen shows it too.
+pub(crate) fn setup_hint(deployable: &Deployable, login: &Login, report: &Reporter, why: &str) {
+    report.log(
+        LogKind::Info,
+        format!(
+            "{why}: run this once on the server as root (or press u on the Deployables screen):"
+        ),
+    );
+    report.log(LogKind::Command, setup::command(deployable, login).command);
+}
+
+/// What can be checked on this machine before connecting or compiling: the
+/// bundle files, the build folder and the unit template.
+fn check_local(deployable: &Deployable, report: &Reporter) -> Result<()> {
+    deployable.check_bundle()?;
+    for (entry, _) in deployable.bundle_status() {
+        let path = deployable.folder.join(&entry);
+        let what = if path.is_dir() {
+            "folder".to_string()
+        } else {
+            std::fs::metadata(&path)
+                .map(|m| human::bytes(m.len()))
+                .unwrap_or_default()
+        };
+        report.log(LogKind::Success, format!("bundle {entry} ({what})"));
+    }
+    let build_dir = deployable.build_dir();
+    if !build_dir.is_dir() {
+        bail!("build.cwd {} does not exist", build_dir.display());
+    }
+    let sample = crate::release::ReleaseName::new("0.0.0", "check", false, chrono::Utc::now());
+    unit::render_for(deployable, &sample)?;
+    Ok(())
 }
 
 /// Checks the built binary can run on the server; returns a short summary.

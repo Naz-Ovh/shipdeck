@@ -9,6 +9,7 @@ use ratatui::widgets::{HighlightSpacing, List, ListItem, Paragraph, Wrap};
 
 use shipdeck_engine::config::Deployable;
 use shipdeck_engine::release::ReleaseName;
+use shipdeck_engine::ssh::Login;
 
 use super::app::{App, Live};
 use super::theme::{self, ACCENT, ERR, MUTED, OK, SURFACE, TEXT, VIOLET, WARN};
@@ -54,6 +55,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
             right,
             &app.deployables[index],
             &app.live[index],
+            app.pool.login(),
             app.tick,
         );
     }
@@ -78,7 +80,7 @@ fn item<'a>(deployable: &'a Deployable, live: &Live, tick: u64) -> ListItem<'a> 
         ]),
         Line::from(vec![
             Span::raw("  "),
-            Span::styled(config.ssh.label(), theme::muted()),
+            Span::styled(deployable.endpoint.label(), theme::muted()),
             Span::styled(format!("  {}", deployable.slug), theme::faint()),
         ]),
         Line::from([vec![Span::raw("  ")], summary].concat()),
@@ -126,7 +128,14 @@ fn live_summary(live: &Live, tick: u64) -> Vec<Span<'static>> {
     }
 }
 
-fn details(frame: &mut Frame, area: Rect, deployable: &Deployable, live: &Live, tick: u64) {
+fn details(
+    frame: &mut Frame,
+    area: Rect,
+    deployable: &Deployable,
+    live: &Live,
+    login: &Login,
+    tick: u64,
+) {
     let config = &deployable.config;
     let mut lines = vec![
         Line::from(Span::styled(
@@ -140,10 +149,28 @@ fn details(frame: &mut Frame, area: Rect, deployable: &Deployable, live: &Live, 
     ];
 
     section(&mut lines, "Target");
+    let endpoint = &deployable.endpoint;
+    let mut ssh = vec![Span::styled(endpoint.label(), theme::text())];
+    if endpoint.is_alias() {
+        ssh.push(Span::styled(
+            format!("  → {}", endpoint.address()),
+            theme::muted(),
+        ));
+        ssh.push(Span::styled("  ~/.ssh/config", theme::faint()));
+    }
+    field(&mut lines, "ssh", ssh);
+    let login = match (login, &endpoint.identity) {
+        (Login::Key(path), _) => format!("key {} (--key)", path.display()),
+        (Login::Password(_), _) => "password (--password)".to_string(),
+        (Login::Auto, Some(path)) => {
+            format!("key {} (~/.ssh/config), else password", path.display())
+        }
+        (Login::Auto, None) => "password, asked when connecting".to_string(),
+    };
     field(
         &mut lines,
-        "ssh",
-        vec![Span::styled(config.ssh.label(), theme::text())],
+        "login",
+        vec![Span::styled(login, theme::text())],
     );
     field(
         &mut lines,

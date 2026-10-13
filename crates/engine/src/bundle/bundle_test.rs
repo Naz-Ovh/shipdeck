@@ -24,10 +24,16 @@ fn deployable(folder: &Path, bundle: &[&str]) -> Deployable {
         "bundle": bundle,
     }))
     .unwrap();
+    let endpoint = crate::ssh::Endpoint::from_config(
+        &config.ssh,
+        crate::ssh::ssh_config::HostConfig::default(),
+    )
+    .unwrap();
     Deployable {
         folder: folder.to_path_buf(),
         slug: "demo".into(),
         config,
+        endpoint,
     }
 }
 
@@ -93,18 +99,7 @@ fn missing_bundle_entry_is_an_error() {
     std::fs::write(dir.join("out/demo"), b"bin").unwrap();
     let deployable = deployable(&dir, &[".env"]);
     let err = pack(&deployable, &Manifest::new(&release(), "t"), "", |_, _| {}).unwrap_err();
-    assert!(format!("{err:#}").contains(".env"));
-    std::fs::remove_dir_all(dir).unwrap();
-}
-
-#[test]
-fn bundle_entry_cannot_replace_release_files() {
-    let dir = scratch("reserved");
-    std::fs::create_dir_all(dir.join("out")).unwrap();
-    std::fs::write(dir.join("out/demo"), b"bin").unwrap();
-    std::fs::write(dir.join("release.json"), b"{}").unwrap();
-    let deployable = deployable(&dir, &["release.json"]);
-    assert!(pack(&deployable, &Manifest::new(&release(), "t"), "", |_, _| {}).is_err());
+    assert!(format!("{err:#}").contains(".env: missing"));
     std::fs::remove_dir_all(dir).unwrap();
 }
 

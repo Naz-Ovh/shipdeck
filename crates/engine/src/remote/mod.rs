@@ -52,19 +52,9 @@ impl Server {
         format!("{}/releases/.{id}.tar.gz", self.dir)
     }
 
-    /// The commands that need root, without `sudo`. The sudoers rule must
-    /// allow exactly these.
+    /// The commands that need root here; see [`sudo_commands`].
     pub fn sudo_commands(&self) -> Vec<String> {
-        let (dir, svc) = (&self.dir, &self.service);
-        vec![
-            "systemctl daemon-reload".into(),
-            format!("systemctl enable {svc}"),
-            format!("systemctl restart {svc}"),
-            format!(
-                "install -m 0644 {dir}/current/{svc}.service /etc/systemd/system/{svc}.service"
-            ),
-            format!("journalctl -u {svc} -n 30 --no-pager"),
-        ]
+        sudo_commands(&self.dir, &self.service)
     }
 
     /// Runs `script`, logging `what` and every output line, and fails on a
@@ -183,6 +173,20 @@ sudo -n systemctl enable {svc_q} 2>&1",
             .await?;
         Ok(out.stdout.lines().map(str::to_string).collect())
     }
+}
+
+/// The commands that need root, without `sudo`, for an app in `dir` run as
+/// `service`. The sudoers rule must allow exactly these; changing one breaks
+/// every server set up before.
+pub fn sudo_commands(dir: &str, service: &str) -> Vec<String> {
+    let svc = service;
+    vec![
+        "systemctl daemon-reload".into(),
+        format!("systemctl enable {svc}"),
+        format!("systemctl restart {svc}"),
+        format!("install -m 0644 {dir}/current/{svc}.service /etc/systemd/system/{svc}.service"),
+        format!("journalctl -u {svc} -n 30 --no-pager"),
+    ]
 }
 
 fn ensure_id(id: &str) -> Result<()> {
