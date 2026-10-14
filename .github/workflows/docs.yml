@@ -1,0 +1,62 @@
+# Deploys the docs site (docs/website) to Cloudflare when a release is published.
+# Pre-releases are skipped, so shipdeck.naz.ovh always documents a stable version.
+# "Run workflow" on the Actions tab redeploys by hand from any branch or tag.
+#
+# Needs two repository secrets:
+#   CLOUDFLARE_API_TOKEN   a token from the "Edit Cloudflare Workers" template,
+#                          with the naz.ovh zone included
+#   CLOUDFLARE_ACCOUNT_ID  the account that owns the naz.ovh zone
+name: Docs
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# one deploy at a time; a newer release waits for the running one to finish
+concurrency:
+  group: docs-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Cloudflare
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (!github.event.release.prerelease && !contains(github.event.release.tag_name, '-'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: docs
+      url: https://shipdeck.naz.ovh
+    defaults:
+      run:
+        working-directory: docs/website
+    steps:
+      # the release event checks out the release tag, so the docs match it
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: docs/website/package.json
+          cache: true
+          cache_dependency_path: docs/website/pnpm-lock.yaml
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Deploy
+        run: pnpm exec wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
