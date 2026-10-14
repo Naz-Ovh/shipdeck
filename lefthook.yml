@@ -1,0 +1,24 @@
+# Git hooks: install lefthook, then run `lefthook install` once per clone.
+source_dir: scripts/lefthook/
+
+pre-commit:
+  jobs:
+    - name: version
+      script: version.sh
+      runner: sh
+
+pre-push:
+  piped: true
+  jobs:
+    - name: tag version
+      script: tag-version.sh
+      runner: sh
+      use_stdin: true
+    - name: fmt
+      run: cargo fmt --all --check
+    - name: check
+      run: cargo check --workspace --all-targets --locked
+    - name: clippy
+      run: cargo clippy --workspace --all-targets --locked -- -D warnings
+    - name: test
+      run: cargo test --workspace --locked

@@ -54,3 +54,6 @@ rolls back any release. Design and decisions: `docs/plan.md`. Usage: `README.md`
   `#[cfg(test)] #[path = "<module>_test.rs"] mod tests;`.
 - Done means `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`
   and `cargo test --workspace` pass.
+  lefthook's pre-push hook (`lefthook.yml`) runs them, with `cargo check`, on
+  every push. There is no CI workflow on purpose: GitHub Actions only publish
+  releases. Do not add one.
