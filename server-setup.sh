@@ -64,6 +64,7 @@ fi
 command -v systemctl >/dev/null || die "systemd is required"
 command -v sudo >/dev/null || die "sudo is required (apt install sudo, or dnf install sudo)"
 command -v visudo >/dev/null || die "visudo is required (it comes with sudo)"
+command -v zstd >/dev/null || die "zstd is required to unpack releases (apt install zstd, or dnf install zstd)"
 
 # sudo skips files in /etc/sudoers.d whose names contain a dot.
 SUDOERS_FILE="/etc/sudoers.d/shipdeck-${SERVICE//./_}"

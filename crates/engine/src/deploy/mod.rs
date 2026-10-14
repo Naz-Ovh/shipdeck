@@ -123,6 +123,9 @@ impl Action {
 
 /// Below this much free space on the server, preflight stops.
 const MIN_FREE: u64 = 100 * 1024 * 1024;
+/// What shipdeck itself runs on the server: the bundle is unpacked with
+/// `tar -I zstd`.
+const SERVER_TOOLS: [&str; 2] = ["tar", "zstd"];
 /// Consecutive healthy probes, one second apart, before a release counts as up.
 const STABLE_PROBES: u32 = 3;
 /// The pause before a failed health check runs again.
@@ -905,7 +908,12 @@ async fn preflight(
     );
     let session = pool.get(endpoint).await?;
     let server = Server::new(session, &config.service);
-    let tools = deployable.required_tools();
+    let mut tools = deployable.required_tools();
+    for tool in SERVER_TOOLS {
+        if !tools.iter().any(|t| t == tool) {
+            tools.push(tool.into());
+        }
+    }
     let facts = server.facts(&tools).await?;
     report.progress(step, 1, 2, Unit::Items, "server checked");
 
@@ -969,12 +977,23 @@ async fn preflight(
 /// Every program the deploy needs is on the server, and the one the
 /// service starts is somewhere the service can reach.
 fn check_tools(deployable: &Deployable, facts: &Facts, report: &Reporter) -> Result<()> {
+    let mut ours = Vec::new();
     let mut missing = Vec::new();
     for (tool, path) in &facts.tools {
         match path {
             Some(path) => report.log(LogKind::Success, format!("{tool}: {path}")),
+            None if SERVER_TOOLS.contains(&tool.as_str()) => ours.push(tool.as_str()),
             None => missing.push(tool.as_str()),
         }
+    }
+    if !ours.is_empty() {
+        let packages = ours.join(" ");
+        bail!(
+            "the server has no {}, which shipdeck unpacks releases with; install {} \
+             (apt install {packages}, or dnf install {packages})",
+            ours.join(" or "),
+            if ours.len() == 1 { "it" } else { "them" }
+        );
     }
     if !missing.is_empty() {
         bail!(

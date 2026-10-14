@@ -16,14 +16,14 @@ The engine reports everything through one channel: each step's state (pending, r
 
 ```txt
  your PC                                              the server
-┌────────────────────────────────────┐               ┌───────────────────────────────┐
-│ terminal UI                        │               │ sshd                          │
-│   ▲ steps, progress, log, outcome  │               │   sh -c '<small script>'      │
-│   ▼ answers: password, y / n       │   one SSH     │   SFTP: releases/.<id>.tar.gz │
-│ engine                             │◀─────────────▶│                               │
-│   deploy.yaml → build → pack       │   session     │ /opt/my-api/current → ...     │
-│   local commands (sh -c)           │   per server  │ systemd: my-api.service       │
-└────────────────────────────────────┘               └───────────────────────────────┘
+┌────────────────────────────────────┐               ┌────────────────────────────────┐
+│ terminal UI                        │               │ sshd                           │
+│   ▲ steps, progress, log, outcome  │               │   sh -c '<small script>'       │
+│   ▼ answers: password, y / n       │   one SSH     │   SFTP: releases/.<id>.tar.zst │
+│ engine                             │◀─────────────▶│                                │
+│   deploy.yaml → build → pack       │   session     │ /opt/my-api/current → ...      │
+│   local commands (sh -c)           │   per server  │ systemd: my-api.service        │
+└────────────────────────────────────┘               └────────────────────────────────┘
 ```
 
 ## One SSH session per server

@@ -196,6 +196,25 @@ fn missing_tools_stop_preflight() {
 }
 
 #[test]
+fn a_server_without_zstd_is_told_to_install_it() {
+    let web = deployable(NODE);
+    let (report, _rx) = reporter();
+    let found = facts(&[
+        ("node", Some("/usr/bin/node")),
+        ("npm", None),
+        ("tar", Some("/usr/bin/tar")),
+        ("zstd", None),
+    ]);
+    let err = check_tools(&web, &found, &report).unwrap_err().to_string();
+    // shipdeck's own tool comes first, with the package to install.
+    assert!(err.contains("has no zstd"), "{err}");
+    assert!(
+        err.contains("apt install zstd, or dnf install zstd"),
+        "{err}"
+    );
+}
+
+#[test]
 fn a_start_program_under_home_is_refused_with_the_default_unit() {
     let web = deployable(NODE);
     let (report, _rx) = reporter();

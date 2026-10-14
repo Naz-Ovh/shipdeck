@@ -50,7 +50,7 @@ impl Server {
 
     /// Where the bundle is uploaded before it is unpacked.
     pub fn upload_path(&self, id: &str) -> String {
-        format!("{}/releases/.{id}.tar.gz", self.dir)
+        format!("{}/releases/.{id}.tar.zst", self.dir)
     }
 
     /// The commands that need root here; see [`sudo_commands`].
@@ -117,7 +117,8 @@ exit 1",
     }
 
     /// Unpacks the uploaded bundle into `releases/<id>/`, through a hidden
-    /// folder so a half-written release never looks complete.
+    /// folder so a half-written release never looks complete. `tar -I zstd`
+    /// rather than `--zstd`, which needs GNU tar 1.31; tar fails when zstd does.
     pub async fn unpack(&self, id: &str, report: &Reporter) -> Result<()> {
         ensure_id(id)?;
         let script = format!(
@@ -126,8 +127,8 @@ cd {dir}/releases
 if [ -e {id} ]; then echo 'releases/{id} already exists' >&2; exit 1; fi
 rm -rf .{id}.partial
 mkdir .{id}.partial
-tar -xzpf .{id}.tar.gz -C .{id}.partial
-rm -f .{id}.tar.gz
+tar -I zstd -xpf .{id}.tar.zst -C .{id}.partial
+rm -f .{id}.tar.zst
 mv .{id}.partial {id}
 echo \"unpacked $(find {id} -type f | wc -l) files into releases/{id}\"",
             dir = self.q_dir(),
@@ -141,7 +142,7 @@ echo \"unpacked $(find {id} -type f | wc -l) files into releases/{id}\"",
     pub async fn discard(&self, id: &str, report: &Reporter) -> Result<()> {
         ensure_id(id)?;
         let script = format!(
-            "cd {dir}/releases && rm -rf {id} .{id}.partial .{id}.tar.gz",
+            "cd {dir}/releases && rm -rf {id} .{id}.partial .{id}.tar.zst",
             dir = self.q_dir()
         );
         self.run(&format!("remove releases/{id}"), &script, report)

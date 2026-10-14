@@ -1,4 +1,4 @@
-//! Packing a release into one `.tar.gz` in memory: the binary, the files
+//! Packing a release into one `.tar.zst` in memory: the binary, the files
 //! `pipeline.pack.files` picks, `release.json` and the systemd unit.
 
 pub mod files;
@@ -6,14 +6,19 @@ pub mod unit;
 
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::thread;
 
 use anyhow::{Context, Result, bail};
-use flate2::Compression;
-use flate2::write::GzEncoder;
+use zstd::stream::write::Encoder;
 
 use crate::config::{Deployable, release_path};
 use crate::release::{MANIFEST_FILE, Manifest};
 use files::{Kind, Selection};
+
+/// zstd level for the bundle. On a 25 MB Rust binary, 9 packs to 8.6 MB in
+/// 0.6s where 19 packs to 7.6 MB in 10s: the slower levels only pay off on
+/// uploads under about 100 KB/s.
+const LEVEL: i32 = 9;
 
 /// A packed release, ready to upload.
 #[derive(Debug)]
@@ -62,7 +67,7 @@ pub fn pack(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let mut tar = tar::Builder::new(GzEncoder::new(Vec::new(), Compression::default()));
+    let mut tar = tar::Builder::new(encoder()?);
     let mut done = 0u64;
     progress(0, total);
 
@@ -116,6 +121,16 @@ pub fn pack(
         input_bytes: total,
         replaced,
     })
+}
+
+/// A zstd stream on every core, with a checksum so `zstd -d` on the server
+/// refuses a damaged upload, as gzip's CRC did.
+fn encoder() -> Result<Encoder<'static, Vec<u8>>> {
+    let mut encoder = Encoder::new(Vec::new(), LEVEL)?;
+    encoder.include_checksum(true)?;
+    let workers = thread::available_parallelism().map_or(1, |n| n.get());
+    encoder.multithread(u32::try_from(workers).unwrap_or(1))?;
+    Ok(encoder)
 }
 
 /// Everything that goes into the archive, in order, with its mode.

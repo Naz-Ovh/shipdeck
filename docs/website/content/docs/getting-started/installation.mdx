@@ -112,6 +112,7 @@ You install nothing of shipdeck's on the server. It needs:
 
 - Linux with systemd and an SSH server.
 - `sh`, which every Linux system has.
+- `tar` and `zstd`, to unpack each release. Most distributions ship `tar`; if `zstd` is missing, preflight stops and says to install it (`apt install zstd`, or `dnf install zstd`).
 - `curl` or `wget`, but only if you set `pipeline.health.url`.
 - The root user, or a user with passwordless `sudo` for five specific commands. [Server access](/docs/guides/server-access) explains both, and the optional one-time setup script.
 - At least 100 MiB of free disk space.

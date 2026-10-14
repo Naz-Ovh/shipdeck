@@ -18,7 +18,7 @@ live.
 | --- | --- |
 | Name | `shipdeck` |
 | Repository | `Naz-Ovh/shipdeck`, public, so servers can fetch `server-setup.sh` from it; projects add it as a git submodule |
-| Language and libraries | Rust: `ratatui` + `crossterm` for the TUI, `russh` + `russh-sftp` for SSH, `tar` + `flate2` for bundles, `clap` for flags, `granit-parser` for YAML (events with line and column), `schemars` for the JSON Schema, `fast-glob` for file patterns |
+| Language and libraries | Rust: `ratatui` + `crossterm` for the TUI, `russh` + `russh-sftp` for SSH, `tar` + `zstd` for bundles, `clap` for flags, `granit-parser` for YAML (events with line and column), `schemars` for the JSON Schema, `fast-glob` for file patterns |
 | Code layout | A Cargo workspace: `crates/engine` does the work, `bin/shipdeck` is the TUI, so screen changes recompile only the small crate |
 | SSH session | One session per deployable, opened once and reused for every command and upload |
 | SSH login | `--key <path>` or `--password <value>`; with neither flag, the alias's `IdentityFile` from `~/.ssh/config`, then a password asked in the TUI |
@@ -162,8 +162,8 @@ and releases are ordered by it, never by the version text.
 | --- | --- | --- | --- | --- |
 | 1 | Preflight | Over the SSH session: CPU architecture, glibc, free disk space, `sudo -n` rights, the programs `service.start` and `preflight.requires` name, service state. Then the deploy-folder files | `run.server` in `service.dir`, then `run.local` | Stops. Nothing has been touched |
 | 2 | Build | Names the release; afterwards checks every project pattern found something and the binary's architecture and glibc against the server | `run.local` in `project`; output streams into the TUI | Stops |
-| 3 | Pack | Binary + files + `release.json` + rendered unit, into one `.tar.gz` in memory | — | Stops |
-| 4 | Upload | Uploads over SFTP into `releases/.<id>.tar.gz` | — | Removes `<id>`. Nothing changed |
+| 3 | Pack | Binary + files + `release.json` + rendered unit, into one `.tar.zst` in memory (zstd level 9, every core) | — | Stops |
+| 4 | Upload | Uploads over SFTP into `releases/.<id>.tar.zst` | — | Removes `<id>`. Nothing changed |
 | 5 | Unpack | Unpacks into `releases/<id>/` through a hidden folder; links `service.shared` | — | Removes `<id>`. Nothing changed |
 | 6 | Setup | Nothing: the live version keeps running | `run.server` then `check.server` in `releases/<id>/` (`npm ci --omit=dev`, migrations) | Removes `<id>`. Nothing changed |
 | 7 | Switch | Points `current` at `<id>` in one rename, installs the unit from `current/`, `daemon-reload`, `enable`. The old process keeps serving | — | Asks, then rolls back |
@@ -245,7 +245,7 @@ crates/engine/src/
 ├── config/        the deploy.yaml types (= the JSON Schema), the YAML tree with line numbers,
 │                  the schema walk and value rules, the problem report, globs, discovery
 ├── build/         release name, running local commands, ELF arch and glibc checks
-├── bundle/        picking the files, tar.gz, rendering the systemd unit
+├── bundle/        picking the files, tar.zst, rendering the systemd unit
 ├── release.rs     release ids and release.json
 ├── ssh/           the russh session, ~/.ssh/config aliases, login, host keys, commands, SFTP upload
 ├── remote/        preflight, unpack, shared links, server commands, switch, unit, health, rotate

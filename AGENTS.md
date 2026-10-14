@@ -15,7 +15,7 @@ rolls back any release. Design and decisions: `docs/plan.md`. Usage: `README.md`
 - `crates/engine/` (`shipdeck-engine`): `config` (deploy.yaml: types that
   are the JSON Schema, the line-aware YAML tree, the launch check, globs),
   `build` (version, local commands, ELF checks), `bundle` (picking files,
-  tar.gz, unit), `ssh` (sessions,
+  tar.zst, unit), `ssh` (sessions,
   login, host keys, `~/.ssh/config` aliases), `remote` (server scripts),
   `release` (ids, release.json), `setup` (the server setup command),
   `deploy` (the deploy and rollback flows, `report` for progress).

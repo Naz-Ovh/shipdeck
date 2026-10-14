@@ -245,7 +245,7 @@ fn running_deploy(app: &mut App) {
         (LogKind::Step, "Upload: sending the release"),
         (
             LogKind::Command,
-            "deploy@203.0.113.10 › upload 11.8 MiB to /opt/api-prod/releases/.v0.3.2.tar.gz",
+            "deploy@203.0.113.10 › upload 11.8 MiB to /opt/api-prod/releases/.v0.3.2.tar.zst",
         ),
     ] {
         send(

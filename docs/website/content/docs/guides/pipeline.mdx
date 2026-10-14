@@ -20,6 +20,7 @@ On your PC, shipdeck checks that the `project` folder exists and renders the sys
 On a first deploy it creates `service.dir`, as the SSH user, or with `sudo -n mkdir` and `chown` when the user has passwordless sudo. A `service.dir` that exists but is not writable stops here (`<user> cannot write to <dir>`). Then it checks:
 
 - the `sudo -n` rights for the five commands it needs as root (skipped when you log in as `root`; see [Server access](/docs/guides/server-access));
+- that `tar` and `zstd`, which unpack the release, are on the server. A server without them stops here with the command to install them (`apt install zstd`, or `dnf install zstd`);
 - that the program `service.start` names, and every program in `pipeline.preflight.requires`, is on the server;
 - that at least 100 MiB are free.
 
@@ -43,7 +44,7 @@ A failure stops the deploy (`` the build failed: `npm run build` exited with cod
 
 `Pack: packing the release`
 
-shipdeck renders the real systemd unit and packs one `.tar.gz` in memory: the binary (mode `0755`), `release.json`, `<service>.service` and the files you listed in `pipeline.pack.files`. Files whose name starts with `.env` get mode `0600`. Then it checks the server has room: about twice the archive plus its unpacked size.
+shipdeck renders the real systemd unit and packs one `.tar.zst` in memory, compressed with zstd on every core: the binary (mode `0755`), `release.json`, `<service>.service` and the files you listed in `pipeline.pack.files`. Files whose name starts with `.env` get mode `0600`. Then it checks the server has room: about twice the archive plus its unpacked size.
 
 No commands of yours run here. A failure stops the deploy. See [Packing files](/docs/guides/packing-files).
 
@@ -51,7 +52,7 @@ No commands of yours run here. A failure stops the deploy. See [Packing files](/
 
 `Upload: sending the release`
 
-shipdeck creates `releases/`, `backups/` and `shared/` in `service.dir` if they are missing, then uploads the archive to `releases/.<id>.tar.gz` over SFTP. When the server has no SFTP subsystem it falls back to `cat` over SSH.
+shipdeck creates `releases/`, `backups/` and `shared/` in `service.dir` if they are missing, then uploads the archive to `releases/.<id>.tar.zst` over SFTP. When the server has no SFTP subsystem it falls back to `cat` over SSH.
 
 A failure removes what was uploaded and stops.
 

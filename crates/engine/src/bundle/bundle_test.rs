@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::io::Read;
 
 use chrono::{TimeZone, Utc};
-use flate2::read::GzDecoder;
+use zstd::stream::read::Decoder;
 
 use super::*;
 use crate::config::{DeployConfig, Deployable};
@@ -64,7 +64,7 @@ fn release() -> ReleaseName {
 type Entries = BTreeMap<String, (u32, Vec<u8>, Option<String>)>;
 
 fn unpack(data: &[u8]) -> Entries {
-    let mut archive = tar::Archive::new(GzDecoder::new(data));
+    let mut archive = tar::Archive::new(Decoder::new(data).unwrap());
     let mut files = BTreeMap::new();
     for entry in archive.entries().unwrap() {
         let mut entry = entry.unwrap();
@@ -130,6 +130,19 @@ fn packs_binary_files_manifest_and_unit_with_modes() {
     assert_eq!(bundle.files, 5);
     assert_eq!(last.0, last.1);
     assert_eq!(last.1, bundle.input_bytes);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn the_bundle_is_one_zstd_frame_with_a_checksum() {
+    let dir = scratch("zstd");
+    write(dir.join("app/out/demo"), "\x7fELF fake");
+    let deployable = deployable(&dir, "", "    binary: out/demo");
+    let (bundle, _) = packed(&deployable);
+
+    assert_eq!(bundle.data[..4], [0x28, 0xb5, 0x2f, 0xfd], "zstd magic");
+    // Content_Checksum_flag, bit 2 of the frame header descriptor.
+    assert_ne!(bundle.data[4] & 0b100, 0, "no checksum");
     std::fs::remove_dir_all(dir).unwrap();
 }
 

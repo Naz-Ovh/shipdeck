@@ -47,7 +47,7 @@ The same as text, with the transient files:
 │   │   ├── .env                          0600 (any file named .env*)
 │   │   ├── uploads -> /opt/my-api/shared/uploads
 │   │   └── ...                           files from pipeline.pack.files
-│   ├── .<id>.tar.gz                      transient: the upload
+│   ├── .<id>.tar.zst                     transient: the upload
 │   └── .<id>.partial/                    transient: unpacking or restoring
 ├── backups/
 │   ├── <id>.tar.gz                       compressed releases
@@ -82,7 +82,7 @@ These exist only while shipdeck is working. A name starting with a dot keeps the
 
 | Path | When |
 | --- | --- |
-| `releases/.<id>.tar.gz` | The uploaded archive, between upload and unpack. |
+| `releases/.<id>.tar.zst` | The uploaded archive, between upload and unpack. |
 | `releases/.<id>.partial/` | A release being unpacked, or a compressed one being restored. Renamed to `releases/<id>` when complete. |
 | `.current.next` | The new symlink, just before it is renamed over `current`. |
 | `backups/.<id>.tar.gz.part` | A tarball being written. Renamed when complete. |
