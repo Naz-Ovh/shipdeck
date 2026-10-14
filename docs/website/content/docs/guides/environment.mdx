@@ -1,0 +1,150 @@
+---
+title: Environment and secrets
+description: How the service and your commands get their environment, how the env file is read, and where secrets and writable data live.
+---
+
+The service gets its environment from two places in `deploy.yaml`: `service.env` for plain values you can commit, and `service.env_file` for a file of secrets that ships with each release. Server commands load both; local commands load neither.
+
+```yaml title="scripts/deploy/my-api-prod/deploy.yaml"
+service:
+  name: my-api
+  dir: /opt/my-api
+  env_file: .env
+  env:
+    RUST_LOG: info
+    PORT: 8080
+pipeline:
+  pack:
+    files:
+      include:
+        deploy: [.env]      # ship the file that env_file names
+```
+
+## `service.env`
+
+A map of variable names to values. Any YAML scalar is read as text, so `PORT: 8080` gives `8080` and `DEBUG: no` gives `no`.
+
+| Rule | Message when broken |
+| --- | --- |
+| Keys use letters, digits and `_`, and do not start with a digit | `` `service.env` key "<KEY>" is not a variable name `` |
+| Values contain no `"`, `\` or newline | `` `service.env.<KEY>` must not contain quotes, backslashes or newlines `` |
+| Every key has a value (a bare `KEY:` or `KEY: ~` is refused; `KEY: ""` is allowed) | `` `service.env.<KEY>` is empty `` |
+
+`deploy.yaml` is committed, so keep secrets out of `service.env`. Values with quotes, backslashes or newlines belong in the env file too.
+
+## `service.env_file`
+
+A `KEY=value` file inside the release, such as `.env`. The path is relative to the release folder and may not start with `/` or contain `..`.
+
+Nothing ties `env_file` to the pack: shipdeck does not check that the file is shipped. Ship it yourself, normally from the deploy folder with `pipeline.pack.files.include.deploy: [.env]`. Any shipped file whose name starts with `.env` gets mode `0600`.
+
+```ini title="scripts/deploy/my-api-prod/.env"
+# comments and blank lines are skipped
+DATABASE_URL=postgres://my-api:secret@127.0.0.1/my_api
+SESSION_KEY="k3y with spaces"
+```
+
+### How the service gets it
+
+The built-in unit's `{{env}}` placeholder becomes an `EnvironmentFile=` line for the env file, then one `Environment=` line per `service.env` entry, sorted by key:
+
+```ini title="/etc/systemd/system/my-api.service (part)"
+Environment=APP_RELEASE=v0.3.1-ab12cd3-20261014.153012
+EnvironmentFile=/opt/my-api/current/.env
+Environment="PORT=8080"
+Environment="RUST_LOG=info"
+```
+
+The path always goes through `current`, so the service reads the env file of the release that is live. A rollback brings back that release's own `.env`. The `EnvironmentFile=` line is written without systemd's `-` prefix, so the file is expected to exist. `APP_RELEASE` is set by the built-in unit to the release id.
+
+<Callout type="warn" title="Values in the unit file">
+shipdeck writes `service.env` values into the unit as you wrote them. systemd gives `%` a meaning in unit files, so a value with `%` belongs in the env file.
+</Callout>
+
+### How server commands read it
+
+Server commands do not go through systemd. shipdeck loads the env file with its own small reader that follows the rules of systemd's `EnvironmentFile=`:
+
+- A missing file is skipped without an error.
+- Leading whitespace and a trailing carriage return are removed.
+- Blank lines and lines starting with `#` or `;` are skipped.
+- A leading `export ` is removed.
+- Lines without `=` are skipped, and so are lines whose key is not a variable name (letters, digits and `_`, not starting with a digit).
+- One pair of surrounding `"` or `'` is removed from the value.
+- Nothing is expanded: `$HOME` stays the literal text `$HOME`.
+
+Which file a server command loads depends on the step:
+
+| Step | Runs in | Env file loaded |
+| --- | --- | --- |
+| `preflight.run.server` | `service.dir` | `current/<env_file>`, the release that is live now. On a first deploy there is none, and it is skipped. |
+| `setup.run.server`, `setup.check.server` | `releases/<id>` | the new release's file |
+| `health.check.server`, `done.run.server` | `current` | the new release's file, after the switch |
+
+## Who gets which variables
+
+| Variables | The service | Server commands | Local commands |
+| --- | --- | --- | --- |
+| `service.env` | yes | yes | no |
+| `service.env_file` | yes | yes | no |
+| `SHIPDECK_*` | no | yes | yes |
+| `SHIPDECK_FOLDER`, `SHIPDECK_PROJECT` | no | no | yes |
+| shipdeck's own environment (your shell's) | no | no | yes |
+
+For server commands the order is: `service.env` first, then the env file, which overrides it, then `SHIPDECK_*`, which override both. Each command runs as a separate script under `set -e`, so an `export` in one list item does not reach the next.
+
+Local commands run on your PC with your own environment plus the `SHIPDECK_*` variables. They do not get `service.env` or the env file. When a local command needs a value from the deploy folder's `.env`, load it in the command, for example `set -a && . "$SHIPDECK_FOLDER/.env" && set +a && ./notify.sh`. `SHIPDECK_FOLDER` is the absolute path of the deploy folder.
+
+The full list of `SHIPDECK_*` variables, with the steps that set them, is on [Variables](/docs/reference/variables).
+
+## Shared folders
+
+A release is replaced on every deploy. Data the service writes and must keep, such as uploads, goes in a shared folder:
+
+```yaml
+service:
+  shared: [uploads, data/cache]
+```
+
+At Unpack, for each entry, shipdeck creates `<service.dir>/shared/<entry>` the first time, then makes `releases/<id>/<entry>` a symlink to it. Every release sees the same folder, and a rollback keeps the data.
+
+<Files>
+  <Folder name="/opt/my-api" defaultOpen>
+    <File name="current → releases/v0.3.1-ab12cd3-20261014.153012" />
+    <Folder name="releases" defaultOpen>
+      <Folder name="v0.3.1-ab12cd3-20261014.153012" defaultOpen>
+        <File name="my-api" />
+        <File name=".env" />
+        <File name="uploads → /opt/my-api/shared/uploads" />
+      </Folder>
+    </Folder>
+    <Folder name="shared" defaultOpen>
+      <Folder name="uploads" />
+    </Folder>
+  </Folder>
+</Files>
+
+- Entries are folders relative to the release. A single shared file is not supported.
+- Entries may not overlap: `data` and `data/cache` together are refused.
+- A release must not contain a shared path. A literal include such as `uploads` is refused at launch; a glob or `.` that picks something inside a shared folder stops the deploy at Pack.
+- With the built-in unit the service can write only under `<service.dir>/shared` (`ProtectSystem=strict`, `ReadWritePaths=`), plus a private `/tmp`. Writable data belongs in a shared folder.
+- Commands find the folder in `SHIPDECK_SHARED_DIR`.
+
+## Keeping secrets out of git
+
+1. Put secrets in `.env` next to `deploy.yaml`, not in `service.env`.
+2. Gitignore it: `*/.env` in the deploy root's `.gitignore`. See [Deploy root](/docs/guides/deploy-root#what-to-commit).
+3. Ship it with `pipeline.pack.files.include.deploy: [.env]` and point `service.env_file` at it.
+
+On the server the file lives in each release with mode `0600`, owned by the SSH user. `deploy.yaml` and `service.template` never ship.
+
+<Callout title="When service.run_as is another user">
+Release files and `shared/` belong to the SSH user. If the service runs as a different user, it may not be able to open the `0600` `.env` itself or write to `shared/`. systemd reads `EnvironmentFile=` before it switches user, so variables from the env file still reach the service.
+</Callout>
+
+## Next
+
+<Cards>
+  <Card title="Variables" href="/docs/reference/variables" description="Every SHIPDECK_* variable and when it is set." />
+  <Card title="Health and rollback" href="/docs/guides/health-and-rollback" description="How shipdeck decides a release is up, and what happens when it is not." />
+</Cards>

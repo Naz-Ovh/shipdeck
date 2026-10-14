@@ -1,0 +1,520 @@
+---
+title: deploy.yaml
+description: Every field of deploy.yaml in shipdeck 0.3, with its type, default, the rules shipdeck checks and what it does.
+---
+
+Each deployable is one folder under the deploy root with a `deploy.yaml` in it. This page lists every key the file takes. For how shipdeck finds the files, see [Deploy root](/docs/guides/deploy-root).
+
+## Full example
+
+A Node app that uses most fields. Each line says what it does; the sections below give the rules.
+
+```yaml title="scripts/deploy/my-api-prod/deploy.yaml"
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
+name: My API (prod)                 # shown in shipdeck and in the unit's Description
+project: ../../../my-api            # your source folder, relative to this file
+
+ssh:
+  host: 203.0.113.10                # an address, or an alias from ~/.ssh/config
+  port: 22                          # default: the alias's Port, else 22
+  user: deploy                      # default: the alias's User
+
+service:
+  name: my-api                      # becomes my-api.service
+  dir: /opt/my-api                  # current/ releases/ backups/ shared/
+  start: node dist/main.js          # node is looked up on the server
+  run_as: deploy                    # default: the SSH user
+  env_file: .env                    # inside the release; shipped below
+  env:
+    NODE_ENV: production
+    PORT: "3000"
+  shared: [uploads]                 # kept in shared/ across releases
+  keep: { open: 5, compressed: 15 } # the defaults
+
+pipeline:
+  preflight:
+    requires: [npm]                 # programs the server must have
+    run:
+      server: df -h .               # on the server, in service.dir
+      local: npm test               # on your PC, in project
+  build:
+    version_from: package.json      # default: found in project
+    run:
+      local: [npm ci, npm run build]
+  pack:
+    files:
+      include:
+        project: [dist, package.json, package-lock.json]
+        deploy: [.env]              # from this folder; keep it out of git
+      exclude:
+        project: ["**/*.map"]
+  setup:                            # in releases/<id>; the old release still serves
+    run:
+      server: [npm ci --omit=dev, npm run migrate]
+    check:
+      server: node --check dist/main.js
+  health:
+    url: http://127.0.0.1:3000/health
+    check:
+      server: curl -fsS http://127.0.0.1:3000/ready
+    timeout_secs: 30
+    rollback: ask                   # or auto
+  done:
+    run:
+      local: ./notify.sh "my-api $SHIPDECK_VERSION is live"
+  failed:
+    run:
+      local: ./notify.sh "my-api failed at $SHIPDECK_STEP"
+```
+
+Only `name`, `ssh.host`, `service.name`, `service.dir` and something to ship are required. A Rust service with a compiled binary can be this short:
+
+```yaml title="scripts/deploy/my-api-prod/deploy.yaml"
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
+name: My API (prod)
+project: ../../../my-api
+
+ssh:
+  host: prod
+  user: deploy
+
+service:
+  name: my-api
+  dir: /opt/my-api
+
+pipeline:
+  build:
+    run:
+      local: cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31
+  pack:
+    binary: target/x86_64-unknown-linux-gnu/release/my-api
+```
+
+More complete files for Rust, Go, Node and Python are on [Examples](/docs/guides/examples).
+
+## File format
+
+- The file is named `deploy.yaml` or `deploy.yml`, never both in one folder.
+- It is one YAML document. A leading `---` is fine; a second document is a problem. JSON works too, since JSON is YAML.
+- An empty file reads as an empty map, so it reports `name`, `ssh` and `service` as missing.
+- Comments are ignored. The schema line is a comment that only editors read.
+
+**Text fields** take any YAML scalar as text: `name: true` is `"true"`, `PORT: 3000` is `"3000"`, `DEBUG: no` is `"no"`.
+
+**Whole-number fields** (`ssh.port`, `service.keep.open`, `service.keep.compressed`, `pipeline.health.timeout_secs`) must be written unquoted, as a plain decimal number. `"22"`, `-1`, `0x16`, `1e3` and `22.0` are refused with `must be a whole number`.
+
+**Empty values.** A key with nothing after it (`url:`), or `~`, `null`, `Null`, `NULL`, means "use the default" on an optional key. On a required key it is a problem: `` `name` is empty ``.
+
+**Commands.** Every `local:` and `server:` value takes one shell command, or a list run in order that stops at the first failure. No command may be empty or only spaces.
+
+```yaml
+run:
+  local: npm ci && npm run build      # one command, run with sh -c
+```
+
+```yaml
+run:
+  local:                              # a list: each item is its own shell
+    - npm ci
+    - npm run build
+```
+
+Each list item runs in a separate shell, so a `cd` or `export` in one item does not carry to the next. Join them with `&&` in one item when they must share state. [The pipeline](/docs/guides/pipeline) covers where each command runs and with which environment.
+
+## Editor completion
+
+shipdeck publishes a JSON Schema for deploy.yaml. With an editor that uses the YAML language server (the VS Code YAML extension, Neovim, Zed, JetBrains), put this line at the top of the file:
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
+```
+
+The URL names the release tag, so it changes with every release. Your editor then completes keys, shows each field's description on hover and marks unknown keys.
+
+To map the schema for every deploy.yaml in a repository instead, add it to `.vscode/settings.json`:
+
+```json title=".vscode/settings.json"
+{
+  "yaml.schemas": {
+    "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json": "**/deploy.yaml"
+  }
+}
+```
+
+To use it offline, write the schema to a file and point the line at it:
+
+```sh
+shipdeck --schema > deploy.schema.json
+```
+
+The schema is JSON Schema draft-07, and every object in it except the `service.env` map refuses unknown keys. shipdeck checks your file against this same schema when it starts, so the editor and shipdeck agree on what is valid.
+
+## name
+
+| | |
+| --- | --- |
+| Type | text |
+| Required | yes |
+| Rules | not empty; one line |
+
+The name shipdeck shows, such as `My API (prod)`. It is also the systemd unit's `Description`. The folder name (for example `my-api-prod`) is the deployable's short handle in the list; `name` is the label.
+
+```yaml
+name: My API (prod)
+```
+
+## project
+
+| | |
+| --- | --- |
+| Type | text |
+| Required | no |
+| Default | `.` (the folder of this deploy.yaml) |
+| Rules | not empty |
+
+Your source folder, relative to this deploy.yaml. Local commands run here, `pipeline.build.version_from` and `pipeline.pack.binary` are relative to it, and `pipeline.pack.files.include.project` takes files from it.
+
+```yaml
+project: ../../../my-api
+```
+
+An absolute path works too; `~` is not expanded. shipdeck checks that the folder exists at the start of Preflight, not at launch: `the project folder <path> does not exist`.
+
+## ssh
+
+How to log in to the server. Required. The login method (key or password) is never in deploy.yaml; it comes from the [command line](/docs/reference/cli) or `~/.ssh/config`. See [SSH and login](/docs/guides/ssh).
+
+| Field | Type | Required | Default | Rules |
+| --- | --- | --- | --- | --- |
+| `ssh.host` | text | yes | | not empty |
+| `ssh.port` | whole number | no | the alias's `Port`, else `22` | at most `65535` |
+| `ssh.user` | text | no | the alias's `User` | letters, digits, `.`, `_`, `-` only |
+
+### ssh.host
+
+The server's address, or an alias from `~/.ssh/config`. With an alias, shipdeck reads its `HostName`, `Port`, `User` and `IdentityFile`. Values in deploy.yaml win over the alias.
+
+```yaml
+ssh:
+  host: prod        # Host prod in ~/.ssh/config
+```
+
+A host reached through `ProxyJump` or `ProxyCommand` is refused.
+
+### ssh.port
+
+The SSH port. Default: the alias's `Port`, else `22`. Write it unquoted.
+
+### ssh.user
+
+The user shipdeck logs in and deploys as. Default: the alias's `User`. When neither is set, the file gets a problem: `` `ssh.user` is not set, and ~/.ssh/config has no User for <host> ``. This login check runs only once the rest of the file is clean.
+
+## service
+
+The systemd service on the server, and where its releases live. Required.
+
+| Field | Type | Required | Default |
+| --- | --- | --- | --- |
+| `service.name` | text | yes | |
+| `service.dir` | text | yes | |
+| `service.start` | text | when there is no `pipeline.pack.binary` | `./<binary>` |
+| `service.run_as` | text | no | the SSH user |
+| `service.env_file` | text | no | none |
+| `service.env` | map of text | no | `{}` |
+| `service.shared` | list of text | no | `[]` |
+| `service.keep` | map | no | `{ open: 5, compressed: 15 }` |
+
+### service.name
+
+The unit's name without `.service`: `my-api` becomes `my-api.service`. Only letters, digits, `.`, `_`, `@` and `-`. Writing `my-api.service` is refused with `` `service.name` is the name without .service ``.
+
+### service.dir
+
+An absolute folder on the server, such as `/opt/my-api`. It holds `current` (the live release), `releases/`, `backups/` and `shared/`. See [Server layout](/docs/reference/server-layout).
+
+Rules: it starts with `/` and is more than `/`; only letters, digits, `.`, `_`, `-` and `/`; no `..` segment. On the first deploy shipdeck creates it, as the SSH user or with `sudo -n`.
+
+### service.start
+
+The command the service runs, from the release folder. The first word is the program; the rest of the line is passed as arguments.
+
+```yaml
+service:
+  start: ./my-api -E=.env
+```
+
+Default: `./<binary>`, the file name of `pipeline.pack.binary`. When there is no binary, `start` is required.
+
+shipdeck reads the first word in one of three ways:
+
+| First word | Read as | Becomes in `ExecStart=` | Checked at preflight |
+| --- | --- | --- | --- |
+| Starts with `/`, such as `/usr/bin/node` | an absolute path | used as written | must exist on the server |
+| Contains `/`, such as `./my-api`, `bin/server`, `.venv/bin/python` | a path in the release | `<service.dir>/current/<path>`, with `./` dropped | not looked up |
+| A bare name, such as `node` or `python3` | a program on the server | the full path found on the server | must exist on the server |
+
+Examples:
+
+| `start` | `ExecStart=` |
+| --- | --- |
+| `./my-api -E=.env` | `/opt/my-api/current/my-api -E=.env` |
+| `node dist/main.js` | `/usr/bin/node dist/main.js` (the path preflight found) |
+| `.venv/bin/python -m app` | `/opt/my-api/current/.venv/bin/python -m app` |
+
+<Callout type="warn" title="A bare name is looked up on the server">
+  `start: my-api` looks for a program called `my-api` on the server's `PATH`, not in the release. Write `./my-api` for a binary you ship.
+</Callout>
+
+With the built-in unit, a bare-name program found under `/home/` or `/root/` (for example Node installed with nvm) is refused at preflight, because the unit sets `ProtectHome=true`. Install it system-wide, or use a [service template](/docs/reference/service-template) without `ProtectHome`.
+
+Rules: not empty; one line; no backslash. The first word may use only letters, digits, `.`, `_`, `+`, `-` and `/`, with no `..` segment.
+
+### service.run_as
+
+The user the service runs as. Default: the SSH user, after `~/.ssh/config` is applied. Letters, digits, `.`, `_` and `-` only.
+
+### service.env_file
+
+A `KEY=value` file in the release, such as `.env`. The service gets it as its environment (`EnvironmentFile=`), and server commands load it too.
+
+```yaml
+service:
+  env_file: .env
+pipeline:
+  pack:
+    files:
+      include:
+        deploy: [.env]      # ship it: env_file does not do that for you
+```
+
+It is a relative path inside the release: letters, digits, `.`, `_`, `+`, `-` and `/` only, no leading `/` and no `..`. shipdeck does not check that you ship the file. See [Environment and secrets](/docs/guides/environment).
+
+### service.env
+
+Environment variables for the service and for server commands. Local commands do not get them.
+
+```yaml
+service:
+  env:
+    NODE_ENV: production
+    PORT: "3000"
+```
+
+| Part | Rule |
+| --- | --- |
+| Key | letters, digits and `_`, not starting with a digit |
+| Value | text; no `"`, `\`, newline or carriage return |
+
+An empty value (`KEY:`) is refused with `` `service.env.KEY` is empty ``. Put values with quotes or backslashes in `service.env_file`. For server commands, `service.env_file` is read after `service.env`, so the file wins.
+
+### service.shared
+
+Folders kept across releases, such as `uploads`. Each lives in `<service.dir>/shared/` and is linked into every release.
+
+```yaml
+service:
+  shared: [uploads, data/cache]
+```
+
+Rules for each entry:
+
+- a folder path relative to the release: letters, digits, `.`, `_`, `+`, `-` and `/` only, no leading `/`, no `..`, not `.`
+- not `release.json` or `<service.name>.service`
+- entries must not overlap: `data` and `data/cache` is refused (keep the outer folder)
+
+A release must not contain a shared path itself, and the pack refuses files under one. With the built-in unit the service can write only under `<service.dir>/shared`, so writable data belongs here.
+
+### service.keep
+
+How many old releases stay on the server, for rollback.
+
+| Field | Type | Default | Rules |
+| --- | --- | --- | --- |
+| `service.keep.open` | whole number | `5` | at least `1` |
+| `service.keep.compressed` | whole number | `15` | `0` or more |
+
+`open` counts the releases kept unpacked and ready to switch to, the live one included. `compressed` counts the older ones kept as `.tar.gz` in `backups/`. Anything older is deleted. `compressed: 0` keeps none.
+
+```yaml
+service:
+  keep: { open: 3, compressed: 10 }
+```
+
+shipdeck tidies old releases in the `done` step of a successful deploy, not after a manual rollback. See [Releases](/docs/guides/releases).
+
+## pipeline
+
+The steps of a deploy, in order. Every step is optional; a step that is absent has no commands. Seven steps take settings:
+
+| Step | `run` | `check` | Other settings |
+| --- | --- | --- | --- |
+| `preflight` | `local`, `server` | | `requires` |
+| `build` | `local` | | `version_from` |
+| `pack` | | | `binary`, `files` |
+| `setup` | `server` | `server` | |
+| `health` | | `local`, `server` | `url`, `timeout_secs`, `rollback` |
+| `done` | `local`, `server` | | |
+| `failed` | `local` | | |
+
+`upload`, `unpack`, `switch` and `restart` are done by shipdeck and take no settings; writing them is a problem. Any other side or block is refused with a message that says where the command belongs (for example `build cannot run commands on the server`). For the order of steps and what shipdeck does in between, see [The pipeline](/docs/guides/pipeline).
+
+`run` and `check` always name the side:
+
+```yaml
+pipeline:
+  build:
+    run:
+      local: npm run build    # not "run: npm run build"
+```
+
+### pipeline.preflight
+
+Step 1. shipdeck checks your PC and the server, then runs `run.server` in `service.dir`, then `run.local` in `project`. A failure stops the deploy before anything is built.
+
+| Field | Type | What it does |
+| --- | --- | --- |
+| `requires` | list of text | Programs the server must have, such as `node` or `npm`. Preflight stops if one is missing. |
+| `run.server` | commands | On the server, in `service.dir`. Runs first. |
+| `run.local` | commands | On your PC, in `project`. Runs only if `run.server` passed. |
+
+Each `requires` entry is a program name or an absolute path: letters, digits, `.`, `_`, `+`, `-` and `/`, with no `..`. The program in `service.start` is checked already, so you do not need to list it.
+
+```yaml
+pipeline:
+  preflight:
+    requires: [npm]
+    run:
+      local: npm test
+```
+
+### pipeline.build
+
+Step 2. Runs `run.local` in `project`. A failure stops the deploy. When `run.local` is empty, shipdeck ships the files as they are.
+
+| Field | Type | What it does |
+| --- | --- | --- |
+| `version_from` | text | The file whose version names the release, relative to `project`. |
+| `run.local` | commands | Builds the project on your PC, in `project`. |
+
+`version_from` default: the first of `Cargo.toml`, `package.json`, `pyproject.toml` or `VERSION` found in `project`; else the latest git tag (a leading `v` dropped); else `0.0.0`. The file name picks how it is read:
+
+| File | Version read from |
+| --- | --- |
+| `Cargo.toml` | `package.version` (follows `version.workspace = true` to the workspace) |
+| `package.json` | `"version"` |
+| `pyproject.toml` | `project.version` or `tool.poetry.version` |
+| any other name | the first non-empty line |
+
+The version, git commit and time make the release id, such as `v0.3.1-ab12cd3-20261014.153012`.
+
+### pipeline.pack
+
+Step 3. What goes into the release: the binary and the files. A pack must ship something: set `binary`, at least one include pattern, or both. Otherwise the file gets `nothing to ship`.
+
+| Field | Type | What it does |
+| --- | --- | --- |
+| `binary` | text | A compiled program, relative to `project`. |
+| `files.include.project` | list of patterns | Files from `project` to put in the release. |
+| `files.include.deploy` | list of patterns | Files from this deploy.yaml's folder, such as `.env`. |
+| `files.exclude.project` | list of patterns | What to leave out of `include.project`. |
+| `files.exclude.deploy` | list of patterns | What to leave out of `include.deploy`. |
+
+**`binary`** lands at the release root under its file name, with mode `0755`. After the build, shipdeck checks it was built for the server's CPU and glibc. Its file name must not be `release.json` or `<service.name>.service`.
+
+**`files`** takes paths or globs in the style of fast-glob and Tailwind: `*` and `?` inside one folder, `**/` for any number of folders, `[a-z]`, `{js,ts}`. A folder brings everything in it. A pattern starting with `!` turns it around: in `include` it leaves out what it matches, in `exclude` it keeps it. Each path keeps its place inside the release, and a deploy-folder file replaces a project file at the same path. `.git` is never shipped.
+
+```yaml
+pipeline:
+  pack:
+    files:
+      include:
+        project: [dist, package.json, package-lock.json]
+        deploy: [.env]
+      exclude:
+        project: ["**/*.map"]
+```
+
+Quote patterns that start with `!` or `*`, and any pattern with braces or commas inside `[ ]`: YAML reads them otherwise. Every include pattern that is not a `!` pattern must match something, or the deploy stops. [Packing files](/docs/guides/packing-files) explains matching, symlinks, file modes and every check.
+
+### pipeline.setup
+
+Step 6, after shipdeck uploads and unpacks the release. Runs in `releases/<id>` on the server while the old release is still live. A failure removes the new release; the old one keeps serving.
+
+| Field | Type | What it does |
+| --- | --- | --- |
+| `run.server` | commands | Commands in the new release, such as `npm ci --omit=dev` or migrations. |
+| `check.server` | commands | Commands that must pass after `run`, such as `node --check dist/main.js`. Runs only if `run.server` passed. |
+
+Setup has no `local` side. Commands on your PC belong in `pipeline.preflight.run.local` or `pipeline.build.run.local`.
+
+### pipeline.health
+
+Step 9, after shipdeck switches `current` and restarts the service. It waits until the service is active, `url` answers and every check passes.
+
+| Field | Type | Default | Rules |
+| --- | --- | --- | --- |
+| `url` | text | none | starts with `http://` or `https://`; no quotes, spaces or newlines |
+| `check.server` | commands | none | |
+| `check.local` | commands | none | |
+| `timeout_secs` | whole number | `20` | at least `3` |
+| `rollback` | `ask` or `auto` | `ask` | lowercase, exactly |
+
+**`url`** is fetched on the server, such as `http://127.0.0.1:3000/health`, with `curl -fsS --max-time 3`, or `wget -q -T 3` when there is no curl. curl does not follow redirects and fails only on a status of 400 or more, so a 3xx answer counts as healthy; wget follows redirects. A fetch that fails counts as unhealthy, and a server with neither tool fails the step. Without a `url`, health waits for systemd to report the service `active`.
+
+**`check`** commands run once the service is up: `server` in `current`, then `local` in `project`. They are retried until `timeout_secs`.
+
+**`timeout_secs`** is the time the release has to become healthy. A release counts as up after 3 healthy checks in a row, one second apart, so the minimum is `3`.
+
+**`rollback`** says what happens when the new release is not healthy, or the switch or restart fails:
+
+| Value | Behavior |
+| --- | --- |
+| `ask` | Ask before rolling back to the release that was live. With no answer within 30 seconds, roll back. |
+| `auto` | Roll back at once. |
+
+```yaml
+pipeline:
+  health:
+    url: http://127.0.0.1:3000/health
+    timeout_secs: 30
+    rollback: auto
+```
+
+See [Health and rollback](/docs/guides/health-and-rollback).
+
+### pipeline.done
+
+Step 10: the new release is live. shipdeck tidies old releases (see [`service.keep`](#servicekeep)), then runs `run.server` in `current`, then `run.local` in `project`. A failure is only a warning; the release stays live.
+
+| Field | Type | What it does |
+| --- | --- | --- |
+| `run.server` | commands | On the server, in `current`. Runs first. |
+| `run.local` | commands | On your PC, in `project`. Runs only if `run.server` passed. |
+
+A manual rollback from the Releases screen runs `done` too, with `SHIPDECK_ACTION=rollback`.
+
+### pipeline.failed
+
+Runs when any step fails, after a rollback if there was one. `SHIPDECK_STEP` names the step that failed and `SHIPDECK_ERROR` holds the first line of the error.
+
+| Field | Type | What it does |
+| --- | --- | --- |
+| `run.local` | commands | On your PC, in `project`. |
+
+There is no `server` side: the server may be out of reach when a step fails. A failure here is only a warning. The Failed step appears in the step list only when `run.local` has commands.
+
+```yaml
+pipeline:
+  failed:
+    run:
+      local: ./notify.sh "my-api failed at $SHIPDECK_STEP: $SHIPDECK_ERROR"
+```
+
+Every variable shipdeck sets for commands is listed on [Variables](/docs/reference/variables).
+
+## Next
+
+<Cards>
+  <Card title="Config problems" href="/docs/reference/config-problems" description="Every message shipdeck prints for a deploy.yaml it cannot use." />
+  <Card title="The pipeline" href="/docs/guides/pipeline" description="What each step does, where commands run and in what order." />
+</Cards>

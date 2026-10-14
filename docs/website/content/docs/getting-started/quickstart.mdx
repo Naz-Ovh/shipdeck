@@ -1,0 +1,384 @@
+---
+title: Quickstart
+description: From nothing to a first deploy and a first rollback of a small Rust service.
+---
+
+This page takes a Rust service called `my-api` from your PC to a server at `203.0.113.10`, deploys it as the user `deploy`, then rolls it back. It takes about ten minutes plus your build time.
+
+You need shipdeck's [requirements](/docs#what-you-need): a Rust toolchain on your PC, and a Linux server with systemd that you can reach over SSH.
+
+<Steps>
+<Step>
+### Install shipdeck
+
+```sh
+cargo install --git https://github.com/Naz-Ovh/shipdeck --tag v0.3.0 shipdeck
+shipdeck --version
+```
+
+The second command prints `shipdeck 0.3.0`. [Installation](/docs/getting-started/installation) has the other ways to install it.
+</Step>
+
+<Step>
+### Add an SSH alias (optional)
+
+shipdeck reads `~/.ssh/config`, so you can give the server a short name and keep the address, user and key in one place:
+
+```ini title="~/.ssh/config"
+Host prod
+  HostName 203.0.113.10
+  User deploy
+  IdentityFile ~/.ssh/id_ed25519
+```
+
+With this alias, `ssh.host: prod` in `deploy.yaml` connects to `203.0.113.10` as `deploy`, and shipdeck logs in with `~/.ssh/id_ed25519`. Without an alias, write the address in `ssh.host` and pass the key with `--key` when you launch shipdeck.
+
+shipdeck does not use ssh-agent and does not try default key files on its own. It uses `--key`, or the alias's `IdentityFile`, and otherwise asks for a password. See [SSH and login](/docs/guides/ssh).
+</Step>
+
+<Step>
+### Create the deploy root
+
+A deploy root is a folder whose subfolders each hold one `deploy.yaml`. Each subfolder is one deployable. In your repository:
+
+<Files>
+  <Folder name="my-api" defaultOpen>
+    <File name="Cargo.toml" />
+    <Folder name="src" />
+    <Folder name="scripts" defaultOpen>
+      <Folder name="deploy" defaultOpen>
+        <Folder name="my-api-prod" defaultOpen>
+          <File name="deploy.yaml (committed)" />
+          <File name=".env (gitignored)" />
+        </Folder>
+      </Folder>
+    </Folder>
+  </Folder>
+</Files>
+
+The `.env` file holds the service's settings and secrets. Keep it out of git:
+
+```sh
+echo 'scripts/deploy/*/.env' >> .gitignore
+```
+
+More on the layout in [Deploy root](/docs/guides/deploy-root).
+</Step>
+
+<Step>
+### Write deploy.yaml
+
+```yaml title="scripts/deploy/my-api-prod/deploy.yaml"
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
+name: My API (prod)
+project: ../../..                 # the repository root, relative to this file
+
+ssh:
+  host: prod                      # the alias, or 203.0.113.10
+  user: deploy
+
+service:
+  name: my-api                    # becomes my-api.service
+  dir: /opt/my-api                # releases live here
+  start: ./my-api -E=.env         # run from the release folder
+
+pipeline:
+  build:
+    run:
+      local: cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31
+  pack:
+    binary: target/x86_64-unknown-linux-gnu/release/my-api
+    files:
+      include:
+        deploy: [.env]            # from this folder, not the project
+  health:
+    url: http://127.0.0.1:8080/health
+```
+
+What each part does:
+
+- `name` is what shipdeck shows, and the systemd unit's description.
+- `project` is your source folder, relative to this file. Local commands run there.
+- `service.dir` is the app folder on the server. The first deploy creates it.
+- `service.start` is the command the service runs. A path starting with `./` points into the release.
+- `pipeline.build.run.local` builds on your PC. This one uses [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild) to link against glibc 2.31, so the binary also runs on servers with an older glibc than your PC. shipdeck checks the binary's CPU and glibc against the server after the build and stops if they do not match; for a glibc mismatch the message names the `cargo zigbuild` target to use.
+- `pipeline.pack` lists what travels: the binary, plus `.env` from the deploy folder. Nothing else is uploaded.
+- `pipeline.health.url` is fetched on the server after the restart. It must answer before the release counts as live.
+
+Every field, with its default, is in the [deploy.yaml reference](/docs/reference/deploy-yaml).
+
+<Accordions>
+  <Accordion title="The same file for Go, Node.js or Python">
+    The repository's `examples/` folder has a complete `deploy.yaml` for each. The parts that change most are `service.start` and `pipeline.pack`:
+
+    <Tabs items={['Go', 'Node.js', 'Python']}>
+      <Tab value="Go">
+        ```yaml
+        service:
+          start: ./worker --config config.yaml
+        pipeline:
+          build:
+            run:
+              local: CGO_ENABLED=0 go build -ldflags "-X main.version=$SHIPDECK_VERSION" -o dist/worker ./cmd/worker
+          pack:
+            binary: dist/worker
+        ```
+      </Tab>
+      <Tab value="Node.js">
+        ```yaml
+        service:
+          start: node dist/main.js        # node is looked up on the server
+        pipeline:
+          build:
+            run:
+              local: [npm ci, npm run build]
+          pack:
+            files:
+              include:
+                project: [dist, package.json, package-lock.json]
+          setup:
+            run:
+              server: [npm ci --omit=dev, npm run migrate]
+        ```
+      </Tab>
+      <Tab value="Python">
+        ```yaml
+        service:
+          start: .venv/bin/python -m app
+        pipeline:
+          pack:
+            files:
+              include:
+                project: [.]
+              exclude:
+                project: [tests, "**/__pycache__", .venv, "**/*.pyc"]
+          setup:
+            run:
+              server:
+                - python3 -m venv .venv
+                - .venv/bin/pip install -q -r requirements.txt
+        ```
+      </Tab>
+    </Tabs>
+
+    [Examples](/docs/guides/examples) walks through all four.
+  </Accordion>
+</Accordions>
+</Step>
+
+<Step>
+### Give the deploy user its rights
+
+shipdeck deploys as `ssh.user`. That user must be able to write to `/opt/my-api` (or create it), and, unless it is `root`, run five `systemctl`, `install` and `journalctl` commands through passwordless `sudo`. You have two ways to get there:
+
+- **Deploy as a user that already has the rights.** `root` works as it is. So does a user with passwordless `sudo`, such as the default user of many cloud images.
+- **Let shipdeck create a dedicated user.** Launch shipdeck (next step), select the deployable and press `u`. The dialog shows one command to run once on the server as root. It creates the user `deploy`, authorizes your public key, creates `/opt/my-api` owned by `deploy`, and installs a sudo rule limited to the five commands for `my-api`. Press `c` to copy it; shipdeck also prints it when you quit.
+
+If the `deploy` user does not exist yet, the deployable shows a login error at first. That is expected: run the setup command, then press `s` in shipdeck to refresh.
+
+If a right is still missing when you deploy, the deploy stops at Preflight and names it. [Server access](/docs/guides/server-access) lists the five commands and the sudo rule.
+</Step>
+
+<Step>
+### Launch shipdeck
+
+From the repository root:
+
+```sh
+shipdeck ./scripts/deploy
+```
+
+shipdeck first reads every `deploy.yaml` under the root. If one has a mistake, it prints every problem with its line and a hint, and does not start. For example:
+
+```txt
+✘ shipdeck did not start: 1 deploy.yaml file has 1 problem
+
+my-api-prod/deploy.yaml
+  error: `pipeline.health.timeout_secs` must be at least 3
+  ...
+```
+
+Fix the file and run the command again. When the files are clean, the Deployables screen opens and shipdeck connects to every deployable in the background to read what is live. The capture below uses sample deployables; yours shows `My API (prod)` alone.
+
+<Screen title="Deployables">{`
+ ◆ shipdeck   root ./scripts/deploy                    login ~/.ssh/config key, else password prompt
+ 1 Deployables   2 Operation   3 Releases
+
+╭ Deployables · 4 ───────────────────────╮╭ api-prod ──────────────────────────────────────────────╮
+│ ▌● My API (prod)                       ││ My API (prod)                                          │
+│    deploy@api  api-prod                ││ scripts/deploy/api-prod                                │
+│    v0.3.1 (ab12cd3) · active           ││                                                        │
+│                                        ││ TARGET ─────────────────────────                       │
+│  ● My Proxy (prod)                     ││   ssh      deploy@api  → 203.0.113.10:22               │
+│    deploy@proxy  proxy-prod            ││ ~/.ssh/config                                          │
+│    ✘ connecting to deploy@203.0.113.11 ││   login    key /home/me/.ssh/id_deploy                 │
+│                                        ││ (~/.ssh/config), else password                         │
+│  ⠋ My API (beta)                       ││   folder   /opt/api-prod                               │
+│    deploy@api  api-beta                ││   service  api-prod   active                           │
+│    ⠋ connecting…                       ││   runs as  deploy                                      │
+│                                        ││   start    /opt/api-prod/current/server -E=.env        │
+│  ⠋ Web (prod)                          ││   live     v0.3.1 (ab12cd3) · active                   │
+│    deploy@web  web-prod                ││                                                        │
+│    ⠋ connecting…                       ││ PIPELINE ─────────────────────────                     │
+│                                        ││   build     local   cargo zigbuild --release -p my-api │
+│                                        ││   pack      binary  target/release/server              │
+│                                        ││             deploy  .env, files/                       │
+│                                        ││   health    waits   http://127.0.0.1:6520/ · 20s       │
+│                                        ││             failing asks, then rolls back after 30s    │
+│                                        ││                                                        │
+│                                        ││ POLICY ─────────────────────────                       │
+│                                        ││   keeps    5 unpacked + 15 compressed                  │
+│                                        ││   unit     built-in template                           │
+╰────────────────────────────────────────╯╰────────────────────────────────────────────────────────╯
+ ↑↓  select    ⏎  deploy    r  releases    s  refresh    u  server setup    tab  screens    q  quit
+`}</Screen>
+
+The right panel shows what shipdeck will do: the target, the login, the start command as systemd will run it, and the pipeline. Before the first deploy, the list item says `not deployed yet: the first deploy creates its folder`, or `nothing deployed yet` when the folder already exists (for example after the setup command).
+</Step>
+
+<Step>
+### Trust the host key
+
+On the first connection to `203.0.113.10`, a **New server** dialog shows the server's key type and SHA256 fingerprint. Compare it with the matching line from this command, run on the server:
+
+```sh
+ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub
+```
+
+If they match, press `y`. shipdeck saves the key to `~/.ssh/known_hosts` and connects. If a known key ever changes, shipdeck refuses to connect and tells you which line of `known_hosts` to check.
+</Step>
+
+<Step>
+### Deploy
+
+Select `My API (prod)` and press `⏎`. The **Deploy** dialog shows the target, the service, the first build command and what is live now. Press `y`.
+
+shipdeck switches to the Operation screen and runs the pipeline. The Steps panel ticks off each step, the Progress panel shows the current one, and the Log panel streams every command and its output.
+
+| Step | What you see |
+| --- | --- |
+| Preflight | Connects, reads the server's CPU, glibc and free space, and creates `/opt/my-api` on the first deploy. Checks that `.env` exists in the deploy folder. |
+| Build | Names the release from `Cargo.toml` and the git commit, runs `cargo zigbuild`, then shows a bar of crates compiled. Checks the binary against the server. |
+| Pack | Builds one `.tar.gz` with the binary, `.env`, `release.json` and the unit file. |
+| Upload | Sends it, with bytes and speed. |
+| Unpack | Unpacks it into `releases/<id>`. |
+| Setup | Nothing to run in this example, so it is skipped. |
+| Switch | Points `current` at the new release and installs `my-api.service`. |
+| Restart | `systemctl restart my-api`. |
+| Health | Waits until the service is `active` and the URL answers, three times in a row. |
+| Done | Tidies old releases. |
+
+The banner ends with `LIVE` and `<release> is live, healthy and serving.` Press `esc` to go back to Deployables, where the item now shows the live version.
+</Step>
+
+<Step>
+### Look at the server
+
+```sh
+ssh prod 'ls -l /opt/my-api; systemctl status my-api --no-pager'
+```
+
+<Files>
+  <Folder name="/opt/my-api" defaultOpen>
+    <File name="current → releases/v0.1.0-ab12cd3-20261014.153012" />
+    <Folder name="releases" defaultOpen>
+      <Folder name="v0.1.0-ab12cd3-20261014.153012" defaultOpen>
+        <File name="my-api" />
+        <File name=".env" />
+        <File name="release.json" />
+        <File name="my-api.service" />
+      </Folder>
+    </Folder>
+    <Folder name="backups" />
+    <Folder name="shared" />
+  </Folder>
+</Files>
+
+The release id is `v<version>-<commit>-<UTC time>`. `systemctl status my-api` shows `My API (prod) v0.1.0 (ab12cd3)` in its description, so you can always see what is live. `.env` arrives with mode `0600`. [Server layout](/docs/reference/server-layout) describes every file.
+</Step>
+
+<Step>
+### Deploy again
+
+Make a change, bump the version in `Cargo.toml` to `0.1.1`, and deploy again with `⏎` and `y`. The new release gets its own folder in `releases/`, `current` moves to it, and the previous release stays unpacked, ready to switch back to.
+
+If you deploy from uncommitted changes, the log warns `the source has uncommitted changes; the release is marked dirty`, and the release id gets `-dirty`.
+</Step>
+
+<Step>
+### When a deploy fails after the switch
+
+If the new release fails at Switch, Restart or Health, shipdeck shows the last 30 journal lines in the log and asks:
+
+```txt
+v0.1.1 failed at Health: not healthy after 20s: systemd says active; the health url said: curl…
+v0.1.0 was live before it.
+
+Roll back to v0.1.0?      rolling back in 27s
+
+y roll back now    n keep v0.1.1 live
+```
+
+- `y` puts `v0.1.0` back now and deletes the failed release.
+- `n` keeps `v0.1.1` live, for example to look at it on the server.
+- No answer in 30 seconds rolls back.
+
+The question shows only the first line of the error, cut at 70 characters. The full error is in the Log panel.
+
+To roll back at once without a question, set `pipeline.health.rollback: auto`. A failure before the switch never needs a rollback: the live release was not touched. See [Health and rollback](/docs/guides/health-and-rollback).
+</Step>
+
+<Step>
+### Roll back by hand
+
+Press `r` on the deployable to open the Releases screen. It lists every release on the server, newest first, with its version, commit, build time, size and whether it is live, unpacked or compressed.
+
+<Screen title="Releases">{`
+ ◆ shipdeck   root ./scripts/deploy                    login ~/.ssh/config key, else password prompt
+ 1 Deployables   2 Operation   3 Releases                                    ↩ api-prod: rolled back
+
+╭ Releases · My API (prod) ────────────────────────────────────────────── deploy@api:/opt/api-prod ╮
+│     Release          Version       Commit     Built (UTC)       Size        Where                │
+│                                                                                                  │
+│  ●  v0.3.1-ab12cd3-  0.3.1         ab12cd3    2026-10-14 15:30    29.6 MiB   LIVE                │
+│     v0.3.0-9f8e7d6-  0.3.0         9f8e7d6    2026-10-12 09:10    29.6 MiB  unpacked             │
+│ ▌   v0.2.9-1a2b3c4-  0.2.9         1a2b3c4    2026-10-01 12:00    10.5 MiB  tar.gz               │
+│     v0.2.8-5d6e7f8-  0.2.8         5d6e7f8    2026-09-20 08:00    10.5 MiB  tar.gz               │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭ Details ─────────────────────────────────────────────────────────────────────────────────────────╮
+│ kept  2/5 unpacked  ·  2/15 compressed                                                           │
+│                                                                                                  │
+│ release  v0.2.9-1a2b3c4-20261001.120000                                                          │
+│ ⏎  roll back to this release (unpack, switch + restart)                                          │
+│                                                                                                  │
+│                                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ↑↓  select    ⏎  roll back    r  refresh    esc  back    q  quit
+`}</Screen>
+
+Select the older release, press `⏎`, then `y`. A manual rollback runs Connect, Unpack (only for a compressed release), Switch, Restart, Health and Done (only when `pipeline.done` has commands, which then run with `SHIPDECK_ACTION=rollback`). If the release fails at Switch, Restart or Health, the same rollback question appears, and the release that was live before goes back on `y`, on no answer, or at once with `rollback: auto`. See [Releases](/docs/guides/releases).
+</Step>
+
+<Step>
+### Quit
+
+Press `q`. If an operation is still running, shipdeck asks first, because quitting stops it midway.
+</Step>
+</Steps>
+
+## Next
+
+<Cards>
+  <Card title="The pipeline" href="/docs/guides/pipeline" description="Add your own commands to each step." />
+  <Card title="Environment and secrets" href="/docs/guides/environment" description="Ship .env safely and pass variables to the service." />
+</Cards>

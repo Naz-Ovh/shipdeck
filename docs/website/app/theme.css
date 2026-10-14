@@ -1,0 +1,149 @@
+/*
+ * Spruce: the shipdeck palette.
+ *
+ * One hue family (a jade green between teal and leaf, ~170 in OKLCH) carries
+ * both the neutrals and the accent, so nothing reads warm-beige or icy-blue.
+ * Surfaces are a stepped scale: every nested area sits one step deeper than
+ * the area around it (see surfaces.css).
+ */
+
+@theme inline {
+  --font-sans: var(--font-google-sans-flex), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), var(--font-jetbrains-mono-symbols), ui-monospace, 'SFMono-Regular', monospace;
+}
+
+/* static: callouts look colors up by name at runtime, so keep every token */
+@theme static {
+  /* Stepped surfaces: 0 is the page, each step is one nesting level in. */
+  --color-sd-0: oklch(0.988 0.003 170);
+  --color-sd-1: oklch(0.971 0.006 170);
+  --color-sd-2: oklch(0.953 0.009 171);
+  --color-sd-3: oklch(0.932 0.012 172);
+  --color-sd-4: oklch(0.908 0.015 173);
+  --color-sd-line: oklch(0.885 0.013 172);
+  --color-sd-line-strong: oklch(0.82 0.018 172);
+
+  --color-sd-ink: oklch(0.235 0.02 182);
+  --color-sd-ink-soft: oklch(0.42 0.02 180);
+  --color-sd-ink-faint: oklch(0.55 0.017 178);
+
+  --color-sd-jade: oklch(0.53 0.1 168);
+  --color-sd-jade-strong: oklch(0.45 0.09 170);
+  --color-sd-jade-wash: oklch(0.94 0.035 168);
+  --color-sd-moss: oklch(0.6 0.09 135);
+  --color-sd-tide: oklch(0.56 0.07 215);
+  --color-sd-ember: oklch(0.6 0.15 32);
+  --color-sd-amber: oklch(0.7 0.12 80);
+
+  --color-fd-background: var(--color-sd-0);
+  --color-fd-foreground: var(--color-sd-ink);
+  --color-fd-muted: var(--color-sd-2);
+  --color-fd-muted-foreground: var(--color-sd-ink-faint);
+  --color-fd-popover: var(--color-sd-0);
+  --color-fd-popover-foreground: var(--color-sd-ink);
+  --color-fd-card: var(--color-sd-2);
+  --color-fd-card-foreground: var(--color-sd-ink);
+  --color-fd-border: var(--color-sd-line);
+  --color-fd-primary: var(--color-sd-jade);
+  --color-fd-primary-foreground: oklch(0.985 0.006 168);
+  --color-fd-secondary: var(--color-sd-2);
+  --color-fd-secondary-foreground: var(--color-sd-ink);
+  --color-fd-accent: var(--color-sd-3);
+  --color-fd-accent-foreground: var(--color-sd-ink);
+  --color-fd-ring: var(--color-sd-jade);
+  --color-fd-overlay: oklch(0.2 0.02 180 / 0.25);
+
+  --color-fd-info: var(--color-sd-tide);
+  --color-fd-warning: var(--color-sd-amber);
+  --color-fd-error: var(--color-sd-ember);
+  --color-fd-success: var(--color-sd-jade);
+  --color-fd-idea: var(--color-sd-moss);
+  --color-fd-diff-remove: oklch(0.6 0.15 25 / 0.1);
+  --color-fd-diff-remove-symbol: oklch(0.58 0.17 25);
+  --color-fd-diff-add: oklch(0.6 0.11 165 / 0.12);
+  --color-fd-diff-add-symbol: oklch(0.55 0.12 165);
+}
+
+.dark {
+  --color-sd-0: oklch(0.168 0.009 176);
+  --color-sd-1: oklch(0.197 0.011 175);
+  --color-sd-2: oklch(0.226 0.013 174);
+  --color-sd-3: oklch(0.258 0.015 173);
+  --color-sd-4: oklch(0.292 0.017 172);
+  --color-sd-line: oklch(0.3 0.014 174);
+  --color-sd-line-strong: oklch(0.38 0.018 172);
+
+  --color-sd-ink: oklch(0.93 0.01 168);
+  --color-sd-ink-soft: oklch(0.82 0.014 168);
+  --color-sd-ink-faint: oklch(0.68 0.017 170);
+
+  --color-sd-jade: oklch(0.79 0.11 166);
+  --color-sd-jade-strong: oklch(0.86 0.1 166);
+  --color-sd-jade-wash: oklch(0.3 0.04 170);
+  --color-sd-moss: oklch(0.8 0.1 135);
+  --color-sd-tide: oklch(0.76 0.08 215);
+  --color-sd-ember: oklch(0.72 0.13 32);
+  --color-sd-amber: oklch(0.82 0.11 82);
+
+  --color-fd-primary-foreground: oklch(0.2 0.03 170);
+  --color-fd-overlay: oklch(0.08 0.01 180 / 0.55);
+  --color-fd-diff-remove: oklch(0.6 0.15 25 / 0.14);
+  --color-fd-diff-remove-symbol: oklch(0.72 0.14 25);
+  --color-fd-diff-add: oklch(0.7 0.11 165 / 0.12);
+  --color-fd-diff-add-symbol: oklch(0.78 0.11 165);
+}
+
+:root {
+  --fd-layout-width: 92rem;
+  color-scheme: light;
+
+  /* syntax colors for the Spruce code theme (lib/code-theme.ts) */
+  --sd-code-fg: oklch(0.34 0.02 182);
+  --sd-code-key: oklch(0.47 0.095 168);
+  --sd-code-string: oklch(0.47 0.07 220);
+  --sd-code-constant: oklch(0.5 0.11 295);
+  --sd-code-variable: oklch(0.5 0.11 295);
+  --sd-code-keyword: oklch(0.48 0.1 145);
+  --sd-code-function: oklch(0.47 0.095 168);
+  --sd-code-operator: oklch(0.52 0.03 178);
+  --sd-code-punct: oklch(0.62 0.018 178);
+  --sd-code-comment: oklch(0.6 0.014 178);
+  --sd-code-inserted: oklch(0.5 0.11 160);
+  --sd-code-deleted: oklch(0.55 0.15 25);
+}
+
+.dark {
+  color-scheme: dark;
+
+  --sd-code-fg: oklch(0.87 0.012 168);
+  --sd-code-key: oklch(0.8 0.11 166);
+  --sd-code-string: oklch(0.8 0.065 215);
+  --sd-code-constant: oklch(0.8 0.1 295);
+  --sd-code-variable: oklch(0.8 0.1 295);
+  --sd-code-keyword: oklch(0.82 0.1 140);
+  --sd-code-function: oklch(0.8 0.11 166);
+  --sd-code-operator: oklch(0.72 0.03 175);
+  --sd-code-punct: oklch(0.6 0.02 175);
+  --sd-code-comment: oklch(0.6 0.018 175);
+  --sd-code-inserted: oklch(0.78 0.11 160);
+  --sd-code-deleted: oklch(0.72 0.13 25);
+}
+
+html {
+  font-family: var(--font-sans);
+  font-optical-sizing: auto;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--color-sd-jade) 28%, transparent);
+}
+
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--font-mono);
+  font-variant-ligatures: none;
+}

@@ -1,0 +1,132 @@
+/* Layout chrome: sidebar, header, table of contents, page header. */
+
+/* ---------- sidebar ---------- */
+
+#nd-sidebar > div,
+#nd-sidebar-mobile {
+  border-color: var(--color-sd-line);
+}
+
+#nd-sidebar a,
+#nd-sidebar button,
+#nd-sidebar-mobile a,
+#nd-sidebar-mobile button {
+  font-size: 0.9rem;
+}
+
+/* items: muted ink, a soft step on hover, a jade pill when active */
+#nd-sidebar a[data-active='true'],
+#nd-sidebar-mobile a[data-active='true'] {
+  background-color: var(--color-sd-jade-wash);
+  color: var(--color-sd-jade-strong);
+  font-weight: 560;
+}
+
+#nd-sidebar a[data-active='true']::before,
+#nd-sidebar-mobile a[data-active='true']::before {
+  background-color: var(--color-sd-jade);
+}
+
+[data-sd-separator] {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--color-sd-ink-faint);
+}
+
+[data-sd-separator]::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-sd-line);
+}
+
+/* search trigger reads as a field set into the sidebar */
+#nd-sidebar button[data-search-full],
+#nd-sidebar-mobile button[data-search-full] {
+  background-color: var(--color-sd-0);
+  border-color: var(--color-sd-line);
+  border-radius: 0.6rem;
+  color: var(--color-sd-ink-faint);
+}
+
+#nd-sidebar button[data-search-full] kbd,
+#nd-sidebar-mobile button[data-search-full] kbd {
+  font-family: var(--font-mono);
+  background-color: var(--color-sd-2);
+  border-color: var(--color-sd-line);
+}
+
+/* ---------- mobile header ---------- */
+
+#nd-subnav[data-transparent='false'] {
+  background-color: color-mix(in oklab, var(--color-sd-1) 86%, transparent);
+  border-color: var(--color-sd-line);
+}
+
+/* ---------- table of contents ---------- */
+
+#nd-toc {
+  font-size: 0.84rem;
+}
+
+#nd-toc-title {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--color-sd-ink-faint);
+}
+
+#nd-toc a[data-active='true'] {
+  color: var(--color-sd-jade);
+}
+
+/* ---------- page header ---------- */
+
+#nd-page h1 {
+  font-size: clamp(2rem, 1.6rem + 1.4vw, 2.6rem);
+  font-weight: 640;
+  letter-spacing: -0.028em;
+  line-height: 1.08;
+  font-variation-settings: 'opsz' 48, 'wdth' 94;
+  color: var(--color-sd-ink);
+}
+
+#nd-page h1 + p {
+  font-size: 1.08rem;
+  line-height: 1.6;
+  color: var(--color-sd-ink-soft);
+}
+
+[data-sd-page-actions] {
+  border-color: var(--color-sd-line);
+}
+
+/* breadcrumb above the title */
+#nd-page nav[aria-label='Breadcrumb'],
+#nd-page .text-fd-muted-foreground.text-sm:has(> a + svg) {
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+}
+
+/* footer prev / next cards */
+#nd-page a[class*='rounded-xl'][class*='border'][class*='p-4'] {
+  background-color: var(--color-sd-1);
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+#nd-page a[class*='rounded-xl'][class*='border'][class*='p-4']:hover {
+  background-color: var(--color-sd-2);
+  border-color: color-mix(in oklab, var(--color-sd-jade) 45%, var(--color-sd-line));
+}
+
+/* ---------- search dialog ---------- */
+
+[data-sd-search] {
+  --color-fd-accent: var(--color-sd-jade-wash);
+  --color-fd-accent-foreground: var(--color-sd-jade-strong);
+}

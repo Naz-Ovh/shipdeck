@@ -1,0 +1,210 @@
+---
+title: Packing files
+description: How pipeline.pack picks the binary and the files that go into a release, and how the patterns match.
+---
+
+`pipeline.pack` says what goes into a release: a compiled `binary`, `files` from your project and from the deploy folder, or both. shipdeck packs them into one archive, uploads it and unpacks it into `releases/<id>` on the server.
+
+```yaml title="scripts/deploy/my-api-prod/deploy.yaml"
+pipeline:
+  pack:
+    binary: target/x86_64-unknown-linux-gnu/release/my-api
+    files:
+      include:
+        project: [migrations]
+        deploy: [.env]
+```
+
+A deployable must ship something: set `binary`, or at least one include pattern that does not start with `!`. Otherwise the launch check reports `nothing to ship`.
+
+## The binary
+
+`pipeline.pack.binary` is a compiled program, relative to `project`. It lands at the root of the release under its own file name, with mode `0755`. When `service.start` is not set, the service runs `./<binary>`.
+
+After `build.run.local` finishes, shipdeck inspects the file and compares it with what Preflight found on the server:
+
+| Check | How | Message when it fails |
+| --- | --- | --- |
+| The file exists | read at the end of Build | `reading <path>: ...` |
+| CPU architecture | read from the executable's header, compared with the server's `uname -m` | `the binary is built for <arch>, but the server is <arch>` |
+| glibc | the newest `GLIBC_x.y` version named in the binary's dynamic string table, compared with the server's `ldd --version` | `the binary needs glibc <need>, but the server has <have>. Build against the server's glibc, e.g. cargo zigbuild --target <arch>-unknown-linux-gnu.<have>` |
+| glibc on a musl server | as above, when the server reports no glibc | `the binary needs glibc <v>, but the server has no glibc; build a static musl binary instead` |
+
+A binary that names no glibc version counts as static and passes the glibc check; the log says `no glibc needed`. A file shipdeck cannot parse as an executable stops the build with `<path> is not an executable this tool understands`.
+
+<Callout title="Building for an older glibc">
+A Rust binary built on a new desktop often needs a newer glibc than the server has. [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild) builds against a chosen glibc: `cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31`. The binary then lives under `target/x86_64-unknown-linux-gnu/release/`.
+</Callout>
+
+## Files from two sources
+
+`pipeline.pack.files` has an `include` and an `exclude` list, each split by source:
+
+| Source | Base folder | Use it for |
+| --- | --- | --- |
+| `project` | `project` | Build output and source files: `dist`, `package.json`, `templates` |
+| `deploy` | the folder that holds `deploy.yaml` | Files that belong to this deployment: `.env`, `config.yaml` |
+
+Each path keeps its place inside the release: `dist/main.js` from the project lands at `releases/<id>/dist/main.js`, and `.env` from the deploy folder lands at `releases/<id>/.env`.
+
+When both sources have a file at the same path, the deploy-folder file replaces the project file, and the log says `<path> from the deploy folder replaces the project's <path>`. Two folders at the same path merge. A folder in one source and a file in the other is an error.
+
+## Patterns
+
+Patterns use the syntax of [fast-glob](https://crates.io/crates/fast-glob) and Tailwind. Each pattern is matched against the whole path relative to its source, with `/` between folders.
+
+| Pattern | Matches |
+| --- | --- |
+| `dist` | the folder and everything in it |
+| `dist/` | a trailing `/` matches folders only |
+| `.` | the whole source |
+| `./dist/main.js` | a leading `./` is dropped |
+| `*.js` | names inside one folder: `app.js`, not `src/app.js` |
+| `?.md` | one character: `a.md` |
+| `**/*.map` | any depth, the top included: `a.map`, `dist/x/a.map` |
+| `src/*.{js,ts}` | alternatives; braces can nest |
+| `file[0-9].txt`, `[!_]*` | one character from a set, or not from it |
+| `a\*b` | `\` escapes: a literal `*` |
+| `"!tests"` | a leading `!` turns the pattern around |
+
+Dot names are not special: `*` matches `.env`. A pattern that matches a folder covers everything inside it.
+
+The launch check refuses a pattern that is empty, starts with `/`, climbs out with `..`, has an empty or `.` folder in the middle (`a//b`, `a/./b`), or leaves a `{` or `[` unclosed. The same literal listed twice in one list is refused too; `./dist/`, `dist/` and `dist` count as the same.
+
+### Negation with `!`
+
+| Where | `!pattern` means | Example |
+| --- | --- | --- |
+| `include` | leave out what it matches | `project: [".", "!tests"]` ships everything but `tests/` |
+| `exclude` | keep what it matches | `project: [node_modules, "!node_modules/.prisma"]` leaves out `node_modules/` except `.prisma` |
+
+The order of patterns never matters. A `!` in `include` wins over every positive include for that path and everything below it, so `[".", "!tests", "tests/keep.py"]` does not ship `tests/keep.py`. shipdeck does not look inside `tests/` at all, so `tests/keep.py` then matches nothing and the deploy stops with `tests/keep.py (not found)`; see [Every include must match](#every-include-must-match). A `!` in `exclude` wins over every exclude in the same way. A list with only `exclude` patterns and no include ships nothing.
+
+### Quoting in YAML
+
+YAML reads some pattern characters as its own syntax. Quote these patterns:
+
+| Pattern starts with or contains | YAML reads it as | What you see unquoted |
+| --- | --- | --- |
+| `!` | a tag | `` `<path>` reads as a YAML tag `` with the hint `put it in quotes` |
+| `*` at the start | an alias | `this is not valid YAML: ... found unknown anchor` |
+| `{` or `,` inside `[ ]` | flow syntax | `this is not valid YAML: ...` |
+
+```yaml
+exclude:
+  project: ["**/*.map", "!dist/keep.map", "src/*.{test,spec}.js"]
+```
+
+## Every include must match
+
+Each include pattern that does not start with `!` must match at least one file or folder. Excludes and `!` patterns never need to match. A miss stops the deploy and names the patterns:
+
+```txt
+pipeline.pack.files.include.project in /home/you/my-repo/api: dist (not found), build/*.js (matched nothing)
+```
+
+A literal path says `(not found)`, a glob says `(matched nothing)`. When this is checked:
+
+| Source | Checked at | Why then |
+| --- | --- | --- |
+| `deploy` | the end of Preflight | these files exist before the build, so a missing `.env` stops the deploy before anything is built |
+| `project` | the end of Build, after `build.run.local` | build output such as `dist` only exists after the build |
+
+Both are checked again during Pack.
+
+## What shipdeck never ships
+
+- `.git`, file or folder, at any depth, from either source.
+- `deploy.yaml`, `deploy.yml` and `service.template` at the top of the deploy folder.
+- Sockets and pipes.
+- `release.json` and `<service.name>.service` at the release root belong to shipdeck. Including them is refused.
+- Anything inside a `service.shared` folder: those paths are links to `shared/` on the server. See [Environment and secrets](/docs/guides/environment#shared-folders).
+
+shipdeck does not read `.gitignore`. With `include.project: [.]`, `node_modules`, `.venv` and local `.env` files ship unless you exclude them.
+
+## Modes and links
+
+| What | In the release |
+| --- | --- |
+| Files | keep their permission bits |
+| Any file whose name starts with `.env` (`.env`, `.env.production`, `.envrc`) | mode `0600` |
+| Folders | `0755` |
+| The binary | `0755` |
+| A symlink named by an exact literal include, such as `dist` pointing to `build/out` | followed: the folder's content ships as `dist` |
+| Any other symlink, inside a shipped folder or matched by a glob | stays a link with its original target, so `node_modules/.bin/*` keeps working |
+
+An absolute link target points at the same path on the server.
+
+## Examples
+
+<Tabs items={['Rust binary', 'Node build', 'Python source']}>
+  <Tab value="Rust binary">
+    Only the binary and the deployment's `.env` travel. Nothing from the source tree ships.
+
+    ```yaml
+    pipeline:
+      build:
+        run:
+          local: cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31
+      pack:
+        binary: target/x86_64-unknown-linux-gnu/release/my-api
+        files:
+          include:
+            deploy: [.env]
+    ```
+
+    The release holds `my-api`, `.env` (mode `0600`), `release.json` and `my-api.service`.
+  </Tab>
+  <Tab value="Node build">
+    The build output and the package files ship; source maps stay behind. Production dependencies are installed on the server in Setup, so `node_modules` is not packed.
+
+    ```yaml
+    service:
+      start: node dist/main.js
+    pipeline:
+      build:
+        run:
+          local: [npm ci, npm run build]
+      pack:
+        files:
+          include:
+            project: [dist, package.json, package-lock.json]
+            deploy: [.env]
+          exclude:
+            project: ["**/*.map"]
+      setup:
+        run:
+          server: npm ci --omit=dev
+    ```
+  </Tab>
+  <Tab value="Python source">
+    The whole project ships as it is, minus tests, caches and the local virtualenv. The server builds its own `.venv` in Setup, inside the new release.
+
+    ```yaml
+    service:
+      start: .venv/bin/python -m app
+    pipeline:
+      pack:
+        files:
+          include:
+            project: [.]
+            deploy: [.env]
+          exclude:
+            project: [tests, "**/__pycache__", .venv, "**/*.pyc"]
+      setup:
+        run:
+          server:
+            - python3 -m venv .venv
+            - .venv/bin/pip install -q -r requirements.txt
+    ```
+  </Tab>
+</Tabs>
+
+The full files are on the [Examples](/docs/guides/examples) page.
+
+## Next
+
+<Cards>
+  <Card title="Environment and secrets" href="/docs/guides/environment" description="Ship .env safely and give the service its variables." />
+  <Card title="deploy.yaml" href="/docs/reference/deploy-yaml" description="Every field under pipeline.pack, with defaults and rules." />
+</Cards>

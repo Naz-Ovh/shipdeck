@@ -1,0 +1,16 @@
+{
+  "title": "shipdeck",
+  "pages": [
+    "index",
+    "---Get started---",
+    "...getting-started",
+    "---Guides---",
+    "...guides",
+    "---Reference---",
+    "...reference",
+    "---Concepts---",
+    "...concepts",
+    "---Help---",
+    "troubleshooting"
+  ]
+}

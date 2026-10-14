@@ -1,0 +1,193 @@
+---
+title: Upgrading from 0.2
+description: Where every shipdeck 0.2 key went in 0.3, what shipdeck prints for an old file, and a deploy.yaml before and after.
+---
+
+shipdeck 0.3 groups the deploy steps under `pipeline:` and the service settings under `service:`. It refuses a 0.2 file and says where each old key went, so you can move them one by one.
+
+## Key mapping
+
+| 0.2 | 0.3 |
+| --- | --- |
+| `build.cwd` | `project` |
+| `build.command` | `pipeline.build.run.local` (a list is now several commands; write `[cargo, build]` as one line) |
+| `build.binary` | `pipeline.pack.binary` |
+| `build.files` | `pipeline.pack.files.include.project` |
+| `build.version_from` | `pipeline.build.version_from`, now relative to `project` |
+| `bundle` | `pipeline.pack.files.include.deploy` |
+| `remote.dir`, `remote.service` | `service.dir`, `service.name` |
+| `remote.start` + `remote.args` | `service.start`, arguments included |
+| `remote.env`, `remote.env_file`, `remote.run_as` | `service.env`, `service.env_file`, `service.run_as` |
+| `remote.requires` | `pipeline.preflight.requires` |
+| `releases` | `service.keep` |
+| `health` | `pipeline.health` |
+| `hooks.before` | `pipeline.preflight.run.local` |
+| `hooks.server` | `pipeline.setup.run.server` |
+| `hooks.after` | `pipeline.done.run.local` |
+
+`name` and `ssh` are unchanged.
+
+Three moves need more than a rename:
+
+- **`build.command` as a list.** In 0.2, `command: [cargo, build, --release]` was one program and its arguments. In 0.3 every item of a list is a separate shell command, so write it as one line: `local: cargo build --release`.
+- **`remote.args`.** There is no `args` key. Put the arguments at the end of `service.start`. When you only had `args` and a binary, write the start command out: `start: ./my-api -E=.env`.
+- **`build.version_from`.** It is now relative to `project`, not to the deploy folder. `../../../my-api/Cargo.toml` becomes `Cargo.toml`, or remove the line: shipdeck finds `Cargo.toml`, `package.json`, `pyproject.toml` or `VERSION` in `project` by itself.
+
+The new steps take more than the old keys did: `pipeline.preflight.run.server`, `pipeline.setup.check.server`, `pipeline.health.check`, `pipeline.health.rollback`, `pipeline.done.run.server` and `pipeline.failed`. See [The pipeline](/docs/guides/pipeline).
+
+## What shipdeck says
+
+Run shipdeck on a 0.2 file and it prints one problem per old key, with the new place in the hint:
+
+```txt
+✘ shipdeck did not start: 1 deploy.yaml file has 6 problems
+
+my-api-prod/deploy.yaml
+  error: `build` moved in shipdeck 0.3
+    ┌─ scripts/deploy/my-api-prod/deploy.yaml:7:1
+    │
+  7 │ build:
+    │ ^^^^^ a 0.2 key
+    │
+    = help: it is `pipeline.build` now (run.local, version_from); binary and files moved to `pipeline.pack`
+
+  error: `remote` moved in shipdeck 0.3
+    ┌─ scripts/deploy/my-api-prod/deploy.yaml:12:1
+    │
+ 12 │ remote:
+    │ ^^^^^^ a 0.2 key
+    │
+    = help: it is `service` now: name, dir, start, run_as, env, env_file
+
+  error: `hooks` moved in shipdeck 0.3
+    ┌─ scripts/deploy/my-api-prod/deploy.yaml:17:1
+    │
+ 17 │ hooks:
+    │ ^^^^^ a 0.2 key
+    │
+    = help: each step has its own commands now: `pipeline.preflight.run.local`, `pipeline.setup.run.server`, `pipeline.done.run.local`
+...
+```
+
+While any 0.2 key is in the file, shipdeck holds back its value checks and does not report missing 0.3 keys such as `service`. Once every key has moved, run it again: problems with the values themselves show up then.
+
+shipdeck also recognizes old names written inside the new blocks, and gives each a hint:
+
+| Key | Hint |
+| --- | --- |
+| `service.service` | ``the unit's name is `service.name` `` |
+| `service.args` | ``put the arguments at the end of `service.start` `` |
+| `service.requires` | ``it is `pipeline.preflight.requires` now`` |
+| `pipeline.build.command` | ``it is `pipeline.build.run.local` now`` |
+| `pipeline.build.binary` | ``it is `pipeline.pack.binary` now`` |
+| `pipeline.build.files` | ``it is `pipeline.pack.files.include.project` now`` |
+| `pipeline.build.cwd` | ``it is `project` now, at the top of the file`` |
+| `pipeline.rotate` | ``old releases are tidied in done; `service.keep` says how many stay`` |
+
+[Config problems](/docs/reference/config-problems) lists every message.
+
+## deploy.json from 0.1
+
+shipdeck 0.1 read `deploy.json`. A folder with only a `deploy.json` is refused, never skipped:
+
+```txt
+✘ shipdeck did not start: 1 deploy.yaml file has 1 problem
+
+my-api-prod/deploy.json
+  error: shipdeck reads deploy.yaml now, not deploy.json
+    ┌─ scripts/deploy/my-api-prod/deploy.json
+    │
+    = help: rename it to deploy.yaml and move its fields as the README's "From 0.2" shows
+```
+
+JSON is valid YAML, so rename the file to `deploy.yaml` first. shipdeck then reads it and reports each old key as above. A `deploy.json` next to a `deploy.yaml` is ignored.
+
+## Before and after
+
+A Rust service in 0.2:
+
+```yaml title="scripts/deploy/my-api-prod/deploy.yaml (0.2)"
+name: My API (prod)
+
+ssh:
+  host: prod
+  user: deploy
+
+build:
+  cwd: ../../../my-api
+  command: cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31
+  binary: target/x86_64-unknown-linux-gnu/release/my-api
+
+remote:
+  dir: /opt/my-api
+  service: my-api
+  args: [-E=.env]
+
+hooks:
+  after:
+    - ./notify.sh "my-api $SHIPDECK_RELEASE is live"
+
+bundle:
+  - .env
+
+releases:
+  open: 3
+  compressed: 10
+
+health:
+  url: http://127.0.0.1:8080/health
+  timeout_secs: 20
+```
+
+The same service in 0.3:
+
+```yaml title="scripts/deploy/my-api-prod/deploy.yaml (0.3)"
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
+name: My API (prod)
+project: ../../../my-api                     # was build.cwd
+
+ssh:
+  host: prod
+  user: deploy
+
+service:                                     # was remote
+  name: my-api                               # was remote.service
+  dir: /opt/my-api
+  start: ./my-api -E=.env                    # remote.args moved here
+  keep: { open: 3, compressed: 10 }          # was releases
+
+pipeline:
+  build:
+    run:
+      local: cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31
+  pack:
+    binary: target/x86_64-unknown-linux-gnu/release/my-api
+    files:
+      include:
+        deploy: [.env]                       # was bundle
+  health:                                    # was health, at the top
+    url: http://127.0.0.1:8080/health
+    timeout_secs: 20
+  done:
+    run:
+      local: ./notify.sh "my-api $SHIPDECK_RELEASE is live"   # was hooks.after
+```
+
+`pipeline.health.rollback` is new and defaults to `ask`: when the new release is not healthy, shipdeck asks before rolling back, and rolls back on its own after 30 seconds without an answer. Set `rollback: auto` to roll back without asking. See [Health and rollback](/docs/guides/health-and-rollback).
+
+## Update the schema line
+
+0.3 publishes a JSON Schema for editor completion. Put this line at the top of each deploy.yaml:
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
+```
+
+The URL names the release, so change `v0.3.0` when you upgrade shipdeck again. If you map the schema in `.vscode/settings.json` instead, update the URL there. [deploy.yaml](/docs/reference/deploy-yaml#editor-completion) shows both.
+
+## Next
+
+<Cards>
+  <Card title="deploy.yaml" href="/docs/reference/deploy-yaml" description="Every 0.3 field with its default and rules." />
+  <Card title="The pipeline" href="/docs/guides/pipeline" description="What each step does and where its commands run." />
+</Cards>

@@ -1,0 +1,134 @@
+---
+title: Installation
+description: Install shipdeck with cargo, pin a version, or run it from a clone or a git submodule.
+---
+
+shipdeck is built from source with cargo. There are no prebuilt binaries and it is not published on crates.io, so every install path below compiles it on your machine.
+
+## Install from GitHub
+
+```sh
+cargo install --git https://github.com/Naz-Ovh/shipdeck shipdeck
+```
+
+This builds the `shipdeck` binary and puts it in cargo's bin folder (usually `~/.cargo/bin`), which is on your `PATH` if you installed Rust with rustup.
+
+### Pin a version
+
+The repository has a tag per release (`v0.1.0`, `v0.2.0`, `v0.3.0`). To install exactly one of them, add cargo's `--tag` flag:
+
+```sh
+cargo install --git https://github.com/Naz-Ovh/shipdeck --tag v0.3.0 shipdeck
+```
+
+`--tag` is a plain cargo option, not something specific to shipdeck. Pinning is useful because two things name a version: the schema line at the top of your `deploy.yaml` files, and the server setup command shipdeck shows, which fetches `server-setup.sh` at the tag of the shipdeck you run.
+
+To upgrade later, run the same command with the new tag. Add `--force` if cargo says the binary is already installed.
+
+## Run from a clone
+
+If you want to read the code or try a change, clone the repository and run it with cargo:
+
+```sh
+git clone https://github.com/Naz-Ovh/shipdeck
+cd shipdeck
+cargo run --release -p shipdeck -- ./path/to/deploy-root
+```
+
+Everything after `--` goes to shipdeck, so flags such as `--key` work the same way:
+
+```sh
+cargo run --release -p shipdeck -- ../my-app/scripts/deploy --key ~/.ssh/id_ed25519
+```
+
+## As a git submodule
+
+You can keep shipdeck inside the project it deploys, pinned to a commit:
+
+```sh
+git submodule add https://github.com/Naz-Ovh/shipdeck scripts/shipdeck
+git -C scripts/shipdeck checkout v0.3.0
+```
+
+Then either run it from there:
+
+```sh
+cd scripts/shipdeck
+cargo run --release -p shipdeck -- ../deploy
+```
+
+or install the binary from the submodule with cargo's `--path` flag:
+
+```sh
+cargo install --path scripts/shipdeck/bin/shipdeck
+```
+
+People who clone your project later need `git clone --recurse-submodules`, or `git submodule update --init` after a plain clone.
+
+## Requirements
+
+### On your PC
+
+| Need | Why |
+| --- | --- |
+| A Rust toolchain, 1.89 or newer | To build shipdeck. The code uses the 2024 edition and let chains (stable since Rust 1.88), and the SSH library it uses, `russh` 0.64, declares 1.89 as its minimum. Install or update with [rustup](https://rustup.rs). |
+| A Unix-like OS | Linux or macOS. On Windows, use WSL. shipdeck uses Unix file permissions and runs local commands through `sh -c`. |
+| A C compiler | The SSH library shipdeck uses pulls in a cryptography crate (`aws-lc-sys` 0.46) that compiles C code during the build. Most systems with a development toolchain (`build-essential` on Debian and Ubuntu, Xcode command line tools on macOS) already have one. In some setups its build uses CMake instead, so CMake may be needed too. If the build of `aws-lc-sys` fails, its error message says what is missing. |
+| `git` (optional) | shipdeck reads the commit hash for the release name, marks releases built from uncommitted changes, falls back to the latest tag for the version, and uses your `user.name` as "deployed by". Without git the release name uses `nogit`. |
+| Your build tools | Whatever your own build commands need: `cargo`, `cargo zigbuild`, `go`, `npm` and so on. |
+| A modern terminal | shipdeck draws with 24-bit colour and Unicode box-drawing characters. |
+
+### On the server
+
+You install nothing of shipdeck's on the server. It needs:
+
+- Linux with systemd and an SSH server.
+- `sh`, which every Linux system has.
+- `curl` or `wget`, but only if you set `pipeline.health.url`.
+- The root user, or a user with passwordless `sudo` for five specific commands. [Server access](/docs/guides/server-access) explains both, and the optional one-time setup script.
+- At least 100 MiB of free disk space.
+
+## Check the install
+
+```sh
+shipdeck --version
+```
+
+```txt
+shipdeck 0.3.0
+```
+
+`shipdeck --help` lists the flags. The [Command line](/docs/reference/cli) reference covers each one.
+
+## Editor completion
+
+shipdeck generates a JSON Schema for `deploy.yaml` and publishes it with every release tag. Put this line at the top of a `deploy.yaml`, and any editor that uses the YAML language server (the VS Code YAML extension, Neovim, Zed, JetBrains IDEs) gives you completion, descriptions and errors as you type:
+
+```yaml title="deploy.yaml"
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
+```
+
+The URL contains the version, so update it when you upgrade shipdeck. shipdeck itself ignores comments; the line is only for your editor.
+
+To map the schema for every `deploy.yaml` in a repository at once, add this to `.vscode/settings.json` instead:
+
+```json title=".vscode/settings.json"
+{
+  "yaml.schemas": {
+    "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json": "**/deploy.yaml"
+  }
+}
+```
+
+To work offline, write the schema to a file and point your editor at it:
+
+```sh
+shipdeck --schema > deploy.schema.json
+```
+
+## Next
+
+<Cards>
+  <Card title="Quickstart" href="/docs/getting-started/quickstart" description="Write a deploy.yaml and run your first deploy." />
+  <Card title="Command line" href="/docs/reference/cli" description="Every flag, the login options and exit codes." />
+</Cards>

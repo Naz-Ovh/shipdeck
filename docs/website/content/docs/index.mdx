@@ -1,0 +1,78 @@
+---
+title: Introduction
+description: What shipdeck is, the ideas behind it, what it leaves out, and what you need to run it.
+---
+
+shipdeck is a terminal UI that builds your app on your own machine, ships it to a Linux server over SSH, and runs it there as a systemd service. Every deploy is kept as its own release, so any earlier release can go live again from the Releases screen.
+
+```sh
+shipdeck ./scripts/deploy
+```
+
+## Who it is for
+
+shipdeck exists for servers too small to build on. If your VPS cannot compile your Rust service, or you would rather not install a toolchain there, shipdeck builds on your PC and sends only the result.
+
+It is not tied to one language. Anything you can build locally works: a Rust or Go binary, a Node.js app with its `dist` folder, Python source with a virtualenv built on the server. The repository's `examples/` folder has a `deploy.yaml` for each of these four.
+
+It fits people who run one or a few small servers, with one or more services each, and who want repeatable deploys and quick rollback without CI, containers or an agent on the server.
+
+## Core ideas
+
+- **Build locally.** Your build commands run on your PC. The server only receives the finished release.
+- **Only what you list travels.** `pipeline.pack` names the binary and the files that go into the release. Nothing else is uploaded. See [Packing files](/docs/guides/packing-files).
+- **One `deploy.yaml` per deployable.** Each deployable is a folder under a deploy root that you pass on the command line. The file says plainly which commands run on your PC (`local`) and which on the server (`server`). See [Deploy root](/docs/guides/deploy-root).
+- **An atomic switch.** Each release lives in `releases/<id>/` on the server, and a `current` symlink points at the live one. Going live is a single rename of that symlink. systemd only ever uses `current/...` paths, so the paths it sees never change.
+- **Releases you can roll back to.** By default shipdeck keeps 5 releases unpacked and 15 more as `.tar.gz` in `backups/`. Any of them can go live again. See [Releases](/docs/guides/releases).
+- **Config checked before start.** Every `deploy.yaml` is read before the screen opens. If any file has a mistake, shipdeck prints every problem, with file, line and a hint, and does not start. See [Config problems](/docs/reference/config-problems).
+- **Nothing to install on the server.** shipdeck logs in as the user you name in `ssh.user`. The first deploy creates the app folder and installs the systemd unit. A missing permission is named at preflight, before anything changes. An optional one-time script can create a least-privilege deploy user. See [Server access](/docs/guides/server-access).
+
+## The pipeline
+
+Every deploy runs the same ten steps, in order. Five of them (preflight, build, setup, health and done) run commands from your `deploy.yaml` on your PC, the server, or both; the others are done by shipdeck and take no settings.
+
+<PipelineSteps />
+
+Nothing live changes before **switch**. A failure in preflight, build, pack, upload, unpack or setup stops the deploy and leaves the live release alone. **setup** runs in the new release folder while the old release still serves, which is where you install production dependencies or run migrations.
+
+If switch, restart or health fails, shipdeck shows the last journal lines and, when a release was live before, asks whether to put it back. With no answer in 30 seconds it rolls back. A separate `failed` step can run your local commands after any failure, for example to send a notification.
+
+[The pipeline](/docs/guides/pipeline) covers each step in detail, and [How it works](/docs/concepts/how-it-works) shows what happens on the server.
+
+## What it does not do
+
+shipdeck 0.3.0 keeps a narrow scope:
+
+- **No building on the server.** Builds run on your PC. Server commands are for setup work such as `npm ci --omit=dev`, not for compiling.
+- **No CI or headless mode.** Deploys and rollbacks run only in the terminal UI. Outside it, shipdeck only prints the config problem report, `--schema`, `--help` and `--version`.
+- **No containers and no agent.** shipdeck talks to the server over plain SSH. Nothing of its own stays running there.
+- **Linux with systemd only.** The service is a systemd unit, managed with `systemctl` and read with `journalctl`.
+- **One host per deployable.** To deploy the same app to two servers, use two deployable folders.
+- **No SSH proxies or host certificates.** A `~/.ssh/config` alias that needs `ProxyJump` or `ProxyCommand` is refused, `Match` blocks are not read, and host certificates are refused. See [SSH and login](/docs/guides/ssh).
+- **One operation at a time.** While a deploy or rollback runs, shipdeck refuses to start another.
+
+## What you need
+
+**On your PC**
+
+- A Rust toolchain (1.89 or newer) and a C compiler, to build shipdeck itself. See [Installation](/docs/getting-started/installation).
+- A Unix-like system: Linux, macOS, or Windows through WSL. Local commands run through `sh -c`.
+- Whatever your own build needs: `cargo`, `cargo zigbuild`, `go`, `npm` and so on.
+- A terminal with 24-bit colour and Unicode box-drawing characters.
+- `git` is optional. shipdeck uses it to put the commit in the release name and to mark releases built from uncommitted changes.
+
+**On the server**
+
+- Linux with systemd and an SSH server.
+- `curl` or `wget`, if you set `pipeline.health.url`.
+- Either the root user, or a user with passwordless `sudo` for the five commands shipdeck needs. [Server access](/docs/guides/server-access) lists them and shows the one-time setup script.
+- At least 100 MiB of free disk space.
+
+## Next
+
+<Cards>
+  <Card title="Installation" href="/docs/getting-started/installation" description="Install shipdeck with cargo and check it runs." />
+  <Card title="Quickstart" href="/docs/getting-started/quickstart" description="From nothing to the first deploy and the first rollback." />
+  <Card title="deploy.yaml" href="/docs/reference/deploy-yaml" description="Every field, its default and its rules." />
+  <Card title="How it works" href="/docs/concepts/how-it-works" description="What happens on your PC and on the server during a deploy." />
+</Cards>

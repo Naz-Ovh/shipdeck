@@ -1,0 +1,498 @@
+---
+title: Screens and keys
+description: What each shipdeck screen and dialog shows, and every key that works on it.
+---
+
+shipdeck has three screens (Deployables, Operation, Releases) and a few dialogs that open on top of them. The keyboard drives everything; the mouse is not used.
+
+## The frame
+
+Every screen shares the same frame:
+
+- **Header, first row:** the ` ◆ shipdeck ` badge, then `root <DEPLOY_ROOT>` as you typed it. On the right, `login ...` says how shipdeck logs in (see [Command line](/docs/reference/cli)).
+- **Header, second row:** the tabs ` 1 Deployables `, ` 2 Operation `, ` 3 Releases `. The active tab is highlighted; a tab that has nothing to show yet is faint. On the right, the status of the current or last operation.
+- **Footer:** key hints for the current screen or the dialog in front. Short messages (toasts) appear on the right of the footer as `● <text>` for 4 seconds.
+
+The operation status on the right of the tabs:
+
+| Status | Meaning |
+| --- | --- |
+| `⠋ Deploying my-api · Upload 59%` | A deploy is running (`Rolling back ...` for a rollback). The `%` shows only when the step has a known total. |
+| `✔ my-api is live` | The deploy finished and is healthy (green). |
+| `✘ my-api: stopped, live release untouched` | It stopped before the switch (red). |
+| `↩ my-api: rolled back` | It failed after the switch and the previous release is back (amber). |
+| `▲ my-api: kept after a failure` | It failed, and you chose to keep it (amber). |
+| `‼ my-api: rollback failed` | Putting the previous release back failed too (red). |
+
+The name shown is the deployable's folder name.
+
+Toasts:
+
+| Toast | When |
+| --- | --- |
+| `An operation is already running` | You start a deploy or rollback while one runs. Only one runs at a time. |
+| `Nothing has run yet. Press ⏎ on a deployable to deploy it` | You open Operation before anything has run. |
+| `Refreshing live status` | You press `s`. |
+| `That release is already live` | You press `⏎` on the live release. |
+| `shipdeck did not create that folder, so it will not switch to it` | You press `⏎` on a folder marked `not ours`. |
+| `Copied, if your terminal allows it; it is also printed when you quit` | You press `c` in Server setup. |
+| `Could not copy: <err>` | Copying failed. |
+
+## Global keys
+
+These work on every screen while no dialog is open. While a dialog is open, only the dialog's keys work.
+
+| Key | Action |
+| --- | --- |
+| `q`, `Ctrl+C` | Quit. While an operation runs, this opens **Quit now?** instead. |
+| `Tab` | Next screen: Deployables, Operation, Releases. |
+| `Shift+Tab` | Previous screen. |
+| `1` | Deployables. |
+| `2` | Operation (a toast if nothing has run yet). |
+| `3` | Releases. Shows the last releases view; if there is none, opens it for the selected deployable. |
+
+`3` shows the most recent releases view, which may belong to another deployable than the one now selected. Press `r` on Deployables to open it for the selected one.
+
+## Deployables
+
+The start screen. When it opens, shipdeck connects to every deployable in the background to read what is live, so a password or new-server dialog may appear right away.
+
+<Screen title="Deployables">{`
+ ◆ shipdeck   root ./scripts/deploy                    login ~/.ssh/config key, else password prompt
+ 1 Deployables   2 Operation   3 Releases
+
+╭ Deployables · 4 ───────────────────────╮╭ api-prod ──────────────────────────────────────────────╮
+│ ▌● My API (prod)                       ││ My API (prod)                                          │
+│    deploy@api  api-prod                ││ scripts/deploy/api-prod                                │
+│    v0.3.1 (ab12cd3) · active           ││                                                        │
+│                                        ││ TARGET ─────────────────────────                       │
+│  ● My Proxy (prod)                     ││   ssh      deploy@api  → 203.0.113.10:22               │
+│    deploy@proxy  proxy-prod            ││ ~/.ssh/config                                          │
+│    ✘ connecting to deploy@203.0.113.11 ││   login    key /home/me/.ssh/id_deploy                 │
+│                                        ││ (~/.ssh/config), else password                         │
+│  ⠋ My API (beta)                       ││   folder   /opt/api-prod                               │
+│    deploy@api  api-beta                ││   service  api-prod   active                           │
+│    ⠋ connecting…                       ││   runs as  deploy                                      │
+│                                        ││   start    /opt/api-prod/current/server -E=.env        │
+│  ⠋ Web (prod)                          ││   live     v0.3.1 (ab12cd3) · active                   │
+│    deploy@web  web-prod                ││                                                        │
+│    ⠋ connecting…                       ││ PIPELINE ─────────────────────────                     │
+│                                        ││   build     local   cargo zigbuild --release -p my-api │
+│                                        ││   pack      binary  target/release/server              │
+│                                        ││             deploy  .env, files/                       │
+│                                        ││   health    waits   http://127.0.0.1:6520/ · 20s       │
+│                                        ││             failing asks, then rolls back after 30s    │
+│                                        ││                                                        │
+│                                        ││ POLICY ─────────────────────────                       │
+│                                        ││   keeps    5 unpacked + 15 compressed                  │
+│                                        ││   unit     built-in template                           │
+╰────────────────────────────────────────╯╰────────────────────────────────────────────────────────╯
+ ↑↓  select    ⏎  deploy    r  releases    s  refresh    u  server setup    tab  screens    q  quit
+`}</Screen>
+
+The list on the left has four lines per deployable: a status dot and the name, `<user>@<host>[:port]` and the folder name, then the live summary. `▌` marks the selected one.
+
+The dot:
+
+| Dot | Meaning |
+| --- | --- |
+| `●` green | The service is `active`. |
+| `●` amber | The service is `activating`, `reloading` or `deactivating`. |
+| `●` red | The service has `failed`, or connecting failed. |
+| `●` grey | Any other state, such as `inactive`. |
+| `○` | Nothing is deployed yet. |
+| spinner | Connecting. |
+| faint `○` | Not checked yet. |
+
+The live summary is one of:
+
+| Text | Meaning |
+| --- | --- |
+| `not checked yet` | No check has run. |
+| `⠋ connecting…` | The check is running. |
+| `✘ <error>` | The first line of the error, for example `✘ connecting to deploy@203.0.113.11 timed out after 15s`. |
+| `not deployed yet: the first deploy creates its folder` | `service.dir` does not exist on the server. |
+| `nothing deployed yet` | The folder exists but has no live release. |
+| `v0.3.1 (ab12cd3) · active` | The live version, commit and `systemctl is-active` state. A dirty build reads `v0.3.1 (ab12cd3, uncommitted changes)`. |
+
+The panel on the right shows the selected deployable, read from its `deploy.yaml`:
+
+- **TARGET:** `ssh` (with `→ <address:port>  ~/.ssh/config` when the host is an alias), `login`, `folder`, `service` with its state, `runs as`, `start` (the full `ExecStart`), and `live`.
+- **PIPELINE:** one row per configured step item: the commands of each step, with `local`, `server` or `check` beside them, the `pack` lists (`binary`, `project`, `deploy`, `leaves`), and how `health` waits and what happens when it is `failing`.
+- **POLICY:** `keeps` (`5 unpacked + 15 compressed`), `shared` and `env file` when set, and `unit`: `service.template` when that file is in the deploy folder, else `built-in template`.
+
+With no deployables, the screen shows `No deployables yet` and where shipdeck looks for them.
+
+| Key | Action |
+| --- | --- |
+| `↑` / `k`, `↓` / `j` | Select. The list wraps around. |
+| `⏎` (also `d`) | Deploy: opens the **Deploy** dialog. |
+| `r` | Open Releases for the selected deployable. |
+| `s` | Refresh the live status of every deployable. |
+| `u` | Show the **Server setup** dialog for the selected deployable. |
+
+## Operation
+
+A deploy or rollback, running or finished. Starting one switches to this screen. Only the latest operation is kept; a new one replaces it.
+
+<Screen title="Operation">{`
+ ◆ shipdeck   root ./scripts/deploy                    login ~/.ssh/config key, else password prompt
+ 1 Deployables   2 Operation   3 Releases                          ⠋ Deploying api-prod · Upload 59%
+
+┏ Deploy ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 0.0s ┓
+┃ My API (prod)  →  deploy@api:/opt/api-prod  release v0.3.2-77aa001-20261014.160501  v0.3.2       ┃
+┃ (77aa001)                                                                                        ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+╭ Steps ─────────────────────────────────────╮╭ Log · 9 lines ────────────────────────── following ╮
+│ ✔ 1 Preflight  x86_64 · glibc 2.39    0.0s ││ 00:00 ━━ Preflight: checking the server            │
+│ ✔ 2 Build      31.0 MiB · glibc ≥     0.0s ││ 00:00 › connect deploy@203.0.113.10 (password, ask │
+│ ✔ 3 Pack       5 files · 31.2 MiB     0.0s ││ 00:00 ℹ server: x86_64 · glibc 2.39 · 41.2 GiB fre │
+│ ⠋ 4 Upload     59%                    0.0s ││ 00:00 ━━ Build: compiling on this machine          │
+│ ○ 5 Unpack                                 ││ 00:00      Compiling my-api v0.3.2 (/home/me/my-ap │
+│ ○ 6 Setup                                  ││ 00:00       Finished \`release\` profile [optimized] │
+│ ○ 7 Switch                                 ││ 00:00 ▲ the source has uncommitted changes; the re │
+│ ○ 8 Restart                                ││ 00:00 ━━ Upload: sending the release               │
+│ ○ 9 Health                                 ││ 00:00 › deploy@203.0.113.10 › upload 11.8 MiB to / │
+│ ○ 10 Done                                  ││                                                    │
+╰────────────────────────────────────────────╯│                                                    │
+╭ Progress ──────────────────────────────────╮│                                                    │
+│ ⠋ Upload  0.0s                             ││                                                    │
+│ ███████████████████59% █▉                  ││                                                    │
+│ 7.0 MiB of 11.8 MiB                        ││                                                    │
+│ 4.2 MiB/s                                  ││                                                    │
+│                                            ││                                                    │
+│                                            ││                                                    │
+│ overall  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ││                                                    │
+│ 3/10 steps  ·  0.0s                        ││                                                    │
+╰────────────────────────────────────────────╯╰────────────────────────────────────────────────────╯
+ ↑↓  scroll    pgup/pgdn  page    G  follow    r  releases    esc  back    q  quit
+`}</Screen>
+
+The capture uses test data, so every time reads `0.0s`.
+
+**Banner.** Titled ` Deploy ` or ` Rollback `, with the elapsed time on the right. The first line is `<name>  →  <user>@<host>:<dir>  release <id>  <version> (<commit>)`. While running, the second line shows the current step and `step N of M`, or `Waiting for your answer…` while the rollback question is open. When finished, the border takes a colour and the second line a badge:
+
+| Badge | Text |
+| --- | --- |
+| ` LIVE ` | `<release> is live, healthy and serving.` |
+| ` STOPPED ` | `at <Step>: <error>  · the live release was not touched` |
+| ` ROLLED BACK ` | `<Step> failed: <error>  · <previous id> is live again` |
+| ` KEPT ` | `<Step> failed: <error>  · <release> stays live as you chose` |
+| ` ROLLBACK FAILED ` | `<error>  then: <rollback error>  · check the server now` |
+
+**Steps.** One row per step: icon, number, name, a short detail and the time it took. A deploy has `Preflight`, `Build`, `Pack`, `Upload`, `Unpack`, `Setup`, `Switch`, `Restart`, `Health`, `Done`, plus `Failed` when `pipeline.failed.run.local` has commands. A rollback has `Connect`, `Unpack`, `Switch`, `Restart`, `Health`, `Done`, plus `Failed` under the same condition (`Unpack` only does work for a compressed release). See [The pipeline](/docs/guides/pipeline).
+
+| Icon | Step state |
+| --- | --- |
+| `○` | Waiting |
+| spinner | Running |
+| `✔` | Done |
+| `▲` | Done with a warning |
+| `✘` | Failed |
+| `–` | Skipped |
+
+**Progress.** The running step with a gauge and a percentage when the total is known (bytes for Pack and Upload, crates for a cargo build, seconds for Health), or a sliding bar when it is not. Under it, the amount (`7.0 MiB of 11.8 MiB`) and a label such as the upload speed. At the bottom, an `overall` bar and `<done>/<total> steps`.
+
+**Timeline.** Below Progress when the terminal is tall enough: one bar per step that has started, scaled to the slowest one.
+
+**Log.** Everything the operation did, each line prefixed with `mm:ss` since the start. The title shows ` following ` while it follows new output, or ` ↑ <n> lines · G to follow ` after you scroll up. Up to 5000 lines are kept.
+
+| Marker | Line |
+| --- | --- |
+| `━━` | A step starts, for example `Build: building on your PC`. |
+| `›` | A command about to run, local or on the server, or the SSH connect. |
+| (none) | Command output. stderr is shown in a warmer colour. |
+| `ℹ` | Information, for example `server: x86_64 · glibc 2.39 · 41.2 GiB free`. |
+| `✔` | Success. |
+| `▲` | Warning, for example `the source has uncommitted changes; the release is marked dirty`. |
+| `✘` | The full error. |
+
+After a failed switch, restart or health check, the log also shows `last journal lines:` and the last 30 lines of `journalctl -u <service>`.
+
+| Key | Action |
+| --- | --- |
+| `↑` / `k`, `↓` / `j` | Scroll the log one line. |
+| `PgUp` / `PgDn` | Scroll 20 lines. |
+| `Home` / `g` | Top of the log. |
+| `End` / `G` | Bottom, and follow new output again. |
+| `r` | Open Releases for this operation's deployable. |
+| `Esc` / `Backspace` | Back to Deployables. The operation keeps running. |
+
+## Releases
+
+The releases on the server for one deployable, newest first. From here you roll back. See [Releases](/docs/guides/releases).
+
+<Screen title="Releases">{`
+ ◆ shipdeck   root ./scripts/deploy                    login ~/.ssh/config key, else password prompt
+ 1 Deployables   2 Operation   3 Releases                                    ↩ api-prod: rolled back
+
+╭ Releases · My API (prod) ────────────────────────────────────────────── deploy@api:/opt/api-prod ╮
+│     Release          Version       Commit     Built (UTC)       Size        Where                │
+│                                                                                                  │
+│  ●  v0.3.1-ab12cd3-  0.3.1         ab12cd3    2026-10-14 15:30    29.6 MiB   LIVE                │
+│     v0.3.0-9f8e7d6-  0.3.0         9f8e7d6    2026-10-12 09:10    29.6 MiB  unpacked             │
+│ ▌   v0.2.9-1a2b3c4-  0.2.9         1a2b3c4    2026-10-01 12:00    10.5 MiB  tar.gz               │
+│     v0.2.8-5d6e7f8-  0.2.8         5d6e7f8    2026-09-20 08:00    10.5 MiB  tar.gz               │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭ Details ─────────────────────────────────────────────────────────────────────────────────────────╮
+│ kept  2/5 unpacked  ·  2/15 compressed                                                           │
+│                                                                                                  │
+│ release  v0.2.9-1a2b3c4-20261001.120000                                                          │
+│ ⏎  roll back to this release (unpack, switch + restart)                                          │
+│                                                                                                  │
+│                                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ↑↓  select    ⏎  roll back    r  refresh    esc  back    q  quit
+`}</Screen>
+
+At 100 columns the `Release` column is cut; a wider terminal shows the full id.
+
+| Column | Shows |
+| --- | --- |
+| marker | `●` on the live release. |
+| `Release` | The release id. The live one is bold green; compressed ones are muted. |
+| `Version` | The version from the release id. |
+| `Commit` | The commit, with `*` when built with uncommitted changes (`ab12cd3*`). |
+| `Built (UTC)` | `YYYY-MM-DD HH:MM`, from the release id. |
+| `Size` | Disk use on the server as `du` reports it: the unpacked folder for an open release, the `.tar.gz` for a compressed one. |
+| `Where` | ` LIVE `, `unpacked`, `tar.gz`, or `not ours` for a folder shipdeck did not name. |
+| (no header) | Who deployed it, from `release.json`. |
+
+The **Details** panel shows `kept  <n>/<keep.open> unpacked  ·  <n>/<keep.compressed> compressed`, then for the selected release its id, `deployed by ... built ...` when known, `built from a working copy with uncommitted changes` when dirty, and what `⏎` does: `This release is live.`, `shipdeck did not create this folder and will not switch to it.`, `⏎  roll back to this release (switch + restart)` or `⏎  roll back to this release (unpack, switch + restart)`.
+
+Other states of the panel: `Reading releases from the server…`, `Could not read the releases` with the error and `Press r to try again.`, and `No releases on the server yet. Deploy once and they will show up here.`
+
+| Key | Action |
+| --- | --- |
+| `↑` / `k`, `↓` / `j` | Select. The list wraps around. |
+| `⏎` | Roll back to the selected release: opens the **Roll back** dialog. Refused with a toast when it is live, `not ours`, or an operation is running. |
+| `r` | Read the list from the server again. |
+| `Esc` / `Backspace` | Back to Deployables. |
+
+## Dialogs
+
+Dialogs open in the middle of the screen with a double border. If several are waiting, they queue and only the front one takes keys; the rollback question always jumps to the front. For Deploy, Roll back, Quit now? and New server, the footer shows the generic `y yes  n no`, while the dialog's own buttons name the action.
+
+### Deploy
+
+Opens with `⏎` or `d` on Deployables.
+
+<Screen title="Deploy dialog">{`
+ ◆ shipdeck   root ./scripts/deploy                    login ~/.ssh/config key, else password prompt
+ 1 Deployables   2 Operation   3 Releases                                    ↩ api-prod: rolled back
+
+╭ Deployables · 4 ───────────────────────╮╭ api-prod ──────────────────────────────────────────────╮
+│ ▌⠋ My API (prod)                       ││ My API (prod)                                          │
+│    deploy@api  api-prod                ││ scripts/deploy/api-prod                                │
+│    ⠋ connecting…                       ││                                                        │
+│           ╔ Deploy ══════════════════════════════════════════════════════════════════╗           │
+│  ● My Prox║ My API (prod)                                                            ║           │
+│    deploy@║                                                                          ║           │
+│    ✘ conne║ to           deploy@api:/opt/api-prod                                    ║           │
+│           ║ service      api-prod                                                    ║           │
+│  ⠋ My API ║ build        cargo zigbuild --release -p my-api                          ║           │
+│    deploy@║ live now     unknown until preflight                                     ║           │
+│    ⠋ conne║                                                                          ║           │
+│           ║ The new release goes live after a restart (about 1–2 s of downtime). If  ║env        │
+│  ⠋ Web (pr║ it fails after the switch, shipdeck asks before putting the previous     ║           │
+│    deploy@║ release back, and does so on its own after 30 s.                         ║           │
+│    ⠋ conne║                                                                          ║           │
+│           ║ pipeline.pack.files.include.deploy in scripts/deploy/api-prod: .env (not ║ -p my-api │
+│           ║ found). The deploy will stop at Preflight, before building.              ║           │
+│           ║                                                                          ║           │
+│           ║  y  deploy     n  cancel                                                 ║ 20s       │
+│           ╚══════════════════════════════════════════════════════════════════════════╝ter 30s    │
+│                                        ││                                                        │
+│                                        ││ POLICY ─────────────────────────                       │
+│                                        ││   keeps    5 unpacked + 15 compressed                  │
+│                                        ││   unit     built-in template                           │
+╰────────────────────────────────────────╯╰────────────────────────────────────────────────────────╯
+ y  yes    n  no
+`}</Screen>
+
+It shows the target, the service, the first build command (`(+N more)` when there are several, or `nothing to build`) and what is `live now` (`unknown until preflight` before the first check). Then:
+
+```txt
+The new release goes live after a restart (about 1–2 s of downtime). If it fails after the switch, shipdeck asks before putting the previous release back, and does so on its own after 30 s.
+```
+
+With `rollback: auto` the last sentence reads `If it fails after the switch, the previous release is put back at once.` When a file listed in `pipeline.pack.files.include.deploy` is missing, a red line says so and that `The deploy will stop at Preflight, before building.` (or, when preflight has local commands, that `pipeline.preflight.run.local must create them, or the deploy stops at Preflight.`).
+
+| Key | Action |
+| --- | --- |
+| `y`, `Y`, `⏎` | Deploy. |
+| `n`, `N`, `Esc`, `Ctrl+C` | Cancel. |
+
+### Roll back
+
+Opens with `⏎` on a release. The dialog is titled ` Roll back `, with an amber border:
+
+```txt
+My API (prod)
+
+roll back to v0.2.9-1a2b3c4-20261001.120000  v0.2.9 (1a2b3c4)
+live now     v0.3.1-ab12cd3-20261014.153012  v0.3.1 (ab12cd3)
+
+This release is compressed; it is unpacked first.
+The service restarts on that release. If it fails its health check, the current release is put back.
+
+ y  roll back     n  cancel
+```
+
+The `compressed` line shows only for a `tar.gz` release, and `live now` reads `nothing` when no release is live. The keys are the same as for Deploy. The last sentence is the dialog's fixed text: when the target fails at Switch, Restart or Health, the rollback policy applies as in a deploy, so with `rollback: ask` you get the [rollback question](#rollback-question) first.
+
+### Rollback question
+
+Opens when the new release fails at `Switch`, `Restart` or `Health`, `rollback` is `ask` (the default) and there is a previous release. It also opens during a manual rollback when the release you rolled back to fails at one of those steps; it then offers the release that was live before the rollback. The screen jumps to Operation. The title names the deployable's folder and the step, for example `my-api-prod · health failed`.
+
+```txt
+v1.4.0 failed at Health: not healthy after 20s: systemd says active; the health url said: curl…
+v1.3.9 was live before it.
+
+Roll back to v1.3.9?      rolling back in 27s
+
+ y  roll back now     n  keep v1.4.0 live
+```
+
+The error is its first line, cut at 70 characters; the full error is in the log. When both releases have the same version, each also shows its commit and build time (UTC), as in `v1.4.0 (77aa001 16:05:01)`. The countdown starts at 30 seconds; at 0 the dialog closes and shipdeck rolls back (`no answer in 30s; rolling back` in the log).
+
+| Key | Action |
+| --- | --- |
+| `y`, `Y` | Roll back now. |
+| `n`, `N` | Keep the new release live. You can roll back later from Releases. |
+
+No other key works here, not even `Esc` or `Ctrl+C`, so you cannot quit until you answer or the countdown ends. With `rollback: auto` this dialog never opens. See [Health and rollback](/docs/guides/health-and-rollback).
+
+### Quit now?
+
+Opens with `q` or `Ctrl+C` while an operation runs.
+
+```txt
+An operation is still running.
+Quitting stops it midway. If it is past the switch, the server may be left on the new release without a health check.
+```
+
+| Key | Action |
+| --- | --- |
+| `y`, `Y`, `Ctrl+C` | Quit anyway. |
+| `n`, `N`, `Esc` | Keep running. |
+
+### Secret
+
+Asks for an SSH password (title `SSH password`) or a key passphrase (title `Key passphrase`).
+
+<Screen title="SSH password">{`
+ ◆ shipdeck   root ./scripts/deploy                    login ~/.ssh/config key, else password prompt
+ 1 Deployables   2 Operation   3 Releases                                    ↩ api-prod: rolled back
+
+╭ Deployables · 4 ───────────────────────╮╭ api-prod ──────────────────────────────────────────────╮
+│ ▌⠋ My API (prod)                       ││ My API (prod)                                          │
+│    deploy@api  api-prod                ││ scripts/deploy/api-prod                                │
+│    ⠋ connecting…                       ││                                                        │
+│                                        ││ TARGET ─────────────────────────                       │
+│  ● My Proxy (prod)                     ││   ssh      deploy@api  → 203.0.113.10:22               │
+│    deploy@proxy  proxy-prod            ││ ~/.ssh/config                                          │
+│    ✘ connecting to deploy@203.0.113.11 ││   login    key /home/me/.ssh/id_deploy                 │
+│           ╔ SSH password ════════════════════════════════════════════════════════════╗           │
+│  ⠋ My API ║ Password for deploy@203.0.113.10                                         ║           │
+│    deploy@║                                                                          ║           │
+│    ⠋ conne║  ••••••▏                                                                 ║           │
+│           ║                                                                          ║env        │
+│  ⠋ Web (pr║ Kept in memory for this run only; never written to disk.                 ║           │
+│    deploy@║                                                                          ║           │
+│    ⠋ conne║  ⏎  log in     esc  cancel                                               ║           │
+│           ╚══════════════════════════════════════════════════════════════════════════╝ -p my-api │
+│                                        ││   pack      binary  target/release/server              │
+│                                        ││             deploy  .env, files/                       │
+│                                        ││   health    waits   http://127.0.0.1:6520/ · 20s       │
+│                                        ││             failing asks, then rolls back after 30s    │
+│                                        ││                                                        │
+│                                        ││ POLICY ─────────────────────────                       │
+│                                        ││   keeps    5 unpacked + 15 compressed                  │
+│                                        ││   unit     built-in template                           │
+╰────────────────────────────────────────╯╰────────────────────────────────────────────────────────╯
+ ⏎  submit    esc  cancel    ctrl+u  clear
+`}</Screen>
+
+The prompt is `Password for <user>@<host>[:port]` or `Passphrase for <key path>`, followed by a note when there is one: ` (key <path> was refused)`, ` (key <path>: <err>)` or ` (wrong, try again)`. You get 3 attempts. A password that works is kept in memory for the rest of the run, per `user@host` as the prompt shows it (`ssh.host` as written, plus `:port` when it is not 22), so you type it once per server. A passphrase is kept per key file.
+
+| Key | Action |
+| --- | --- |
+| any character | Type. Input shows as `•`. |
+| `Backspace` | Delete one character. |
+| `Ctrl+U` | Clear. |
+| `⏎` | Log in. |
+| `Esc`, `Ctrl+C` | Cancel. The connection fails with `login to <user@host> cancelled` (or `unlocking <path> cancelled`). |
+
+### New server
+
+Opens on the first connection to a host whose key is not in `~/.ssh/known_hosts`.
+
+```txt
+First connection to 203.0.113.10
+
+ssh-ed25519 key fingerprint
+SHA256:…
+
+Compare it with `ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub` on the server. Trusting saves it to ~/.ssh/known_hosts.
+```
+
+For a port other than 22 the host reads `[203.0.113.10]:2222`.
+
+| Key | Action |
+| --- | --- |
+| `y`, `Y` | Trust and connect. |
+| `n`, `N`, `Esc`, `Ctrl+C` | Refuse: `the host key of <host> was not trusted`. |
+
+A key that changed never asks. The connection fails with `HOST KEY CHANGED for <host>: it differs from line <n> of ~/.ssh/known_hosts. ...` See [SSH and login](/docs/guides/ssh).
+
+### Server setup
+
+Opens with `u` on Deployables. It shows the one-time command that prepares the server:
+
+```txt
+Run this once on the server as root:
+
+curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/server-setup.sh | bash -s -- --user deploy --dir /opt/my-api --service my-api --key 'ssh-ed25519 AAAA… me@laptop'
+
+It fetches server-setup.sh from shipdeck v0.3.0 on GitHub, creates the user deploy, authorizes its key, creates /opt/my-api owned by deploy, and installs the sudo rule for my-api (checked by visudo first). Running it again changes nothing already in place. Not root? Put sudo before bash.
+
+authorizes   the public half of /home/me/.ssh/id_deploy
+Then press ⏎ on the deployable to deploy as that user.
+```
+
+When there is no key to authorize, an amber note says `No key to authorize: no --key, and ~/.ssh/config has no IdentityFile for <host>. The script tells you to set a password for <user> instead.` See [Server access](/docs/guides/server-access).
+
+| Key | Action |
+| --- | --- |
+| `c` | Copy the command. |
+| `⏎`, `Esc`, `q`, `Ctrl+C` | Close. |
+
+## Clipboard
+
+`c` in Server setup copies with the OSC 52 terminal escape. It works over SSH and in terminals such as Windows Terminal, kitty, WezTerm and iTerm2; terminals without it ignore the request. shipdeck cannot tell whether the copy worked, so the toast says `Copied, if your terminal allows it; it is also printed when you quit`, and the last setup command shown is printed to stdout when you quit (see [Command line](/docs/reference/cli#output-after-you-quit)). There is no other copy action.
+
+## Keys the README does not list
+
+These work but are missing from the README's key table:
+
+| Key | Where | Action |
+| --- | --- | --- |
+| `j`, `k` | Lists and log | Down, up. |
+| `d` | Deployables | Deploy, like `⏎`. |
+| `Shift+Tab` | Anywhere | Previous screen. |
+| `Ctrl+C` | Anywhere | Quit, or cancel a dialog. |
+| `PgUp`, `PgDn` | Operation | Scroll 20 lines. |
+| `Home` / `g`, `End` | Operation | Top, bottom of the log. |
+| `Backspace` | Operation, Releases | Back to Deployables. |
+| `⏎` | Deploy, Roll back dialogs | Confirm, like `y`. |

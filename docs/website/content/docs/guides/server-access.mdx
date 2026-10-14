@@ -1,0 +1,196 @@
+---
+title: Server access
+description: What the SSH user must be allowed to do on the server, and how server-setup.sh creates a user with exactly those rights.
+---
+
+shipdeck needs no setup on the server. It deploys as `ssh.user`, whoever that is, and preflight stops with a clear message when a right is missing. This page explains which rights those are and the optional script that grants them.
+
+## Three ways to run a server
+
+| Way | Setup | What runs as root |
+| --- | --- | --- |
+| Log in as `root` | none | everything, including `server` commands from `deploy.yaml`; the service too, unless `service.run_as` is set |
+| An existing user with passwordless sudo (for example a cloud image's default user) | none; the first deploy creates `service.dir` | the five commands below, through `sudo -n` |
+| A dedicated user from `server-setup.sh` | run one command as root, once per app | the five commands below, and only for that one service |
+
+The third way gives the least privilege. The first two are fine for a server you already manage.
+
+## What ssh.user must be able to do
+
+"Root" means the user name is literally `root`. Any other user needs:
+
+1. **Write access to `service.dir`**, or the right to create it. On a first deploy shipdeck runs `mkdir -p` as the user, and if that fails, `sudo -n mkdir -p` followed by `sudo -n chown` to the user. If both fail, preflight stops with `create <dir> failed (exit 1): <user> may not create <dir>, and has no sudo without a password`. A folder that exists but is not writable stops with `<user> cannot write to <dir>`.
+2. **Passwordless sudo for five commands**, listed below.
+
+The service runs as `service.run_as`, by default the SSH user. That user must be able to read the release.
+
+### The five sudo commands
+
+With `service.dir: /opt/my-api` and `service.name: my-api`, these are the only commands shipdeck runs as root:
+
+```sh
+systemctl daemon-reload
+systemctl enable my-api
+systemctl restart my-api
+install -m 0644 /opt/my-api/current/my-api.service /etc/systemd/system/my-api.service
+journalctl -u my-api -n 30 --no-pager
+```
+
+They install the release's unit, reload systemd, enable and restart the service, and read the last 30 journal lines when a deploy fails. shipdeck always calls them as `sudo -n ...`, so sudo never prompts for a password: it either allows the command or fails.
+
+The `sudo -n mkdir` and `sudo -n chown` used on a first deploy are not part of this list. They only work for users with broader sudo rights. With `server-setup.sh` the folder already exists, so they are never needed.
+
+### How preflight checks it
+
+For a user other than `root`, preflight asks sudo about each command with `sudo -n -l <command>`. For each one that is not allowed it logs a warning, then stops before anything is built:
+
+```txt
+deploy may not run: sudo systemctl restart my-api
+deploy may not run 1 of the commands shipdeck needs as root (sudo, without a password)
+```
+
+A manual rollback runs the same check in its Connect step.
+
+## server-setup.sh
+
+`server-setup.sh` creates a dedicated user that can deploy one app and nothing more. It is optional.
+
+### Get the command
+
+Select the deployable on the Deployables screen and press `u`. The "Server setup" dialog shows the command for that deployable:
+
+<Screen title="Server setup">{`
+╔ Server setup ════════════════════════════════════════════════════════════╗
+║ Run this once on the server as root:                                     ║
+║                                                                          ║
+║ curl -fsSL                                                               ║
+║ https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/server-setup.s ║
+║ h | bash -s -- --user deploy --dir /opt/api-prod --service api-prod      ║
+║ --key 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPR1CM562x94ekkDx8f2          ║
+║ me@laptop'                                                               ║
+║                                                                          ║
+║ It fetches server-setup.sh from shipdeck v0.3.0 on GitHub, creates the   ║
+║ user deploy, authorizes its key, creates /opt/api-prod owned by deploy,  ║
+║ and installs the sudo rule for api-prod (checked by visudo first).       ║
+║ Running it again changes nothing already in place. Not root? Put sudo    ║
+║ before bash.                                                             ║
+║                                                                          ║
+║ authorizes   the public half of /home/me/.ssh/id_deploy                  ║
+║ Then press ⏎ on the deployable to deploy as that user.                   ║
+║                                                                          ║
+╚══════════════════════════════════════════════════════════════════════════╝
+`}</Screen>
+
+Press `c` to copy it (if your terminal allows it). The last command shown is also printed when you quit shipdeck. There is no `shipdeck setup` subcommand.
+
+### The command
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/server-setup.sh | bash -s -- --user deploy --dir /opt/my-api --service my-api --key 'ssh-ed25519 AAAAC3Nza me@laptop'
+```
+
+Run it on the server as root. Not root? Put `sudo` before `bash`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/server-setup.sh | sudo bash -s -- --user deploy --dir /opt/my-api --service my-api --key 'ssh-ed25519 AAAAC3Nza me@laptop'
+```
+
+The URL is pinned to the tag of the shipdeck you are running (`v0.3.0` here), so the script that runs as root only changes when you upgrade shipdeck.
+
+shipdeck fills the arguments from the deployable:
+
+| Argument | Filled from |
+| --- | --- |
+| `--user` | the SSH user: `ssh.user`, else the alias's `User` (not `service.run_as`) |
+| `--dir` | `service.dir` |
+| `--service` | `service.name` |
+| `--key` | the public half of `--key <path>` if you passed it, else of the alias's `IdentityFile` |
+
+The public key is the first line of `<key>.pub`, or derived from the private key file. With no key to find, `--key` is left out and the dialog warns you; the script then tells you to set a password for the user.
+
+### Arguments and validation
+
+```txt
+Usage: server-setup.sh --user NAME --dir PATH --service NAME [--key 'PUBLIC KEY']
+```
+
+The script checks every argument before it changes anything, and even before it checks for root. Each failure prints `error: <message>` and exits 1.
+
+| Check | Message |
+| --- | --- |
+| `--user`, `--dir`, `--service` given | `--user, --dir and --service are required` |
+| user is `[A-Za-z0-9._-]+` | `--user may only use letters, digits, '.', '_' and '-'` |
+| dir is an absolute path of `[A-Za-z0-9._/-]` | `--dir must be an absolute path of letters, digits, '.', '_', '-' and '/'` |
+| dir has no `..` segment | `--dir must not contain '..'` |
+| service is `[A-Za-z0-9._@-]+` | `--service may only use letters, digits, '.', '_', '@' and '-'` |
+| service does not end in `.service` | `--service is the name without .service` |
+| key is one line | `--key must be a single line` |
+| key looks like a public key (`ssh-`, `ecdsa-` or `sk-` type, then base64) | `--key must be one public key line, e.g. 'ssh-ed25519 AAAA... me@pc'` |
+
+These rules match the ones shipdeck applies to `ssh.user`, `service.dir` and `service.name`. A flag without a value gives `<flag> needs a value`; an unknown argument gives `unknown argument: <arg>`; `-h` or `--help` prints the usage.
+
+Then it checks the machine: `run this as root (put sudo before bash)`, `systemd is required`, `sudo is required (apt install sudo, or dnf install sudo)`, `visudo is required (it comes with sudo)`.
+
+### What it creates
+
+<Steps>
+<Step>
+### The user
+If the user does not exist: `useradd --create-home --shell /bin/bash deploy`. No password is set, so only key login works until you run `passwd deploy`.
+</Step>
+<Step>
+### The key
+With `--key`, it creates `~deploy/.ssh` (mode 700) and appends the key to `authorized_keys` (mode 600) unless the same key is already there. Without `--key` it prints `no --key given; set a password with: passwd deploy`.
+</Step>
+<Step>
+### The app folder
+It creates `service.dir` if missing and makes the user its owner (the folder itself, not its contents).
+</Step>
+<Step>
+### The sudo rule
+It writes one line allowing the five commands, with each program's full path as `command -v` finds it on the server. The rule is checked with `visudo` before it is installed, mode 0440, owned by root:
+
+```txt title="/etc/sudoers.d/shipdeck-my-api"
+# Written by shipdeck server-setup.sh for my-api.
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload, /usr/bin/systemctl enable my-api, /usr/bin/systemctl restart my-api, /usr/bin/install -m 0644 /opt/my-api/current/my-api.service /etc/systemd/system/my-api.service, /usr/bin/journalctl -u my-api -n 30 --no-pager
+```
+
+The file is named `shipdeck-<service>` with every `.` replaced by `_`, because sudo ignores files in `sudoers.d` whose names contain a dot. If `visudo` rejects the rule, the script stops with `the sudo rule did not pass visudo; nothing was installed`.
+</Step>
+<Step>
+### sshd check
+If `sshd` has an `AllowUsers` list without the user, it prints a warning telling you to add the user and reload sshd. It changes nothing there.
+</Step>
+</Steps>
+
+It ends with `done: deploy can deploy my-api to /opt/my-api`.
+
+The script is idempotent: running it again changes nothing that is already in place. Run it once per app; each app gets its own sudo file. Then press `⏎` on the deployable to deploy as that user.
+
+## Tools on the server
+
+Preflight looks up the program `service.start` names (when it is a bare name like `node`, or an absolute path) and every tool in `pipeline.preflight.requires`, with `command -v` as the SSH user. A missing one stops the deploy:
+
+```txt
+deploy cannot find node on the server; install it or fix service.start and pipeline.preflight.requires
+```
+
+The built-in unit sets `ProtectHome=true`, so the service cannot see `/home` or `/root`. A per-user runtime, such as Node installed with nvm under `/home/deploy/.nvm`, is found by `command -v` but the service could not start it. Preflight refuses it:
+
+```txt
+node is at /home/deploy/.nvm/versions/node/v22.11.0/bin/node, but the built-in unit hides home folders from the service (ProtectHome=true). Install node system-wide (e.g. /usr/bin or /usr/local/bin), or add a service.template without ProtectHome
+```
+
+You have two fixes:
+
+- Install the runtime system-wide, under `/usr/bin` or `/usr/local/bin`.
+- Add your own [service template](/docs/reference/service-template) without `ProtectHome`. With a `service.template` present, preflight does not run this check.
+
+Tools listed only in `requires` may live under `/home`: they are used by `server` commands over SSH, not by the service.
+
+## Next
+
+<Cards>
+  <Card title="SSH and login" href="/docs/guides/ssh" description="Host, user, keys, passwords and host keys." />
+  <Card title="Security model" href="/docs/concepts/security" description="What runs as root and what runs as the deploy user." />
+</Cards>

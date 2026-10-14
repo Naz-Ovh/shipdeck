@@ -1,0 +1,15 @@
+{
+  "title": "Guides",
+  "pages": [
+    "deploy-root",
+    "pipeline",
+    "packing-files",
+    "environment",
+    "ssh",
+    "server-access",
+    "health-and-rollback",
+    "releases",
+    "examples",
+    "upgrading"
+  ]
+}

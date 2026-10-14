@@ -1,0 +1,217 @@
+---
+title: Examples
+description: Four complete deploy.yaml files, for a Rust, Go, Node.js and Python service, and what each one shows.
+---
+
+The shipdeck repository has one complete `deploy.yaml` per kind of app in [examples/](https://github.com/Naz-Ovh/shipdeck/tree/main/examples). Each file below is copied from there. All four pass the launch check and start with the schema line for editor completion.
+
+Each example sits in its own deploy folder, such as `scripts/deploy/web-prod/deploy.yaml`, with `project: ../../../web` pointing at the source from there. See [Deploy root](/docs/guides/deploy-root).
+
+| Example | Ships | Built | Notable |
+| --- | --- | --- | --- |
+| Rust | a binary and `.env` | on your PC, against the server's glibc | `cargo zigbuild`, `health.url` |
+| Go | a static binary, templates, `.env` and `config.yaml` | on your PC | version from the git tag, `rollback: auto` |
+| Node.js | `dist` and the package files | on your PC; dependencies on the server | `requires`, `shared`, `setup`, `done` and `failed` |
+| Python | the source | on the server, in Setup | `include: [.]` with excludes, `.venv` in the release |
+
+## Rust
+
+A compiled service where only the binary and its `.env` travel.
+
+- `build.run.local` uses [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild) with the target `x86_64-unknown-linux-gnu.2.31`, so the binary needs at most glibc 2.31. After the build shipdeck compares the binary's CPU and glibc with the server's and stops if they do not fit.
+- `pack.binary` names the file the build produces. It lands at the release root as `my-api`.
+- `start` adds arguments to the default `./my-api`.
+- `ssh.host: prod` is an alias from `~/.ssh/config`; `user` is set here, so the alias does not need a `User`.
+- `health.url` is fetched on the server, so `127.0.0.1` works.
+
+```yaml title="examples/rust/deploy.yaml"
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
+# A Rust service: compiled here, only the binary and its .env travel.
+name: My API (prod)
+project: ../../../my-api          # your source, relative to this file
+
+ssh:
+  host: prod                      # an address, or an alias from ~/.ssh/config
+  user: deploy                    # optional when the alias has a User
+
+service:
+  name: my-api                    # my-api.service
+  dir: /opt/my-api                # current/ releases/ backups/ shared/
+  start: ./my-api -E=.env         # default: ./<binary>
+
+pipeline:
+  build:
+    run:
+      # Build against the server's glibc so the binary runs there.
+      local: cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31
+  pack:
+    binary: target/x86_64-unknown-linux-gnu/release/my-api
+    files:
+      include:
+        deploy: [.env]            # next to this file; gitignored
+  health:
+    url: http://127.0.0.1:8080/health
+```
+
+## Go
+
+A static Go binary that needs nothing from the server.
+
+- There is no version file in the project, so the version comes from the latest git tag (`v1.2.0` gives `1.2.0`). The build passes it into the binary with `$SHIPDECK_VERSION`.
+- `CGO_ENABLED=0` makes a static binary, so there is no glibc to match.
+- `env` values are text; `"2"` is quoted here, though `2` would be read as text too.
+- Files come from both sources: `templates` from the project, `.env` and `config.yaml` from the deploy folder.
+- `keep` holds 3 open releases and 10 compressed ones instead of the default 5 and 15.
+- `health.check.server` runs a command in `current/` until it passes or `timeout_secs` runs out, and `rollback: auto` rolls back without asking.
+- `ssh` has no `user`, so the alias `prod` in `~/.ssh/config` must have a `User`.
+
+```yaml title="examples/go/deploy.yaml"
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
+# A Go service: a static binary needs nothing from the server.
+name: Worker (prod)
+project: ../../../worker
+
+ssh:
+  host: prod
+
+service:
+  name: worker
+  dir: /opt/worker
+  start: ./worker --config config.yaml
+  env_file: .env                  # the service's environment; server commands load it too
+  env:
+    GOMAXPROCS: "2"
+  keep: { open: 3, compressed: 10 }
+
+pipeline:
+  preflight:
+    run:
+      local: go vet ./...
+  build:
+    # No version file: the version is the latest git tag (v1.2.0 → 1.2.0).
+    run:
+      local: CGO_ENABLED=0 go build -ldflags "-X main.version=$SHIPDECK_VERSION" -o dist/worker ./cmd/worker
+  pack:
+    binary: dist/worker
+    files:
+      include:
+        project: [templates]
+        deploy: [.env, config.yaml]
+  health:
+    check:
+      server: ./worker healthcheck  # runs in current/, retried until timeout_secs
+    rollback: auto                  # no question: roll back at once
+```
+
+## Node.js
+
+An app with no binary: built on your PC, with production dependencies installed on the server before the release goes live.
+
+- `start: node dist/main.js` starts with a bare name, so Preflight looks `node` up on the server and the unit uses the full path it finds. With the built-in unit, a `node` under `/home/` or `/root/` (such as one from nvm) is refused, because the unit hides home folders.
+- `requires: [npm]` stops Preflight if the server has no `npm`.
+- The pack ships `dist` and the two package files and leaves out source maps. `"**/*.map"` is quoted because YAML reads a leading `*` as an alias.
+- `setup` runs in the new release folder while the old release still serves: `npm ci --omit=dev` installs only production dependencies, then the migration runs. `check.server` must pass before the switch.
+- `shared: [uploads]` keeps uploaded files in `/opt/web/shared/uploads` across releases.
+- `done` and `failed` call a local script. `SHIPDECK_STEP` in `failed` names the step that failed.
+
+```yaml title="examples/node/deploy.yaml"
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
+# A Node.js app: built here, production dependencies installed on the server
+# before the release goes live.
+name: Web (prod)
+project: ../../../web
+
+ssh:
+  host: prod
+
+service:
+  name: web
+  dir: /opt/web
+  start: node dist/main.js        # node is looked up on the server
+  env_file: .env
+  env: { NODE_ENV: production }
+  shared: [uploads]               # kept in shared/ across releases
+
+pipeline:
+  preflight:
+    requires: [npm]               # the server must have it
+    run:
+      local: npm test
+  build:
+    run:
+      local: [npm ci, npm run build]
+  pack:
+    files:
+      include:
+        project: [dist, package.json, package-lock.json]
+        deploy: [.env]
+      exclude:
+        project: ["**/*.map"]
+  setup:                          # in releases/<id>; the old release still serves
+    run:
+      server: [npm ci --omit=dev, npm run migrate]
+    check:
+      server: node --check dist/main.js
+  health:
+    url: http://127.0.0.1:3000/health
+  done:
+    run:
+      local: ./notify.sh "web $SHIPDECK_VERSION is live"
+  failed:
+    run:
+      local: ./notify.sh "web failed at $SHIPDECK_STEP"
+```
+
+## Python
+
+A source-only app: nothing is built on your PC, and the server builds the virtualenv.
+
+- `include.project: [.]` ships the whole project. shipdeck does not read `.gitignore`, so the excludes leave out tests, caches, compiled files and the local `.venv`.
+- There is no `build` step. The log says `pipeline.build.run.local is empty; shipping the files as they are`.
+- `setup` creates `.venv` inside the new release and installs the requirements into it. Each list item runs in its own shell, which is why the second command calls `.venv/bin/pip` by path.
+- `start: .venv/bin/python -m app` contains a `/`, so it is a path inside the release: `/opt/reports/current/.venv/bin/python`.
+- There is no `health.url`, so Health waits until `systemctl is-active` says `active` three times in a row, one second apart.
+
+```yaml title="examples/python/deploy.yaml"
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
+# A Python app: the source ships as it is; the server builds its virtualenv.
+name: Reports (prod)
+project: ../../../reports
+
+ssh:
+  host: prod
+  user: deploy
+
+service:
+  name: reports
+  dir: /opt/reports
+  start: .venv/bin/python -m app
+  env_file: .env
+
+pipeline:
+  preflight:
+    requires: [python3]
+    run:
+      local: python3 -m pytest -q
+  pack:
+    files:
+      include:
+        project: [.]              # the whole project...
+        deploy: [.env]
+      exclude:
+        project: [tests, "**/__pycache__", .venv, "**/*.pyc"]   # ...but these
+  setup:
+    run:
+      server:
+        - python3 -m venv .venv
+        - .venv/bin/pip install -q -r requirements.txt
+    check:
+      server: .venv/bin/python -c "import app"
+```
+
+## Next
+
+<Cards>
+  <Card title="deploy.yaml" href="/docs/reference/deploy-yaml" description="Every field in these files, with defaults and rules." />
+  <Card title="Packing files" href="/docs/guides/packing-files" description="How include and exclude patterns pick the files." />
+</Cards>

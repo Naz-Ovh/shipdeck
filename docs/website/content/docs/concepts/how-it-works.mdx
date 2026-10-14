@@ -1,0 +1,98 @@
+---
+title: How it works
+description: How shipdeck is built, how it talks to the server, and why a deploy cannot leave the app half-switched.
+---
+
+shipdeck is one program on your PC and nothing on the server. It builds locally, sends one archive over SSH, and drives the server with short shell scripts. This page explains the pieces and the choices behind them.
+
+## Two parts: the engine and the screen
+
+shipdeck is split in two:
+
+- **The engine** does all the work: reads `deploy.yaml`, builds, packs, talks SSH, runs the steps, rolls back. It knows nothing about the terminal.
+- **The terminal UI** shows what the engine reports, and answers its questions (a password, a new host key, whether to roll back).
+
+The engine reports everything through one channel: each step's state (pending, running, done, warned, failed, skipped) with a short detail, progress with a unit (bytes, items or seconds), log lines of a kind (step, command, output, info, success, warning, error), the release id once it is known, and the final outcome. The screen only draws these. That is why every message you see in the log is the same text the engine produced, and why the step list, the progress bar and the timeline always agree.
+
+```txt
+ your PC                                              the server
+┌────────────────────────────────────┐               ┌───────────────────────────────┐
+│ terminal UI                        │               │ sshd                          │
+│   ▲ steps, progress, log, outcome  │               │   sh -c '<small script>'      │
+│   ▼ answers: password, y / n       │   one SSH     │   SFTP: releases/.<id>.tar.gz │
+│ engine                             │◀─────────────▶│                               │
+│   deploy.yaml → build → pack       │   session     │ /opt/my-api/current → ...     │
+│   local commands (sh -c)           │   per server  │ systemd: my-api.service       │
+└────────────────────────────────────┘               └───────────────────────────────┘
+```
+
+## One SSH session per server
+
+shipdeck opens one SSH session per endpoint (host, port, user and key) when it first needs it, and reuses it for everything: the live status on the Deployables screen, the Releases list, every command and the upload of a deploy. A session that closes is opened again on the next use. Two parts of the screen asking for the same server at once share one connection attempt.
+
+So you log in once per server per run. A typed password or key passphrase is kept in memory for the run only, never written anywhere. Connecting gives up after 15 seconds, and a keepalive every 15 seconds notices a dead connection. See [SSH and login](/docs/guides/ssh).
+
+## Every server action is a small sh script
+
+shipdeck installs nothing on the server. Every action, from reading the server's facts to unpacking, switching, tidying and probing health, is a short POSIX `sh` script sent as `sh -c '<script>'`. Your login shell (bash, zsh, fish) does not matter.
+
+Everything shipdeck puts into those scripts is either checked by the config rules (`service.dir`, `service.name`, user names, release ids) or quoted for the shell. The one exception on purpose is your own `server` commands in `pipeline`: they are shell, written by you, and run as the SSH user. See [Security model](/docs/concepts/security).
+
+The upload is the only part that is not a script: it goes over SFTP, or through `cat` over SSH when the server has no SFTP subsystem.
+
+## Nothing live changes before the switch
+
+A deploy builds the new release next to the running one:
+
+1. Preflight, build and pack happen on your PC, plus checks on the server and your own `pipeline.preflight.run.server` commands.
+2. Upload and unpack write into `releases/`, under names the live release never uses.
+3. Setup runs your commands inside the new release folder, while the old one serves.
+
+Until step 7, **switch**, the service still runs the old release from the old folder, and its unit has not changed. A failure up to here removes the new release folder and stops; the app never noticed. (On a first deploy, preflight does create `service.dir`. There is nothing live yet to disturb.)
+
+## Why the switch is atomic
+
+`current` is a symlink to `releases/<id>`. To switch, shipdeck makes a new link next to it and renames it over the old one:
+
+```sh
+ln -sfn releases/<id> .current.next
+mv -Tf .current.next current
+```
+
+A rename replaces the name in one step. At every moment `current` exists and points at a complete release, the old one or the new one, never at nothing and never at a half-written folder. Unpacking goes through a hidden `.partial` folder for the same reason, and compressing an old release writes a `.part` file first.
+
+## Why systemd only sees current/
+
+The systemd unit never names a release. Its working folder is `<service.dir>/current`, its program is under `current/`, and its env file is `current/.env`:
+
+```ini
+WorkingDirectory=/opt/my-api/current
+ExecStart=/opt/my-api/current/my-api
+EnvironmentFile=/opt/my-api/current/.env
+```
+
+So a deploy or a rollback only changes where `current` points, then restarts the service. The paths systemd sees never change. Each release still carries its own unit, rendered for it, and shipdeck installs that one at every switch, so a rollback also brings back the unit settings of that release. The unit's description holds the version, so `systemctl status my-api` tells you what is live.
+
+The restart is the only moment the app is down: about a second or two.
+
+## Health, then rollback
+
+After the restart, the engine probes the service once a second until it has been `active` (and your URL answered) three times in a row, then runs your checks. If switch, restart or health fails, it reads the last 30 journal lines, asks whether to roll back (or rolls back at once with `rollback: auto`), and puts the previous release back the same way: move `current`, install its unit, restart. See [Health and rollback](/docs/guides/health-and-rollback).
+
+## What is checked before the screen opens
+
+shipdeck reads every `deploy.yaml` under the deploy root before it starts. Any mistake in any file stops it, with every problem in every file printed at once: file, line, a caret under the value, and a hint. Checked at this point:
+
+- the YAML itself;
+- the shape: unknown keys (with suggestions, and where a 0.2 key moved), wrong kinds, missing required keys;
+- the values: paths, names, users, URLs, commands, numbers, `ask` or `auto`;
+- the SSH target: `~/.ssh/config` is read, a missing user is reported, and an alias that needs `ProxyJump` is refused.
+
+Some things can only be checked later, against your PC or the server, and are left to preflight and build: whether `project` exists, whether `service.template` renders, the server's tools, sudo rights and disk space, your deploy-folder files, the version file, the binary's CPU and glibc, and your project files. See [Config problems](/docs/reference/config-problems).
+
+## Next
+
+<Cards>
+  <Card title="The pipeline" href="/docs/guides/pipeline" description="The ten steps of a deploy, one by one." />
+  <Card title="Security model" href="/docs/concepts/security" description="What runs as root, what runs as you, and what is quoted." />
+</Cards>

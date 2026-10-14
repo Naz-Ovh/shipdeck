@@ -1,0 +1,250 @@
+---
+title: Config problems
+description: How shipdeck reports a deploy.yaml it cannot use, and every message it prints, with the cause and the fix.
+---
+
+shipdeck reads every deploy.yaml under the deploy root before it starts. If any file has a problem, it prints all of them at once, each with its file, line and column, and does not start. A deploy from a config shipdeck cannot fully read is never offered.
+
+## The report
+
+Each problem shows where it is, a caret under the spot, a short label and, when there is one, a hint. This is `shipdeck scripts/deploy` with two broken files:
+
+```txt
+✘ shipdeck did not start: 2 deploy.yaml files have 3 problems
+
+my-api-prod/deploy.yaml
+  error: unknown key `service.strat`
+    ┌─ scripts/deploy/my-api-prod/deploy.yaml:8:3
+    │
+  8 │   strat: ./my-api
+    │   ^^^^^ unknown key
+    │
+    = help: did you mean `start`?
+
+  error: build cannot run commands on the server
+    ┌─ scripts/deploy/my-api-prod/deploy.yaml:12:7
+    │
+ 11 │     run:
+ 12 │       server: cargo build --release
+    │       ^^^^^^ build runs on your PC only
+    │
+    = help: the server sets up the release in `pipeline.setup.run.server`
+
+web-prod/deploy.yaml
+  error: `pipeline.health.timeout_secs` must be at least 3
+    ┌─ scripts/deploy/web-prod/deploy.yaml:15:19
+    │
+ 14 │   health:
+ 15 │     timeout_secs: 2
+    │                   ^ too short
+    │
+    = help: a release counts as up after 3 healthy seconds
+```
+
+- The report goes to stderr, and shipdeck exits with code `1`. The screen never opens, not even for the files that are fine.
+- Files come in folder-name order. Inside a file, problems are sorted by line; problems with no line (such as a missing top-level key) come first.
+- Each file starts with a heading of its folder and file name. The path after `┌─` is the deploy root as you typed it plus the file, then `:line:column`; an absolute root under the current folder is shown relative to it. When the parent key is on the line above, that line is shown too.
+- Colour is used only when stderr is a terminal and `NO_COLOR` is not set. Without colour, key paths keep their backticks, as above.
+
+A deploy root that is not a folder is a plain error, not a report: `Error: <root> is not a folder`.
+
+## Why a second run can show more
+
+shipdeck reads each file in passes: YAML first, then the shape of the file against the schema, then the values, then the SSH login. Some problems stop the later passes for that file, so fixing them can bring up new ones:
+
+| What you see | What is held back |
+| --- | --- |
+| A YAML syntax problem (invalid YAML, a second document, a key written twice, a key that is not text) | Everything else in that file. Only this one problem is shown. |
+| A 0.2 key (`` `remote` moved in shipdeck 0.3 ``) | All value checks, and the "is missing" checks after it. Only structural problems are shown. |
+| A required part with the wrong shape, such as `ssh: prod` | Value checks for the whole file. |
+| Any problem at all | The SSH login check (user, proxy), which runs only on an otherwise clean file. |
+
+Shape problems on optional parts do not hold anything back: value problems still show in the same run.
+
+## Finding files
+
+| Message | When | Fix |
+| --- | --- | --- |
+| `this folder has both deploy.yaml and deploy.yml` | one folder holds both names | Keep one of them. |
+| `shipdeck reads deploy.yaml now, not deploy.json` | a folder has only a `deploy.json` from 0.1 | Rename it to `deploy.yaml` and move the keys. See [Upgrading from 0.2](/docs/guides/upgrading). |
+| `cannot read it: <os error>` | the file cannot be read | Fix its permissions. |
+
+Only the direct subfolders of the deploy root are read. A folder without any of these files is skipped without a message. See [Deploy root](/docs/guides/deploy-root).
+
+## YAML syntax
+
+Each of these stops the file at the first one, so only one is shown.
+
+| Message | Label | When | Fix |
+| --- | --- | --- | --- |
+| `this is not valid YAML: <parser text>` | `here` | a syntax error | Fix the YAML at the caret. |
+| `deploy.yaml holds more than one document` | `a second document starts here` | a second `---` | Remove the `---` line and what follows it, or merge them. |
+| `` `<key>` is written twice `` | `first written on line <N>` | the same key twice in one map | Keep one of them. |
+| `a key must be plain text` | `not text` | a list or map used as a key | Use a text key. |
+| `deploy.yaml ends too early` | | the file is cut off | Complete the file. |
+
+<Callout type="warn" title="Quote patterns that start with * or !">
+  YAML reads a leading `*` as an alias, so `project: [*.js]` gives `this is not valid YAML: while parsing node, found unknown anchor`. Inside `[ ]`, braces and commas also break the list: `[src/*.{js,ts}]` is a syntax error. Quote them:
+
+  ```yaml
+  project: ["*.js", "src/*.{js,ts}", "!dist/maps"]
+  ```
+</Callout>
+
+## Unknown or misplaced keys
+
+| Message | Label | When | Fix |
+| --- | --- | --- | --- |
+| `` unknown key `<path>` `` | `unknown key` | a key the schema does not have | Follow the hint: `` did you mean `<x>`? `` when one known key is close (a typo, wrong case, one or two letters off), otherwise the list of keys that level takes, such as `the top level takes name, pipeline, project, service and ssh`. |
+| `` `<path>` is missing `` | ``needs `<key>` `` | a required key is absent | Add it. The hint gives an example, such as ``add `service: { name: my-api, dir: /opt/my-api }` ``. |
+| `<step> does not take commands` | `<step> is done by shipdeck` | `pipeline.upload`, `unpack`, `switch` or `restart` | Move the commands to the step the hint names. |
+| `<step> cannot run commands on the server` | `<step> runs on your PC only` | `build.run.server`, `failed.run.server` | Server work before the switch goes in `pipeline.setup.run.server`. |
+| `<step> cannot run commands on your PC` | `<step> runs on the server only` | `setup.run.local`, `setup.check.local` | Use `pipeline.preflight.run.local` or `pipeline.build.run.local`. |
+| ``<step> has no `run` `` | `not a field of <step>` | `health.run`, `pack.run` | Health takes `check`; the hint lists the fields the step takes. |
+| ``<step> has no `check` `` | `not a field of <step>` | `preflight`, `build`, `done` or `failed` with `check` | Use `run`: a failing command already stops the step. |
+| `` unknown key `pipeline.pack.files.include.<x>` `` | `not a source` | a source other than `project` or `deploy` under `include` or `exclude` | Sources are `project` and `deploy`. |
+
+The hints for a step's misplaced commands:
+
+| Written | Hint |
+| --- | --- |
+| `pipeline.upload` | ``commands before the upload go in `pipeline.build.run.local` `` |
+| `pipeline.unpack` | ``commands for the unpacked release go in `pipeline.setup.run.server` `` |
+| `pipeline.switch` | ``commands before the switch go in `pipeline.setup.run.server`; after it, in `pipeline.done.run` `` |
+| `pipeline.restart` | ``checks after the restart go in `pipeline.health.check` `` |
+| `pipeline.failed.run.server` | `the server may be out of reach when a step fails` |
+
+## Wrong kind of value
+
+| Message | Label | When | Fix |
+| --- | --- | --- | --- |
+| `` `<path>` is empty `` | `needs <kind>` | a key with no value where a value is needed: `name:`, `ssh:`, `ssh.host:`, a `service.env` value, a list item | Give it a value. On an optional key, remove the line to use the default. |
+| `` `<path>` must be <kind> `` | `found <value>` | the wrong YAML kind: text, a whole number, a list, a map, or text or a list for commands | Write the kind the message names. |
+| `` `<path>` must be a whole number `` | ``found `22` `` | a quoted, negative, hex, float or exponent number | Write a plain unquoted number: `port: 22`. |
+| `` `<path>` must be a map `` | `say where it runs` | `run:` or `check:` written as a bare command | Name the side, as the hint shows: `` `run: { server: npm ci }` ``. |
+| `` `ssh.port` must be at most 65535 `` | `too large` | a port above 65535 | Use a real port. |
+| `` `pipeline.health.rollback` must be ask or auto `` | `found <value>` | any other value, `Auto` included | Write `ask` or `auto` in lowercase. |
+| `` `<path>` reads as a YAML tag `` | `YAML treats a leading ! as a tag` | an unquoted `!pattern`, such as `[dist, !dist/maps]` | Put it in quotes: `"!dist/maps"`. |
+
+## Value rules
+
+These run once the shape of the file is right.
+
+### Top level and ssh
+
+| Message | Label | Fix |
+| --- | --- | --- |
+| `` `name` is empty `` | `empty` | Give a name such as `My API (prod)`. |
+| `` `name` must be one line `` | `several lines` | Use one line. |
+| `` `project` is empty `` | `empty` | A folder relative to this deploy.yaml, such as `../../../web`; leave it out for this folder. |
+| `` `ssh.host` is empty `` | `empty` | Give an address or an alias. |
+| `` `ssh.user` is not a user name `` | `not allowed` | Letters, digits, `.`, `_` and `-` only. |
+
+### service
+
+| Message | Label | Fix |
+| --- | --- | --- |
+| `` `service.name` is the name without .service `` | `drop .service` | Write `my-api`, not `my-api.service`. |
+| `` `service.name` is not a unit name `` | `not allowed` | Letters, digits, `.`, `_`, `@` and `-` only. |
+| `` `service.dir` must be an absolute path `` | `not absolute` | Start it with `/`, such as `/opt/my-api`. |
+| ``` `service.dir` may only use letters, digits, `.`, `_`, `-` and `/` ``` | `not allowed` | Remove other characters and any `..`. |
+| `` `service.start` is needed when there is no `pipeline.pack.binary` `` | `what does the service run?` | Add `start`, such as `start: node dist/main.js`, or set `pipeline.pack.binary`. |
+| `` `service.start` is empty `` | `empty` | Give a command, or remove the line to use `./<binary>`. |
+| `` `service.start` must be one line without backslashes `` | `not allowed` | Use one line; move complex setup into a script in the release. |
+| `` `service.start` must begin with a program, not "<word>" `` | `not a program` | Start with a name such as `node`, or a path such as `./my-api` or `/usr/bin/node`. |
+| `` `service.run_as` is not a user name `` | `not allowed` | Letters, digits, `.`, `_` and `-` only. |
+| `` `service.env_file` must be a path inside the release `` | `not inside the release` | A relative path such as `.env`, shipped with `pipeline.pack.files.include.deploy: [.env]`. |
+| `` `service.env` key "<KEY>" is not a variable name `` | `not a variable name` | Letters, digits and `_`, not starting with a digit. |
+| `` `service.env.<KEY>` must not contain quotes, backslashes or newlines `` | `not allowed` | Put values like this in `service.env_file`. |
+| `` `service.shared` entry "<e>" must be a folder inside the release `` | `not allowed` | A relative folder such as `uploads` or `data/cache`. |
+| `` `service.shared` lists "<b>" and "<a>", which overlap `` | `overlaps` | Keep the outer folder. |
+| `` `service.keep.open` must be at least 1 `` | `the live release counts` | Use `1` or more. |
+
+### pipeline
+
+| Message | Label | Fix |
+| --- | --- | --- |
+| `this command is empty` | `empty` | Remove it. |
+| `"<tool>" is not a program name` | `not a program` | In `preflight.requires`: a name such as `node`, or an absolute path. |
+| `` `pipeline.build.version_from` is empty `` | `empty` | A file relative to `project`, such as `package.json`, or remove the line. |
+| `` `pipeline.health.url` must start with http:// or https:// `` | `not a URL` | Such as `http://127.0.0.1:3000/health`. |
+| `` `pipeline.health.url` must not contain quotes, spaces or newlines `` | `not allowed` | Remove them. |
+| `` `pipeline.health.timeout_secs` must be at least 3 `` | `too short` | A release counts as up after 3 healthy seconds. |
+| `` `pipeline.pack.binary` is empty `` | `empty` | Give the path, or remove the line. |
+| `nothing to ship` | `empty` | Set `pipeline.pack.binary`, `pipeline.pack.files.include`, or both. |
+
+## 0.2 keys
+
+A key from shipdeck 0.2 gives `` `<key>` moved in shipdeck 0.3 ``, labelled `a 0.2 key`, with a hint that says where it went:
+
+| Key | Hint |
+| --- | --- |
+| `remote` | ``it is `service` now: name, dir, start, run_as, env, env_file`` |
+| `hooks` | ``each step has its own commands now: `pipeline.preflight.run.local`, `pipeline.setup.run.server`, `pipeline.done.run.local` `` |
+| `build` (top level) | ``it is `pipeline.build` now (run.local, version_from); binary and files moved to `pipeline.pack` `` |
+| `bundle` | ``it is `pipeline.pack.files.include.deploy` now`` |
+| `releases` | ``it is `service.keep` now`` |
+| `health` (top level) | ``it is `pipeline.health` now`` |
+| `service.service` | ``the unit's name is `service.name` `` |
+| `service.args` | ``put the arguments at the end of `service.start` `` |
+| `service.requires` | ``it is `pipeline.preflight.requires` now`` |
+| `pipeline.build.command` | ``it is `pipeline.build.run.local` now`` |
+| `pipeline.build.binary` | ``it is `pipeline.pack.binary` now`` |
+| `pipeline.build.files` | ``it is `pipeline.pack.files.include.project` now`` |
+| `pipeline.build.cwd` | ``it is `project` now, at the top of the file`` |
+| `pipeline.rotate` | ``old releases are tidied in done; `service.keep` says how many stay`` |
+
+While any of these is in the file, value checks are held back. Move every key, then run again. [Upgrading from 0.2](/docs/guides/upgrading) has the full mapping.
+
+## Files and paths
+
+The `pipeline.pack.files` lists are checked at launch for patterns shipdeck can never use. Each pattern problem is labelled `not a usable pattern`:
+
+| Message | Fix |
+| --- | --- |
+| `"<pattern>" is empty` | Remove it (`""` or a lone `"!"`). |
+| `"<pattern>" starts with /; patterns are relative to their source` | Drop the leading `/`. |
+| ``"<pattern>" climbs out with `..` `` | A pattern stays inside its source; move the file, or point `project` higher. |
+| ``"<pattern>" has an empty or `.` folder in the middle`` | Remove `//` or `/./`. |
+| ``"<pattern>" has a `{` that is never closed`` | Close the brace. |
+| ``"<pattern>" has a `[` that is never closed`` | Close the bracket. |
+| `"<pattern>" ends with a lone \` | Remove the trailing backslash or escape something after it. |
+| `"<pattern>" nests braces more than 10 deep` | Split the pattern. |
+| `"<pattern>" has more than 10 brace groups` | Split the pattern. |
+
+Other launch checks on paths:
+
+| Message | Label | When | Fix |
+| --- | --- | --- | --- |
+| `"<pattern>" is listed twice` | `again` | the same literal path twice in one list (`./dist/`, `dist/` and `dist` count as the same) | Remove one. |
+| `<name> belongs to shipdeck` | `reserved` | a literal include, a shared entry or the binary named `release.json` or `<service.name>.service` | Rename it or leave it out. For the binary: rename the binary. |
+| `` "<literal>" is in `service.shared`, so it cannot be shipped too `` | `shared across releases` | a literal include inside or around a `service.shared` folder | Leave it out of the pack: every release links that folder to `shared/`. |
+
+Reserved names and shared folders are checked here only for literal paths. A glob or `.` that selects one is caught when the release is packed. Patterns that match nothing are caught during the deploy, not at launch. See [Packing files](/docs/guides/packing-files).
+
+## SSH login
+
+These run last, only on a file with no other problem.
+
+| Message | When | Fix |
+| --- | --- | --- |
+| `` `ssh.user` is not set, and ~/.ssh/config has no User for <host> `` | no user in deploy.yaml or the alias | Set `ssh.user`, or add `User` to the alias. |
+| ``~/.ssh/config reaches <host> through `ProxyJump ...`, which shipdeck cannot follow yet; put the server's own address in ssh.host`` | the alias uses `ProxyJump` or `ProxyCommand` | Put the server's own address in `ssh.host`. |
+| ``the SSH user "<user>" may only use letters, digits, `.`, `_` and `-` `` | the alias's `User` is not a plain name | Fix the alias, or set `ssh.user`. |
+
+Each is labelled `cannot log in like this`. See [SSH and login](/docs/guides/ssh).
+
+## Not checked at launch
+
+Some things depend on your PC or the server, so shipdeck checks them during the deploy and shows the problem in the log instead:
+
+| Checked at | What |
+| --- | --- |
+| Start of Preflight | the `project` folder exists; `service.template` renders |
+| Preflight, on the server | tools in `service.start` and `requires`, sudo rights, free space, `service.dir` is writable |
+| End of Preflight | every `files.include.deploy` pattern matches |
+| Start of Build | the version file can be read |
+| End of Build | the binary's CPU and glibc, every `files.include.project` pattern matches |
+| Pack | files that collide with the binary, reserved names or shared folders; enough free space on the server for the packed release |
+
+[Troubleshooting](/docs/troubleshooting) covers those messages.

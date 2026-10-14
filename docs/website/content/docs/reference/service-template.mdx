@@ -1,0 +1,190 @@
+---
+title: Service template
+description: The systemd unit shipdeck writes for each release, its placeholders, and how to replace it with your own.
+---
+
+Every release carries its own systemd unit, `<service.name>.service`, at the release root. shipdeck renders it from a template: the built-in one below, or a `service.template` file in your deploy folder.
+
+## The built-in unit
+
+This is the template, as shipped in `crates/engine/src/bundle/default.service`:
+
+```ini title="default.service"
+# {{service}}.service for release {{id}}, written by shipdeck.
+# Every deploy and rollback replaces this file; change service.template instead.
+
+[Unit]
+Description={{name}} {{tag}}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{user}}
+WorkingDirectory={{dir}}/current
+ExecStart={{exec}}
+Environment=APP_RELEASE={{id}}
+{{env}}
+# Restart on crash. SIGTERM lets in-flight requests finish.
+Restart=always
+RestartSec=2
+KillSignal=SIGTERM
+TimeoutStopSec=30
+LimitNOFILE=65535
+
+# Hardening: read-only system, writes only to the shared folder.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths={{dir}}/shared
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+The unit only points at `current/...`, so a deploy or rollback moves `current` and reinstalls that release's unit. The service can write only to `shared/` (see `service.shared`); the rest of the system is read-only to it, and `/home` and `/root` are hidden.
+
+## Placeholders
+
+| Placeholder | Filled with |
+| --- | --- |
+| `{{name}}` | `name` |
+| `{{tag}}` | `v<version> (<git>)`, or `v<version> (<git>, uncommitted changes)` |
+| `{{id}}` | the release id, e.g. `v0.3.1-ab12cd3-20261014.153012` |
+| `{{version}}` | the version part of the id |
+| `{{git}}` | the short commit sha, or `nogit` |
+| `{{dir}}` | `service.dir` |
+| `{{service}}` | `service.name` |
+| `{{user}}` | `service.run_as`, else the SSH user (after `~/.ssh/config`) |
+| `{{exec}}` | the full start command built from `service.start` (below) |
+| `{{binary}}` | the file name of `pipeline.pack.binary`; an error when there is none |
+| `{{env}}` | `EnvironmentFile=<dir>/current/<file>` when `service.env_file` is set, then one `Environment="KEY=value"` line per `service.env` entry, sorted by key; an empty line when neither is set |
+
+Spaces inside the braces are allowed: `{{ name }}` works.
+
+### How `{{exec}}` is built
+
+`service.start` (default `./<binary>`) is split at the first space into a program and its arguments. The program becomes:
+
+| Program in `service.start` | In `ExecStart` |
+| --- | --- |
+| absolute path, e.g. `/usr/bin/node` | as written |
+| contains a `/`, e.g. `./my-api`, `.venv/bin/python` | `<dir>/current/<path>`, with `./` removed |
+| bare name, e.g. `node` | the full path `command -v` found on the server at preflight |
+
+The arguments follow unchanged. Bare names are resolved because systemd's `PATH` may differ from your login shell's.
+
+## A rendered example
+
+With this deploy.yaml:
+
+```yaml title="scripts/deploy/my-api-prod/deploy.yaml"
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
+name: My API (prod)
+ssh:
+  host: 203.0.113.10
+  user: deploy
+service:
+  name: my-api
+  dir: /opt/my-api
+  start: ./my-api -E=.env
+  env_file: .env
+  env:
+    RUST_LOG: info
+pipeline:
+  pack:
+    binary: target/release/my-api
+    files:
+      include:
+        deploy: [.env]
+```
+
+release `v0.3.1-ab12cd3-20261014.153012` gets this `my-api.service` (hardening lines unchanged):
+
+```ini title="/opt/my-api/current/my-api.service"
+# my-api.service for release v0.3.1-ab12cd3-20261014.153012, written by shipdeck.
+# Every deploy and rollback replaces this file; change service.template instead.
+
+[Unit]
+Description=My API (prod) v0.3.1 (ab12cd3)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/opt/my-api/current
+ExecStart=/opt/my-api/current/my-api -E=.env
+Environment=APP_RELEASE=v0.3.1-ab12cd3-20261014.153012
+EnvironmentFile=/opt/my-api/current/.env
+Environment="RUST_LOG=info"
+# Restart on crash. SIGTERM lets in-flight requests finish.
+Restart=always
+...
+ReadWritePaths=/opt/my-api/shared
+...
+```
+
+`Description` holds the version, so `systemctl status my-api` shows which release is live.
+
+## Installed on every switch
+
+At the Switch step, and on every rollback, shipdeck installs the live release's own unit and reloads systemd:
+
+```sh
+sudo -n install -m 0644 /opt/my-api/current/my-api.service /etc/systemd/system/my-api.service
+sudo -n systemctl daemon-reload
+sudo -n systemctl enable my-api
+```
+
+As `root` the same commands run without `sudo -n`. Because the unit always comes from `current/`, rolling back also brings back the unit that release was deployed with. Do not edit `/etc/systemd/system/my-api.service` by hand: the next deploy or rollback replaces it.
+
+## Your own template
+
+Put a file named `service.template` next to `deploy.yaml`. It replaces the built-in unit for that deployable.
+
+```ini title="scripts/deploy/my-api-prod/service.template"
+[Unit]
+Description={{name}} {{tag}}
+After=network-online.target
+
+[Service]
+Type=simple
+User={{user}}
+WorkingDirectory={{dir}}/current
+ExecStart={{exec}}
+Environment=APP_RELEASE={{id}}
+{{env}}
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths={{dir}}/shared
+
+[Install]
+WantedBy=multi-user.target
+```
+
+This example drops `ProtectHome`, which lets a runtime under a home folder (for example one installed with nvm) start. See [Server access](/docs/guides/server-access#tools-on-the-server).
+
+- The template is rendered into `<service.name>.service` in each release. The file `service.template` itself is never shipped.
+- It is rendered once at the start of Preflight, with a sample release, so a mistake stops the deploy before anything is built:
+
+| Error | Cause |
+| --- | --- |
+| `unknown placeholder {{x}}; known: name, tag, id, version, git, dir, service, user, exec, binary, env` | a name not in the table above |
+| `{{binary}} has no value: this deployable has no pipeline.pack.binary; use {{exec}}` | `{{binary}}` without `pipeline.pack.binary` |
+| ``a `{{` is never closed`` | a missing `}}` |
+
+The errors are prefixed with `rendering <path to service.template>: `.
+
+<Callout type="warn">
+Values are not escaped for systemd specifiers. A `%` in `service.start` or a `service.env` value is read by systemd as a specifier such as `%h`.
+</Callout>

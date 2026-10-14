@@ -1,0 +1,132 @@
+---
+title: Variables
+description: The SHIPDECK_* variables your pipeline commands see, which commands get which, and how service.env and the env file reach server commands.
+---
+
+Every command you write under `pipeline` runs with a set of `SHIPDECK_*` variables that say what is being deployed, where, and at which step. Server commands also get the app's own environment.
+
+## SHIPDECK_* variables
+
+| Variable | Value | When it is set |
+| --- | --- | --- |
+| `SHIPDECK_ACTION` | `deploy`, or `rollback` for a manual rollback from the Releases screen | always |
+| `SHIPDECK_STEP` | The step running the command: `preflight`, `build`, `setup`, `health`, `done`. In `failed` commands: the step that failed. | always |
+| `SHIPDECK_NAME` | `name` from deploy.yaml | always |
+| `SHIPDECK_SERVICE` | `service.name` | always |
+| `SHIPDECK_HOST` | `ssh.host` as written: the alias, not the address it resolves to | always |
+| `SHIPDECK_APP_DIR` | `service.dir` | always |
+| `SHIPDECK_SHARED_DIR` | `service.dir` followed by `/shared` | always |
+| `SHIPDECK_RELEASE` | The release id, such as `v1.4.0-ab12cd3-20261014.153012` | deploy: from build on, so not in preflight. Manual rollback: the target, from the start. |
+| `SHIPDECK_VERSION` | The version part of the id, such as `1.4.0` | as `SHIPDECK_RELEASE`. In a rollback, only when the target's id parses. |
+| `SHIPDECK_PREVIOUS` | The release that was live before this run | once known (preflight commands already see it), and only if something was live |
+| `SHIPDECK_ERROR` | The first line of the error | `failed` commands only |
+| `SHIPDECK_FOLDER` | The deploy folder (where deploy.yaml is), absolute | local commands only |
+| `SHIPDECK_PROJECT` | `project`, absolute | local commands only |
+
+In `failed` commands, `SHIPDECK_STEP` can also be a step that takes no commands: `pack`, `upload`, `unpack`, `switch`, `restart`, or `connect` in a manual rollback.
+
+A variable that is not set is absent, not empty. Under `set -u`, or when a missing value matters, write `${SHIPDECK_PREVIOUS:-none}`.
+
+## Which commands get what
+
+| | Local commands | Server commands |
+| --- | --- | --- |
+| Run in | `project`, on your PC | the step's folder on the server, as the SSH user |
+| `SHIPDECK_*` above | yes | yes, except `SHIPDECK_FOLDER` and `SHIPDECK_PROJECT` |
+| `service.env` | no | yes |
+| `service.env_file` | no | yes, read from the release |
+| shipdeck's own environment | yes, inherited | no: the SSH session's environment on the server |
+| cargo progress variables | yes | no |
+
+Local commands inherit the environment you started shipdeck with, so `PATH`, tokens in your shell and so on are there. They do not get `service.env` or the env file: those describe the app on the server.
+
+## Server commands and the app's environment
+
+Each server command runs in a small script that sets up the environment in this order, so later ones win:
+
+1. `service.env`, each value exported as written.
+2. `service.env_file`, if set and present, read the way systemd reads `EnvironmentFile=`.
+3. The `SHIPDECK_*` variables.
+
+So a key in the env file overrides the same key in `service.env`, and nothing can override a `SHIPDECK_*` variable.
+
+The env file is read from the release the step works with:
+
+| Step | Folder | Env file read from |
+| --- | --- | --- |
+| preflight | `service.dir` | `current/<env_file>`, the **live** release's. Skipped on a first deploy, when there is none. |
+| setup | `releases/<id>` | the new release |
+| health, done | `current` | the new release, now live |
+
+The reader follows systemd's rules: blank lines and lines starting with `#` or `;` are skipped, an `export ` prefix is allowed, keys must be valid variable names, one pair of surrounding quotes is removed, and **nothing is expanded**: `$HOME` stays the text `$HOME`. A missing file is skipped without an error. [Environment and secrets](/docs/guides/environment) covers shipping the file.
+
+## Cargo progress
+
+Local commands also get:
+
+| Variable | Value |
+| --- | --- |
+| `CARGO_TERM_PROGRESS_WHEN` | `always` |
+| `CARGO_TERM_PROGRESS_WIDTH` | `120` |
+| `CARGO_TERM_COLOR` | `never` |
+
+cargo then prints its `Building [====>  ] 283/286` line even though its output is not a terminal, and shipdeck turns it into the build step's progress bar (`N of M crates`). Other tools ignore these variables.
+
+## Examples
+
+### A notify script
+
+One script for success and failure, called from `done` and `failed`:
+
+```sh title="scripts/deploy/my-api-prod/notify.sh"
+#!/bin/sh
+# Posts one line to a chat webhook. $1 is the message.
+set -eu
+curl -fsS -X POST -H 'Content-Type: application/json' \
+  -d "{\"text\": \"[$SHIPDECK_NAME] $1\"}" \
+  "$CHAT_WEBHOOK_URL"
+```
+
+```yaml title="scripts/deploy/my-api-prod/deploy.yaml"
+pipeline:
+  done:
+    run:
+      local: '$SHIPDECK_FOLDER/notify.sh "$SHIPDECK_ACTION $SHIPDECK_RELEASE is live (was ${SHIPDECK_PREVIOUS:-nothing})"'
+  failed:
+    run:
+      local: '$SHIPDECK_FOLDER/notify.sh "failed at $SHIPDECK_STEP: $SHIPDECK_ERROR"'
+```
+
+Local commands run in `project`, not in the deploy folder, so `$SHIPDECK_FOLDER` finds a script kept next to deploy.yaml. `CHAT_WEBHOOK_URL` comes from your own shell, since local commands inherit it.
+
+### Migrations on deploy only
+
+Setup runs only on a deploy, so migrations there never run on a manual rollback. A done command runs on both; check `SHIPDECK_ACTION` when it should not:
+
+```yaml title="deploy.yaml"
+pipeline:
+  setup:
+    run:
+      server: npm run migrate                 # deploys only: setup never runs on a rollback
+  done:
+    run:
+      server: '[ "$SHIPDECK_ACTION" = rollback ] || ./bin/warm-cache'   # skipped on a rollback
+```
+
+### Writing to the shared folder
+
+```yaml title="deploy.yaml"
+pipeline:
+  setup:
+    run:
+      server: cp -n config/defaults.json "$SHIPDECK_SHARED_DIR/config.json"
+```
+
+Server commands run under `set -e`, after `cd` into the step's folder, so relative paths point into the release.
+
+## Next
+
+<Cards>
+  <Card title="The pipeline" href="/docs/guides/pipeline" description="Each step, where its commands run, and what a failure means." />
+  <Card title="Environment and secrets" href="/docs/guides/environment" description="service.env, the env file and shipping .env safely." />
+</Cards>

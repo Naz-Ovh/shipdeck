@@ -1,0 +1,114 @@
+---
+title: Deploy root
+description: The folder you pass to shipdeck, how it finds deployables in it, and what to commit.
+---
+
+The deploy root is the folder you give shipdeck on the command line. Each direct subfolder that holds a `deploy.yaml` is one deployable: one app, on one server, in one environment.
+
+```sh
+shipdeck scripts/deploy
+```
+
+## A typical layout
+
+A repository with an API that has a production and a beta deployment, plus a web app:
+
+<Files>
+  <Folder name="my-repo" defaultOpen>
+    <Folder name="api" />
+    <Folder name="web" />
+    <Folder name="scripts" defaultOpen>
+      <Folder name="deploy" defaultOpen>
+        <Folder name="my-api-beta" defaultOpen>
+          <File name="deploy.yaml" />
+          <File name=".env" />
+        </Folder>
+        <Folder name="my-api-prod" defaultOpen>
+          <File name="deploy.yaml" />
+          <File name="service.template" />
+          <File name="config.yaml" />
+          <File name=".env" />
+        </Folder>
+        <Folder name="web-prod" defaultOpen>
+          <File name="deploy.yaml" />
+          <File name=".env" />
+        </Folder>
+        <File name=".gitignore" />
+      </Folder>
+    </Folder>
+  </Folder>
+</Files>
+
+Here `shipdeck scripts/deploy` lists three deployables: `my-api-beta`, `my-api-prod` and `web-prod`.
+
+| File | Needed | What it is |
+| --- | --- | --- |
+| `deploy.yaml` | yes | The deployable: server, service and pipeline. See [deploy.yaml](/docs/reference/deploy-yaml). |
+| `service.template` | no | Replaces the built-in systemd unit. See [Service template](/docs/reference/service-template). |
+| `config.yaml`, `.env`, ... | no | Files that belong to this deployment and ship with the release, when you list them in `pipeline.pack.files.include.deploy`. See [Packing files](/docs/guides/packing-files). |
+
+## How shipdeck finds deployables
+
+| Rule | Detail |
+| --- | --- |
+| Depth | Only the direct subfolders of the deploy root are scanned. A `deploy.yaml` in the root itself, or two levels down, is ignored. |
+| Order | Folders are sorted by name. The list on screen and the problem report follow this order. |
+| File name | `deploy.yaml` or `deploy.yml`. Symlinked files and symlinked subfolders count. Hidden subfolders are not skipped. |
+| Both names | A folder with both `deploy.yaml` and `deploy.yml` is a problem: `this folder has both deploy.yaml and deploy.yml`. Keep one of them. |
+| `deploy.json` | A folder with only a `deploy.json` (the 0.1 and 0.2 format) is a problem, never skipped: `shipdeck reads deploy.yaml now, not deploy.json`. See [Upgrading from 0.2](/docs/guides/upgrading). |
+| Other folders | A subfolder with none of these files is skipped without a word, so a `notes/` folder next to your deployables is fine. |
+
+If the path you pass is not a folder, shipdeck stops with `<root> is not a folder`. If the folder has no deployables, shipdeck opens with `No deployables yet` and shows where it looked.
+
+### The folder name is the slug
+
+The subfolder's name is the deployable's short handle on screen. `name` inside the file is the display name, such as `My API (prod)`. One file is one deployable, so a second environment is a second folder: `my-api-prod/` and `my-api-beta/`, each with its own `deploy.yaml`.
+
+### Every file is read before the screen opens
+
+shipdeck reads every `deploy.yaml` in the root before it starts. If any file has a problem, it prints all problems in all files, with file, line and column, and exits with code 1. The other deployables do not start either: a deploy from a config shipdeck cannot fully read is never offered. See [Config problems](/docs/reference/config-problems).
+
+## `project`: from the deploy folder to your source
+
+`project` is your source folder, relative to the folder that holds `deploy.yaml`. The default is `.`, the deploy folder itself.
+
+```yaml title="scripts/deploy/my-api-prod/deploy.yaml"
+project: ../../../api
+```
+
+From `scripts/deploy/my-api-prod/`, three levels up is the repository root, so `../../../api` is the `api/` folder. `project` decides two things:
+
+- Local commands (`build.run.local`, `preflight.run.local` and the others) run in `project`.
+- `pipeline.pack.binary` and `pipeline.pack.files.include.project` are relative to `project`.
+
+Files listed under `pipeline.pack.files.include.deploy` come from the deploy folder instead. That is how a deployment-specific `.env` or `config.yaml` ships without living in the source tree.
+
+shipdeck checks that `project` exists at the start of Preflight, not at launch: `the project folder <path> does not exist (project: <value>)`. An absolute path works too; `~` is not expanded.
+
+## What to commit
+
+| Commit | Keep out of git |
+| --- | --- |
+| `deploy.yaml` | `.env` and any other file with secrets |
+| `service.template` | |
+| Non-secret files you ship from the deploy folder, such as `config.yaml` | |
+
+A `.gitignore` in the deploy root covers every deployable:
+
+```txt title="scripts/deploy/.gitignore"
+*/.env
+*/.env.*
+```
+
+shipdeck does not read `.gitignore`. It ships what `deploy.yaml` lists, so an ignored `.env` still ships when it is in `pipeline.pack.files.include.deploy`. That is the point: the secret stays on your machine and on the server, not in the repository.
+
+<Callout title="Never shipped from the deploy folder">
+`deploy.yaml`, `deploy.yml` and `service.template` at the top of the deploy folder never go into a release, and `.git` never ships from anywhere. Naming them in `include.deploy` gives `(not found)` at Preflight.
+</Callout>
+
+## Next
+
+<Cards>
+  <Card title="Packing files" href="/docs/guides/packing-files" description="Choose what goes into a release from the project and the deploy folder." />
+  <Card title="Environment and secrets" href="/docs/guides/environment" description="Give the service its environment and keep secrets out of git." />
+</Cards>

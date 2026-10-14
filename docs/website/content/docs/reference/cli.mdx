@@ -1,0 +1,177 @@
+---
+title: Command line
+description: Every argument and flag of the shipdeck command, its errors, exit codes and what it prints.
+---
+
+shipdeck has one command and no subcommands. You point it at a deploy root, it checks every `deploy.yaml` under it, and then opens the terminal UI. All deploys and rollbacks happen inside that UI.
+
+## Synopsis
+
+```txt
+shipdeck [OPTIONS] <DEPLOY_ROOT>
+shipdeck --schema
+```
+
+```sh
+shipdeck ./scripts/deploy --key ~/.ssh/id_ed25519
+shipdeck ./scripts/deploy                 # asks for the password in the screen
+shipdeck --schema > deploy.schema.json    # the JSON Schema, for offline editors
+```
+
+## Arguments
+
+### DEPLOY_ROOT
+
+The folder whose subfolders each hold a `deploy.yaml`. Each direct subfolder with a `deploy.yaml` (or `deploy.yml`) is one deployable. The search is not recursive. See [Deploy root](/docs/guides/deploy-root).
+
+| | |
+| --- | --- |
+| Value | a path to a folder |
+| Required | yes, unless `--schema` is given |
+| Error | `Error: <path> is not a folder` when the path is missing or a file |
+
+The header of the screen shows the root as you typed it: `root ./scripts/deploy`.
+
+## Options
+
+### `--key <PATH>`
+
+Log in with this private key file, and only this key.
+
+| | |
+| --- | --- |
+| Value | a path to a private key file |
+| Default | none: the `IdentityFile` of the host's `~/.ssh/config` entry, then a password prompt |
+| Conflicts with | `--password` |
+| Error | `Error: the key file <path> does not exist` |
+
+shipdeck expands a leading `~` itself, so `--key=~/.ssh/id_ed25519` also works in zsh, where the shell does not expand it after `=`. If the key is encrypted, the screen asks for its passphrase. If the server refuses the key, the deploy stops with `<host> refused the key <path> for user <user>`; there is no fallback to a password.
+
+```sh
+shipdeck ./scripts/deploy --key ~/.ssh/id_deploy
+```
+
+### `--password <PASSWORD>`
+
+Log in with this password.
+
+| | |
+| --- | --- |
+| Value | the password, as text |
+| Default | none |
+| Conflicts with | `--key` |
+
+The password lands in your shell history. In zsh with `HIST_IGNORE_SPACE` set, start the command with a space to keep it out:
+
+```sh
+ shipdeck ./scripts/deploy --password 's3cret'
+```
+
+If the server refuses it, the deploy stops with `<host> refused the password for user <user>`.
+
+With neither `--key` nor `--password`, shipdeck logs in the way `ssh` does: the key named by `IdentityFile` for the host in `~/.ssh/config` first, then, if there is none or it is refused, a password prompt in the screen. See [SSH and login](/docs/guides/ssh).
+
+| Flags | Header shows |
+| --- | --- |
+| `--key P` | `login key P` |
+| `--password X` | `login password from --password` |
+| neither | `login ~/.ssh/config key, else password prompt` |
+
+### `--schema`
+
+Print the JSON Schema of `deploy.yaml` to stdout and exit with `0`. It runs before anything else, so a deploy root given with it is ignored. Use it for editor completion when you work offline:
+
+```sh
+shipdeck --schema > deploy.schema.json
+```
+
+The output starts with `"$id": "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json"`.
+
+### `-h`, `--help`
+
+Print the help and exit. This is the real output of 0.3.0:
+
+```txt
+Build locally, deploy over SSH as a systemd service, roll back any release.
+
+Usage: shipdeck [OPTIONS] [DEPLOY_ROOT]
+
+Arguments:
+  [DEPLOY_ROOT]  Folder whose subfolders each hold a deploy.yaml
+
+Options:
+      --key <PATH>           Log in with this private key file
+      --password <PASSWORD>  Log in with this password (it lands in your shell history)
+      --schema               Print the JSON Schema of deploy.yaml, for editor completion
+  -h, --help                 Print help
+  -V, --version              Print version
+
+Each folder under DEPLOY_ROOT with a deploy.yaml is one deployable.
+With neither --key nor --password, the host's ~/.ssh/config key is tried,
+then the TUI asks for the password.
+```
+
+The help shows `[DEPLOY_ROOT]` in brackets because it is optional when `--schema` is given.
+
+### `-V`, `--version`
+
+Print `shipdeck 0.3.0` and exit.
+
+## Errors before the screen opens
+
+These are printed to the terminal and shipdeck exits without opening the screen.
+
+| Situation | Output | Exit code |
+| --- | --- | --- |
+| No deploy root | `error: the following required arguments were not provided:` followed by `<DEPLOY_ROOT>` and the usage line | `2` |
+| `--key` and `--password` together | `error: the argument '--key <PATH>' cannot be used with '--password <PASSWORD>'` | `2` |
+| Root is not a folder | `Error: /nonexistent is not a folder` | `1` |
+| Key file missing | `Error: the key file /nope/key does not exist` | `1` |
+| A `deploy.yaml` has problems | the problem report on stderr (below) | `1` |
+
+### The problem report
+
+shipdeck reads and checks every `deploy.yaml` before it opens the screen. If any file has a problem, it prints a report to stderr and exits with `1`. For `shipdeck ./scripts/deploy` where `scripts/deploy/my-api-prod/deploy.yaml` holds only `name: x`:
+
+```txt
+✘ shipdeck did not start: 1 deploy.yaml file has 2 problems
+
+my-api-prod/deploy.yaml
+  error: `ssh` is missing
+    ┌─ ./scripts/deploy/my-api-prod/deploy.yaml
+    │
+    = help: add `ssh: { host: my-server, user: deploy }`
+
+  error: `service` is missing
+    ┌─ ./scripts/deploy/my-api-prod/deploy.yaml
+    │
+    = help: add `service: { name: my-api, dir: /opt/my-api }`
+```
+
+Each file starts with a heading of its folder and file name. The path after `┌─` is the deploy root as you typed it plus the file; an absolute root under the current folder is shown relative to it. The report is in colour only when stderr is a terminal and `NO_COLOR` is not set. `NO_COLOR` affects only this report; the screen itself always uses its colours. Every message is listed in [Config problems](/docs/reference/config-problems).
+
+## Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Normal quit, or `--schema`, `--help`, `--version` |
+| `1` | Bad deploy root, missing key file, problems in a `deploy.yaml`, or a terminal error |
+| `2` | Wrong usage: a missing argument or conflicting flags |
+
+A deploy or rollback that fails inside the screen does not change the exit code: quitting the screen exits with `0` whatever happened. You see the result on the [Operation screen](/docs/reference/screens#operation).
+
+## Output after you quit
+
+When you open the **Server setup** dialog (`u`) during a run, shipdeck prints the last setup command it showed to stdout after the screen closes, so you can copy it even if your terminal does not support clipboard copy:
+
+```txt
+One-time server setup for My API (prod); run it on the server as root:
+
+curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/server-setup.sh | bash -s -- --user deploy --dir /opt/my-api --service my-api --key 'ssh-ed25519 AAAA… me@laptop'
+```
+
+Without the dialog, nothing is printed on quit. See [Server access](/docs/guides/server-access) for what the command does.
+
+## No headless mode
+
+0.3.0 has no non-interactive mode: no `--yes`, no `deploy <name>` subcommand, no CI mode. Every deploy and rollback starts from a key press in the screen.

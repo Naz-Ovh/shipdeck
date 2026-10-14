@@ -1,0 +1,92 @@
+---
+title: Security model
+description: What shipdeck validates and quotes, what runs as root and what as the deploy user, and how it treats host keys and secrets.
+---
+
+shipdeck runs commands on your server over SSH, some of them as root. This page lists what reaches the server, as which user, and what is checked first.
+
+## Every value is validated or quoted
+
+Each server action is a short POSIX `sh` script sent as `sh -c '<script>'`. Every value from your config that reaches that shell is either checked against a strict rule at launch or quoted with single quotes (a `'` inside becomes `'\''`). Most are both.
+
+| Value | Rule | Quoted |
+| --- | --- | --- |
+| `service.dir` | absolute; only letters, digits, `.`, `_`, `-`, `/`; no `..` | yes |
+| `service.name` | only letters, digits, `.`, `_`, `@`, `-`; not ending in `.service` | yes |
+| `ssh.user`, `service.run_as` | only letters, digits, `.`, `_`, `-` | - |
+| `service.start` | one line, no backslash; the program only letters, digits, `.`, `_`, `+`, `-`, `/`, no `..` | - |
+| `service.env` | keys are variable names; values have no `"`, `\` or newline | yes |
+| `service.env_file`, `service.shared` | relative paths; only letters, digits, `.`, `_`, `+`, `-`, `/`; no `..` | yes |
+| `pipeline.health.url` | `http://` or `https://`, no quotes, spaces or newlines | yes |
+| tool names in `pipeline.preflight.requires` | a name or absolute path; only letters, digits, `.`, `_`, `+`, `-`, `/`; no `..` | yes |
+| release ids | only letters, digits, `.`, `_`, `+`, `-`, not starting with `.` | checked before every script that uses one |
+
+A release id that fails the check stops the action with `refusing an unexpected release name: "<id>"`. Ids from a server listing that fail it are ignored, so a strange folder in `releases/` is never touched.
+
+## Server commands are shell by design
+
+The one exception is the `server` commands you write in `pipeline` (for example `pipeline.setup.run.server`). They are shell on purpose: you write them, and shipdeck runs them as written, after `set -e` and a `cd` into the right folder. They run as the SSH user, never through sudo. Treat `deploy.yaml` like any other script in your repository.
+
+## What runs as root
+
+With a user other than `root`, only two things ever run as root:
+
+1. **`server-setup.sh`**, once, when you run it yourself. It checks every argument before it changes anything, installs the sudo rule only after `visudo` accepts it, and is fetched from a URL pinned to your shipdeck release tag. See [Server access](/docs/guides/server-access#server-setupsh).
+2. **Five commands**, through `sudo -n` (never prompting for a password):
+
+```sh
+systemctl daemon-reload
+systemctl enable my-api
+systemctl restart my-api
+install -m 0644 /opt/my-api/current/my-api.service /etc/systemd/system/my-api.service
+journalctl -u my-api -n 30 --no-pager
+```
+
+The unit is always installed from `<dir>/current/<service>.service`, so the sudo rule names one fixed path, and a rollback brings back the unit of that release.
+
+On a first deploy, if the user cannot create `service.dir` itself, shipdeck also tries `sudo -n mkdir -p` and `sudo -n chown`. That only works for users with broader sudo rights; a user made by `server-setup.sh` never needs it.
+
+<Callout type="warn" title="Logging in as root">
+When `ssh.user` is `root`, everything runs as root: file operations, your `server` commands and, unless `service.run_as` is set, the service itself.
+</Callout>
+
+## What runs as the deploy user
+
+Everything else runs over SSH as `ssh.user`, without sudo:
+
+- the preflight facts script and creating folders in `service.dir`
+- upload, unpack, `service.shared` links and the switch of `current`
+- rotation, compression and restoring old releases
+- health probes (`systemctl is-active`, `systemctl show`, `curl` or `wget`)
+- your `server` commands from `pipeline`
+
+## The service
+
+The service runs as `service.run_as` (default the SSH user) under the hardened [built-in unit](/docs/reference/service-template): `NoNewPrivileges`, a read-only system (`ProtectSystem=strict`) with writes allowed only to `<dir>/shared`, no access to `/home` or `/root` (`ProtectHome`), a private `/tmp`, no devices, and protected kernel tunables, modules and control groups. A `service.template` can change any of this.
+
+## Host keys
+
+shipdeck checks every server against `~/.ssh/known_hosts`:
+
+- A known, matching key connects.
+- An unknown server shows its SHA256 fingerprint in the "New server" dialog. The connection waits there: no password or key is sent until you press `y`, and `n` ends it. The key is then saved.
+- A changed key is refused with `HOST KEY CHANGED for <host>: ...`.
+- Host certificates are refused.
+
+See [SSH and login](/docs/guides/ssh#host-keys).
+
+## Secrets
+
+- Files named `.env*` are shipped with mode `0600`.
+- `.git` is never shipped, at any depth. `include.deploy` never takes `deploy.yaml`, `deploy.yml` or `service.template` from the deploy folder; a `project` pattern that covers the deploy folder can still pick them up.
+- Passwords and key passphrases typed in the screen are kept in memory for the run only and never written to disk. A rejected one is forgotten.
+- `--password` lands in your shell history. In zsh with `HIST_IGNORE_SPACE`, start the command with a space.
+
+## Safe changes on the server
+
+Unpacking and restoring go through hidden `.partial` folders, `current` changes with one rename, and compression writes a `.part` file before renaming it. A step that fails halfway leaves no half-written release in view.
+
+## Limits
+
+- There is no server-side lock. shipdeck runs one operation at a time, but two people deploying the same app at once are not prevented.
+- Values in the unit are not escaped for systemd specifiers: a `%` in `service.start` or `service.env` is read by systemd.

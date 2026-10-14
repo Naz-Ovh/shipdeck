@@ -1,0 +1,392 @@
+/* Landing page: the terminal still and the section bands. */
+
+/* ---------- terminal ---------- */
+
+/*
+ * The real TUI is dark only, so the still is dark in both themes. Status
+ * colours match the TUI; the neutrals lean spruce to sit in this site.
+ */
+.sd-term {
+  --t-bg: oklch(0.2 0.012 178);
+  --t-chrome: oklch(0.235 0.014 176);
+  --t-border: oklch(0.36 0.02 178);
+  --t-text: rgb(226 232 240);
+  --t-muted: oklch(0.68 0.018 180);
+  --t-faint: oklch(0.5 0.02 180);
+  --t-surface: oklch(0.29 0.02 178);
+  --t-accent: rgb(94 234 212);
+  --t-violet: rgb(167 139 250);
+  --t-ok: rgb(74 222 128);
+  --t-warn: rgb(251 191 36);
+  --t-info: rgb(96 165 250);
+  --t-err: rgb(248 113 113);
+  --t-ink: rgb(15 23 42);
+
+  border-radius: 0.9rem;
+  border: 1px solid oklch(0.32 0.02 178);
+  background: var(--t-chrome);
+  box-shadow:
+    0 1px 0 0 oklch(1 0 0 / 0.04) inset,
+    0 30px 60px -30px oklch(0.2 0.05 180 / 0.45),
+    0 12px 24px -12px oklch(0.2 0.03 180 / 0.25);
+  overflow: hidden;
+  color: var(--t-text);
+}
+
+.sd-term-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  height: 2.25rem;
+  padding: 0 0.9rem;
+  border-bottom: 1px solid oklch(0.3 0.018 178);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--t-muted);
+}
+
+.sd-term-dots {
+  display: inline-flex;
+  gap: 0.4rem;
+}
+
+.sd-term-dots i {
+  width: 0.62rem;
+  height: 0.62rem;
+  border-radius: 999px;
+  background: oklch(0.38 0.02 178);
+}
+
+.sd-term-title {
+  flex: 1;
+  text-align: center;
+  margin-right: 2.5rem;
+}
+
+.sd-term-scroll {
+  overflow-x: auto;
+  background: var(--t-bg);
+}
+
+.sd-term-screen {
+  min-width: 52rem;
+  padding: 0.8rem 1rem 0.7rem;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.sd-term .sd-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  min-height: 1.55em;
+}
+
+.sd-term .sd-push {
+  margin-left: auto;
+}
+
+.sd-term .sd-muted {
+  color: var(--t-muted);
+}
+.sd-term .sd-faint {
+  color: var(--t-faint);
+}
+.sd-term .sd-accent {
+  color: var(--t-accent);
+}
+.sd-term .sd-violet {
+  color: var(--t-violet);
+}
+.sd-term .sd-ok {
+  color: var(--t-ok);
+}
+
+.sd-term .sd-badge {
+  background: var(--t-accent);
+  color: var(--t-ink);
+  font-weight: 700;
+  padding: 0 0.45rem;
+}
+
+.sd-term .sd-tabs {
+  margin-bottom: 0.55rem;
+  gap: 0.25rem;
+}
+
+.sd-term .sd-tab {
+  padding: 0 0.45rem;
+  background: var(--t-surface);
+  color: var(--t-muted);
+}
+
+.sd-term .sd-tab-on {
+  background: var(--t-accent);
+  color: var(--t-ink);
+  font-weight: 700;
+}
+
+.sd-term .sd-panel {
+  position: relative;
+  border: 1px solid var(--t-border);
+  border-radius: 0.45rem;
+  padding: 0.55rem 0.6rem 0.4rem;
+}
+
+.sd-term .sd-panel-title {
+  position: absolute;
+  top: -0.78em;
+  left: 0.55rem;
+  padding: 0 0.3rem;
+  background: var(--t-bg);
+  color: var(--t-text);
+}
+
+.sd-term .sd-panel-title-end {
+  left: auto;
+  right: 0.55rem;
+}
+
+.sd-term .sd-banner {
+  border: 2px solid var(--t-accent);
+  border-radius: 0.2rem;
+  margin-bottom: 0.75rem;
+}
+
+.sd-term .sd-banner .sd-panel-title {
+  color: var(--t-accent);
+  font-weight: 700;
+}
+
+.sd-term .sd-split {
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+  gap: 0.75rem 0.5rem;
+}
+
+.sd-term .sd-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.sd-term .sd-step {
+  display: grid;
+  grid-template-columns: 1.1em 6.5em 1fr auto;
+}
+
+.sd-term .sd-step[data-state='done'] .sd-step-icon {
+  color: var(--t-ok);
+}
+.sd-term .sd-step[data-state='run'] {
+  color: var(--t-accent);
+}
+.sd-term .sd-step[data-state='wait'] {
+  color: var(--t-faint);
+}
+.sd-term .sd-step-detail {
+  color: var(--t-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sd-term .sd-step[data-state='run'] .sd-step-detail {
+  color: var(--t-accent);
+}
+.sd-term .sd-step-time {
+  color: var(--t-faint);
+}
+
+.sd-term .sd-gauge {
+  position: relative;
+  height: 1.05em;
+  margin: 0.2rem 0 0.35rem;
+  background: oklch(0.27 0.02 178);
+}
+
+.sd-term .sd-gauge span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--t-accent);
+}
+
+.sd-term .sd-gauge em {
+  position: absolute;
+  left: 50%;
+  translate: -50% 0;
+  font-style: normal;
+  font-size: 0.92em;
+  line-height: 1.15;
+  color: var(--t-ink);
+  font-weight: 700;
+}
+
+.sd-term .sd-overall {
+  margin-top: 0.3rem;
+}
+
+.sd-term .sd-line {
+  position: relative;
+  flex: 1;
+  height: 2px;
+  align-self: center;
+  background: var(--t-surface);
+}
+
+.sd-term .sd-line span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--t-accent);
+}
+
+.sd-term .sd-log-lines {
+  overflow: hidden;
+}
+
+.sd-term .sd-logline {
+  display: grid;
+  grid-template-columns: 3.1em 1.3em 1fr;
+}
+
+.sd-term .sd-logtext {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sd-term .sd-logline[data-kind='step'] {
+  color: var(--t-accent);
+  font-weight: 700;
+}
+.sd-term .sd-logline[data-kind='cmd'] .sd-mark,
+.sd-term .sd-logline[data-kind='cmd'] .sd-logtext {
+  color: var(--t-violet);
+}
+.sd-term .sd-logline[data-kind='info'] .sd-mark,
+.sd-term .sd-logline[data-kind='info'] .sd-logtext {
+  color: var(--t-info);
+}
+.sd-term .sd-logline[data-kind='ok'] .sd-mark,
+.sd-term .sd-logline[data-kind='ok'] .sd-logtext {
+  color: var(--t-ok);
+}
+.sd-term .sd-logline[data-kind='out'] .sd-logtext {
+  color: var(--t-muted);
+}
+
+.sd-term .sd-keys {
+  margin-top: 0.6rem;
+  gap: 1.1rem;
+  color: var(--t-muted);
+}
+
+.sd-term .sd-keys kbd {
+  font: inherit;
+  padding: 0 0.35rem;
+  background: var(--t-surface);
+  color: var(--t-text);
+}
+
+/* the braille spinner the TUI uses, at its 80 ms tick */
+.sd-spin::before {
+  content: '⠋';
+  animation: sd-spin 800ms steps(1) infinite;
+}
+
+@keyframes sd-spin {
+  0% { content: '⠋'; }
+  10% { content: '⠙'; }
+  20% { content: '⠹'; }
+  30% { content: '⠸'; }
+  40% { content: '⠼'; }
+  50% { content: '⠴'; }
+  60% { content: '⠦'; }
+  70% { content: '⠧'; }
+  80% { content: '⠇'; }
+  90% { content: '⠏'; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sd-spin::before {
+    animation: none;
+  }
+}
+
+/* ---------- section bands ---------- */
+
+.sd-band {
+  border-top: 1px solid var(--color-sd-line);
+}
+
+.sd-band-1 {
+  background: var(--color-sd-1);
+}
+
+.sd-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--color-sd-jade);
+}
+
+.sd-display {
+  font-variation-settings: 'opsz' 72, 'wdth' 90;
+  letter-spacing: -0.035em;
+  line-height: 1.02;
+  font-weight: 650;
+}
+
+.sd-heading {
+  font-variation-settings: 'opsz' 40, 'wdth' 94;
+  letter-spacing: -0.025em;
+  line-height: 1.12;
+  font-weight: 630;
+}
+
+/* the rollback question: a red double-bordered dialog, as in the TUI */
+.sd-term .sd-dialog {
+  position: relative;
+  min-width: 0;
+  margin: 0.9rem;
+  padding: 0.85rem 0.9rem 0.55rem;
+  border: 3px double var(--t-err);
+  white-space: normal;
+}
+
+.sd-term .sd-dialog-title {
+  position: absolute;
+  top: -0.8em;
+  left: 0.6rem;
+  padding: 0 0.4rem;
+  background: var(--t-err);
+  color: var(--t-ink);
+  font-weight: 700;
+}
+
+.sd-term .sd-warn {
+  color: var(--t-warn);
+}
+
+.sd-term .sd-dialog .sd-keys {
+  margin-top: 0;
+}
+
+.sd-term .sd-panel-title.sd-ok {
+  color: var(--t-ok);
+}
+
+/* a text capture of a screen, used in the docs */
+.sd-term .sd-screen {
+  margin: 0;
+  padding: 0.9rem 1rem;
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  line-height: 1.38;
+  color: var(--t-text);
+  background: var(--t-bg);
+  white-space: pre;
+  width: max-content;
+  min-width: 100%;
+}

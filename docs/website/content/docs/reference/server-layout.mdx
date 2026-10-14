@@ -1,0 +1,163 @@
+---
+title: Server layout
+description: Every folder and file shipdeck keeps under service.dir, the release id format, release.json, ownership and modes, and what it writes outside the app folder.
+---
+
+shipdeck keeps everything for one app under `service.dir`, plus one systemd unit in `/etc/systemd/system/`. The examples use `service.dir: /opt/my-api` and `service.name: my-api`.
+
+<Callout title="A stable contract">
+shipdeck treats this layout and the release id format as a contract with servers it has already deployed to. They change only on purpose, so a newer shipdeck can deploy to, and roll back, a server an older one set up, and your own scripts and backups can rely on them.
+</Callout>
+
+## The tree
+
+<Files>
+  <Folder name="/opt/my-api" defaultOpen>
+    <File name="current → releases/v0.3.1-ab12cd3-20261014.153012" />
+    <Folder name="releases" defaultOpen>
+      <Folder name="v0.3.1-ab12cd3-20261014.153012" defaultOpen>
+        <File name="my-api" />
+        <File name="release.json" />
+        <File name="my-api.service" />
+        <File name=".env" />
+        <File name="uploads → /opt/my-api/shared/uploads" />
+      </Folder>
+      <Folder name="v0.3.0-9f8e7d6-20261012.091000" />
+    </Folder>
+    <Folder name="backups" defaultOpen>
+      <File name="v0.2.9-1a2b3c4-20261001.120000.tar.gz" />
+    </Folder>
+    <Folder name="shared" defaultOpen>
+      <Folder name="uploads" />
+    </Folder>
+  </Folder>
+</Files>
+
+The same as text, with the transient files:
+
+```txt
+/opt/my-api/
+├── current -> releases/<id>              relative symlink; the only path systemd uses
+├── .current.next                         transient, during a switch
+├── releases/
+│   ├── <id>/                             open (unpacked) releases
+│   │   ├── my-api                        the binary (0755), if pipeline.pack.binary
+│   │   ├── release.json                  0644
+│   │   ├── my-api.service                0644, this release's own unit
+│   │   ├── .env                          0600 (any file named .env*)
+│   │   ├── uploads -> /opt/my-api/shared/uploads
+│   │   └── ...                           files from pipeline.pack.files
+│   ├── .<id>.tar.gz                      transient: the upload
+│   └── .<id>.partial/                    transient: unpacking or restoring
+├── backups/
+│   ├── <id>.tar.gz                       compressed releases
+│   └── .<id>.tar.gz.part                 transient, during compression
+└── shared/
+    └── uploads/                          service.shared folders, kept across releases
+
+/etc/systemd/system/my-api.service        copy of current/my-api.service
+/etc/sudoers.d/shipdeck-my-api            only if server-setup.sh was used
+```
+
+`service.dir` can be any absolute path; `/opt/<app>` is the convention.
+
+## Each entry
+
+| Path | What it is |
+| --- | --- |
+| `current` | A relative symlink to `releases/<id>`: the live release. A switch replaces it in one rename, so it is never missing. |
+| `releases/<id>/` | An open release: unpacked and ready to switch to. The newest `service.keep.open` stay here, the live one included. |
+| `releases/<id>/<binary>` | The file named by `pipeline.pack.binary`, at the release root, mode `0755`. |
+| `releases/<id>/release.json` | Who deployed what, from which commit. See below. |
+| `releases/<id>/<service>.service` | The unit rendered for this release. Installed into `/etc/systemd/system/` when the release goes live. |
+| `releases/<id>/<shared folder>` | A symlink to the absolute path `<service.dir>/shared/<folder>`, made at unpack for each `service.shared` entry. |
+| `backups/<id>.tar.gz` | A compressed release: a tarball of `releases/<id>/`. The next `service.keep.compressed` releases live here. |
+| `shared/` | Folders kept across releases. With the built-in unit, the only place the service may write. |
+
+`releases/`, `backups/` and `shared/` are created at the upload step if missing. `service.dir` itself is created at preflight on a first deploy.
+
+### Transient files
+
+These exist only while shipdeck is working. A name starting with a dot keeps them out of the release list, so a half-written release never looks complete.
+
+| Path | When |
+| --- | --- |
+| `releases/.<id>.tar.gz` | The uploaded archive, between upload and unpack. |
+| `releases/.<id>.partial/` | A release being unpacked, or a compressed one being restored. Renamed to `releases/<id>` when complete. |
+| `.current.next` | The new symlink, just before it is renamed over `current`. |
+| `backups/.<id>.tar.gz.part` | A tarball being written. Renamed when complete. |
+
+If a run is cut off, such a file may stay behind. shipdeck never lists it, and the next unpack of the same id removes an old `.partial` first.
+
+## Release ids
+
+```txt
+v<version>-<git>[-dirty]-<YYYYMMDD.HHMMSS>
+```
+
+Examples: `v0.3.1-ab12cd3-20261014.153012`, `v1.0.0-beta.2-9f8e7d6-dirty-20260102.030405`.
+
+| Part | Value |
+| --- | --- |
+| `v` | Always there. |
+| `<version>` | From the version file, the latest git tag, or `0.0.0`. Characters other than letters, digits and `._+-` become `_`. Dashes are kept, so pre-release versions work. |
+| `<git>` | The short commit (`git rev-parse --short=7`, so 7 characters unless more are needed to be unique), or `nogit`. Characters other than letters, digits and `._+` become `_`. |
+| `-dirty` | Tracked files had uncommitted changes. Untracked files do not count. |
+| `<YYYYMMDD.HHMMSS>` | When the build step started, in UTC. |
+
+shipdeck reads an id from the right: the timestamp after the last `-`, then an optional `dirty`, then the commit, and the rest is the version. A name that does not start with `v` or does not parse this way is not a shipdeck release: it is listed as `not ours` and left alone. Releases are sorted by this timestamp, never by version text.
+
+A name is accepted at all only if it is not empty, does not start with `.`, and uses only letters, digits and `._+-`. shipdeck refuses to run any server script with another name, and ignores such entries when listing.
+
+## release.json
+
+Pretty-printed JSON at the root of every release:
+
+```json title="releases/v0.3.1-ab12cd3-20261014.153012/release.json"
+{
+  "id": "v0.3.1-ab12cd3-20261014.153012",
+  "version": "0.3.1",
+  "git": "ab12cd3",
+  "dirty": false,
+  "built_at": "2026-10-14T15:30:12+00:00",
+  "deployed_by": "Jane Doe"
+}
+```
+
+| Field | Value |
+| --- | --- |
+| `id` | The release id. |
+| `version` | The version part of the id. |
+| `git` | The short commit, or `nogit`. |
+| `dirty` | `true` if tracked files had uncommitted changes. |
+| `built_at` | The id's timestamp in RFC 3339, with `+00:00`. |
+| `deployed_by` | `git config user.name` in the project, else `$USER`, else `unknown`. |
+
+The Releases screen reads it for open releases. shipdeck refuses to pack a file of yours named `release.json` at the release root.
+
+## Ownership and modes
+
+- Every file operation under `service.dir` runs as the SSH user, without sudo. With a non-root user, everything there belongs to that user.
+- Modes come from the archive: folders `0755`, the binary `0755`, `release.json` and the unit `0644`, files whose name starts with `.env` `0600`, other files keep their local mode. Symlinks stay symlinks.
+- If shipdeck created `service.dir` with `sudo -n mkdir` on a first deploy, it hands it to the SSH user with `chown`. `server-setup.sh` creates it and gives it to the user too.
+- The service runs as `service.run_as`, by default the SSH user. That user must be able to read the release.
+
+<Callout type="warn" title="A different run_as user">
+Release files belong to the SSH user and `.env` files are `0600`. systemd still reads `service.env_file` for the service, but a `run_as` user other than the SSH user cannot open `.env` itself, and may not be able to write to `shared/`.
+</Callout>
+
+## Outside service.dir
+
+| Path | Written by | Content |
+| --- | --- | --- |
+| `/etc/systemd/system/<service>.service` | `sudo -n install -m 0644` (no sudo as root), at every switch | A copy of `current/<service>.service`. It refers only to paths under `current/`. |
+| `/etc/sudoers.d/shipdeck-<service>` | `server-setup.sh`, once, if you used it | The sudo rule for the five commands shipdeck needs. Every `.` in the service name becomes `_`, because sudo ignores files in `sudoers.d` whose names contain a dot. |
+
+The unit is always installed from the same path, `<service.dir>/current/<service>.service`, so a sudo rule can name it exactly. See [Service template](/docs/reference/service-template) for its contents and [Server access](/docs/guides/server-access) for the sudo rule.
+
+## Next
+
+<Cards>
+  <Card title="Releases" href="/docs/guides/releases" description="Retention, the Releases screen and manual rollback." />
+  <Card title="How it works" href="/docs/concepts/how-it-works" description="Why the switch is atomic and nothing live changes before it." />
+</Cards>

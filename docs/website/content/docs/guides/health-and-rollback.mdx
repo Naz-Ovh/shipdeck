@@ -1,0 +1,168 @@
+---
+title: Health and rollback
+description: How shipdeck decides a new release is healthy, and what happens when switch, restart or health fails.
+---
+
+After the restart, shipdeck waits until the new release proves it is up. If it does not, or if the switch or restart itself fails, shipdeck shows you the service's journal and puts the previous release back, asking you first by default.
+
+## How health decides
+
+The health step has one time budget, `pipeline.health.timeout_secs` (default `20`, at least `3`), counted from the start of the step. Everything below has to pass inside it.
+
+<Steps>
+<Step>
+### Probe the service
+
+Once a second, shipdeck runs a small script on the server that reads:
+
+- `systemctl is-active <service>`, which must say `active`;
+- `systemctl show -p NRestarts --value <service>`, systemd's restart counter;
+- if `pipeline.health.url` is set, the URL, fetched **on the server** with `curl -fsS --max-time 3`, or `wget -q -T 3` when there is no curl.
+
+Because the URL is fetched on the server, a local address such as `http://127.0.0.1:3000/health` works. curl runs with `-f` and without following redirects, so an HTTP error status (400 and up) fails the probe, while a redirect (3xx) counts as an answer. wget follows redirects and judges the page it ends on.
+</Step>
+<Step>
+### Wait for three healthy probes in a row
+
+A probe is healthy when the state is `active` and the URL answered (or there is no URL). shipdeck needs three healthy probes in a row, one second apart. The progress panel shows the count, such as `active · http ok · stable 2/3`.
+
+Some things fail at once, without waiting for the timeout:
+
+| What shipdeck sees | Error |
+| --- | --- |
+| The restart counter rose since the first probe | `the service crashed and was restarted <n> time(s) by systemd` |
+| The state is `failed` | `systemd reports the service as failed` |
+| A URL is set, but the server has neither curl nor wget | `pipeline.health.url is set, but the server has neither curl nor wget` |
+
+When time runs out: `not healthy after 20s: systemd says activating; the health url said: <curl error>`.
+</Step>
+<Step>
+### Run your checks
+
+Then `pipeline.health.check.server` runs in `current`, and `pipeline.health.check.local` in `project`. They always run at least once. When one fails, shipdeck logs `<error>; trying again in 2s (<n>s left)` and tries again every 2 seconds while time is left. If they still fail at the deadline: `the health checks still fail after <n>s: <error>`.
+</Step>
+</Steps>
+
+When all of this passes, the step shows a summary such as `active, url answers · 3.2s · 2 checks passed`.
+
+```yaml title="deploy.yaml"
+pipeline:
+  health:
+    url: http://127.0.0.1:3000/health   # fetched on the server
+    check:
+      server: ./bin/smoke-test          # in current/
+      local: curl -fsS https://api.example.com/health
+    timeout_secs: 30                    # default 20, at least 3
+    rollback: ask                       # default; or auto
+```
+
+<Callout title="Pick a timeout that covers start-up and checks">
+The probes take at least three seconds, and the checks share the same budget. If your app needs ten seconds to warm up and your smoke test takes five, `timeout_secs: 20` leaves little room.
+</Callout>
+
+## When a step fails after the switch
+
+Once `current` points at the new release, a failure at **switch**, **restart** or **health** goes through the same path. A [manual rollback](/docs/guides/releases) uses it too, for the release you roll back to (see [During a manual rollback](#during-a-manual-rollback)).
+
+1. The step turns red and the full error goes to the log.
+2. shipdeck reads the last 30 lines of the service's journal (`journalctl -u <service> -n 30 --no-pager`) and logs them under `last journal lines:`. If it cannot, it logs `could not read the journal`.
+3. It decides whether to roll back, as `pipeline.health.rollback` says.
+
+### The rollback question
+
+With `rollback: ask`, the default, shipdeck asks before it touches anything:
+
+<Screen title="Rollback question">{`
+ ◆ shipdeck   root ./scripts/deploy                    login ~/.ssh/config key, else password prompt
+ 1 Deployables   2 Operation   3 Releases                                       ⠋ Deploying web-prod
+                                                                                                    
+┏ Deploy ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 0.0s ┓
+┃ Web (prod)  →  deploy@web:/opt/web                                                               ┃
+┃ ⠋ Waiting for your answer…   step 10 of 11                                                       ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+╭ Steps ─────────────────────────────────────╮╭ Log · 1 lines ────────────────────────── following ╮
+│ ✔ 1 Preflight  x86_64 · glibc 2.39         ││ 00:00 › deploy@web › npm ci --omit=dev  (in releas │
+│ ✔ 2 Build      412 files · 12.0s           ││                                                    │
+│ ✔ 3 Pack       412 files · 3.1 MiB         ││                                                    │
+│ ✔ 4 Upload╔ web-prod · health failed ════════════════════════════════════════════════╗           │
+│ ✔ 5 Unpack║ v1.4.0 failed at Health: not healthy after 20s: the health url said: 502 ║           │
+│ ✔ 6 Setup ║ v1.3.9 was live before it.                                               ║           │
+│ ✔ 7 Switch║                                                                          ║           │
+│ ✔ 8 Restar║ Roll back to v1.3.9?      rolling back in 30s                            ║           │
+│ ✘ 9 Health║                                                                          ║           │
+│ ○ 10 Done ║  y  roll back now     n  keep v1.4.0 live                                ║           │
+╰───────────╚══════════════════════════════════════════════════════════════════════════╝           │
+╭ Progress ──────────────────────────────────╮│                                                    │
+│ ✘ Health                                   ││                                                    │
+│                                            ││                                                    │
+│ not healthy after 20s: the health url said ││                                                    │
+│                                            ││                                                    │
+│                                            ││                                                    │
+│                                            ││                                                    │
+│ overall  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ││                                                    │
+│ 9/11 steps  ·  0.0s                        ││                                                    │
+╰────────────────────────────────────────────╯╰────────────────────────────────────────────────────╯
+ y  roll back now    n  keep it live                                                                
+`}</Screen>
+
+The dialog names the release that failed, the step and the error, and the release that was live before. The countdown starts at 30 seconds.
+
+| You | What happens |
+| --- | --- |
+| press `y` | shipdeck rolls back now (`you chose to roll back`). |
+| press `n` | The new release stays live as it is, so you can look at it. The log says `<id> stays live as you chose; roll back any time from the Releases screen`. |
+| do nothing for 30 seconds | shipdeck rolls back (`no answer in 30s; rolling back`). |
+
+While the question is open, the keyboard only answers it; you cannot quit until it is answered or the countdown ends. If there is no screen to ask, shipdeck rolls back.
+
+### Rolling back without asking
+
+```yaml title="deploy.yaml"
+pipeline:
+  health:
+    rollback: auto
+```
+
+With `auto`, shipdeck rolls back at once. Only `ask` and `auto` are accepted.
+
+### What a rollback does
+
+shipdeck points `current` back at the previous release, installs **that** release's own unit, runs `daemon-reload`, `enable` and `restart`, waits 2 seconds and checks once that the service is `active`. The URL and your health checks are not run for the restored release.
+
+- If it comes back, the log says `<previous> is live again`. After a deploy, the failed release is deleted from `releases/`.
+- If it does not, the error is `rollback failed: <previous> did not come back either: systemd says <state>`. The server needs your attention: look at `systemctl status <service>` and the journal there.
+
+`pipeline.done` does not run after a failure. `pipeline.failed` runs afterwards in every case, including when you kept the release.
+
+### During a manual rollback
+
+A rollback from the Releases screen ends with the same Restart and Health steps. If the release you roll back to fails at switch, restart or health, the same path runs: the journal, then the rollback question (or an immediate rollback with `auto`), offering the release that was live before you started. The release you tried to roll back to stays on the server.
+
+### The first deploy
+
+When nothing was live before, there is nothing to roll back to. shipdeck logs `nothing was live before, so there is nothing to roll back to` and stops. The failed release stays in place, with `current` pointing at it, so you can look at it on the server.
+
+## Outcomes
+
+When a deploy ends, the banner on the Operation screen shows one of these:
+
+| Badge | Meaning | Live afterwards |
+| --- | --- | --- |
+| `LIVE` | Every step passed. | the new release |
+| `STOPPED` | A step failed before the switch (`the live release was not touched`), or after it on a first deploy, with nothing to roll back to. | the release that was live before; on a first deploy, the failed release stays in `current` |
+| `ROLLED BACK` | Switch, restart or health failed; the previous release is back. | the previous release |
+| `KEPT` | Switch, restart or health failed, and you pressed `n`. | the new release, as it is |
+| `ROLLBACK FAILED` | The new release failed, and putting the previous one back failed too. | unknown: check the server now |
+
+A warning in the done step (a done command failed, or tidying failed) still ends as `LIVE`.
+
+<Callout type="warn" title="Rollback restores code, not data">
+A rollback switches the release folder and the unit. It does not undo what setup commands did to a database or to `shared/`. Keep migrations compatible with the release before them.
+</Callout>
+
+## Next
+
+<Cards>
+  <Card title="Releases" href="/docs/guides/releases" description="Old releases, how many are kept, and rolling back by hand." />
+  <Card title="Troubleshooting" href="/docs/troubleshooting" description="What common errors mean and how to fix them." />
+</Cards>

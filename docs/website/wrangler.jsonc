@@ -1,0 +1,18 @@
+// The docs site as a static-assets Worker on Cloudflare: no Worker code, just
+// the files `next build` exports to out/. Deploy with `pnpm run deploy`.
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "shipdeck-docs",
+  "compatibility_date": "2026-10-12",
+  "assets": {
+    "directory": "./out",
+    // /docs/guides/ssh serves docs/guides/ssh.html
+    "html_handling": "auto-trailing-slash",
+    // unknown paths get out/404.html with a 404 status
+    "not_found_handling": "404-page"
+  },
+  // Cloudflare creates the DNS record and certificate; naz.ovh must be a zone on the account
+  "routes": [{ "pattern": "shipdeck.naz.ovh", "custom_domain": true }],
+  // serve only on the custom domain, not on *.workers.dev
+  "workers_dev": false
+}

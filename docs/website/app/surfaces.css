@@ -1,0 +1,82 @@
+/*
+ * Nested area coloring.
+ *
+ * Fumadocs components paint themselves with bg-fd-card, bg-fd-secondary,
+ * bg-fd-muted and bg-fd-background. Inside the page we re-point those tokens
+ * by nesting depth, so a code block inside a card inside a tab sits one shade
+ * deeper at every level, in both themes:
+ *
+ *   page  sd-0
+ *   └ block (card, callout, code, tabs, accordion)  sd-2
+ *     └ nested block  sd-3
+ *       └ nested block  sd-4
+ *         └ anything deeper  sd-5
+ *
+ * The sidebar is its own area at sd-1; its search field and hover states step in from there.
+ */
+
+@theme static {
+  --color-sd-5: oklch(0.884 0.018 174);
+}
+
+.dark {
+  --color-sd-5: oklch(0.326 0.019 171);
+  --color-fd-popover: var(--color-sd-2);
+}
+
+/* depth 1: first block on the page */
+#nd-page :is(.bg-fd-card, .bg-fd-secondary, .bg-fd-muted, [data-surface]) {
+  --color-fd-card: var(--color-sd-2);
+  --color-fd-secondary: var(--color-sd-2);
+  --color-fd-muted: var(--color-sd-2);
+  --color-fd-background: var(--color-sd-2);
+  --color-fd-accent: var(--color-sd-3);
+  --color-fd-border: var(--color-sd-line);
+}
+
+/* depth 2 */
+#nd-page
+  :is(.bg-fd-card, .bg-fd-secondary, .bg-fd-muted, [data-surface])
+  :is(.bg-fd-card, .bg-fd-secondary, .bg-fd-muted, .bg-fd-background, [data-surface]) {
+  --color-fd-card: var(--color-sd-3);
+  --color-fd-secondary: var(--color-sd-3);
+  --color-fd-muted: var(--color-sd-3);
+  --color-fd-background: var(--color-sd-3);
+  --color-fd-accent: var(--color-sd-4);
+}
+
+/* depth 3 */
+#nd-page
+  :is(.bg-fd-card, .bg-fd-secondary, .bg-fd-muted, [data-surface])
+  :is(.bg-fd-card, .bg-fd-secondary, .bg-fd-muted, .bg-fd-background, [data-surface])
+  :is(.bg-fd-card, .bg-fd-secondary, .bg-fd-muted, .bg-fd-background, [data-surface]) {
+  --color-fd-card: var(--color-sd-4);
+  --color-fd-secondary: var(--color-sd-4);
+  --color-fd-muted: var(--color-sd-4);
+  --color-fd-background: var(--color-sd-4);
+  --color-fd-accent: var(--color-sd-5);
+  --color-fd-border: var(--color-sd-line-strong);
+}
+
+/* depth 4 and deeper */
+#nd-page
+  :is(.bg-fd-card, .bg-fd-secondary, .bg-fd-muted, [data-surface])
+  :is(.bg-fd-card, .bg-fd-secondary, .bg-fd-muted, .bg-fd-background, [data-surface])
+  :is(.bg-fd-card, .bg-fd-secondary, .bg-fd-muted, .bg-fd-background, [data-surface])
+  :is(.bg-fd-card, .bg-fd-secondary, .bg-fd-muted, .bg-fd-background, [data-surface]) {
+  --color-fd-card: var(--color-sd-5);
+  --color-fd-secondary: var(--color-sd-5);
+  --color-fd-muted: var(--color-sd-5);
+  --color-fd-background: var(--color-sd-5);
+  --color-fd-accent: var(--color-sd-5);
+}
+
+/* the sidebar is the second area of the page */
+#nd-sidebar,
+#nd-sidebar-mobile {
+  --color-fd-card: var(--color-sd-1);
+  --color-fd-background: var(--color-sd-1);
+  --color-fd-secondary: var(--color-sd-2);
+  --color-fd-muted: var(--color-sd-2);
+  --color-fd-accent: var(--color-sd-2);
+}

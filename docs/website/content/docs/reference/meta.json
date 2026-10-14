@@ -1,0 +1,4 @@
+{
+  "title": "Reference",
+  "pages": ["deploy-yaml", "variables", "cli", "screens", "server-layout", "service-template", "config-problems"]
+}
