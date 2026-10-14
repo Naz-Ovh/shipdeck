@@ -12,11 +12,11 @@ You need shipdeck's [requirements](/docs#what-you-need): a Rust toolchain on you
 ### Install shipdeck
 
 ```sh
-cargo install --git https://github.com/Naz-Ovh/shipdeck --tag v0.3.0 shipdeck
+curl -LsSf https://shipdeck.naz.ovh/install.sh | sh
 shipdeck --version
 ```
 
-The second command prints `shipdeck 0.3.0`. [Installation](/docs/getting-started/installation) has the other ways to install it.
+The second command prints `shipdeck 0.3.1`. [Installation](/docs/getting-started/installation) has the other ways to install it.
 </Step>
 
 <Step>
@@ -69,7 +69,7 @@ More on the layout in [Deploy root](/docs/guides/deploy-root).
 ### Write deploy.yaml
 
 ```yaml title="scripts/deploy/my-api-prod/deploy.yaml"
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.1/deploy.schema.json
 name: My API (prod)
 project: ../../..                 # the repository root, relative to this file
 

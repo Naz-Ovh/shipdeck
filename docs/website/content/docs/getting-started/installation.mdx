@@ -1,11 +1,37 @@
 ---
 title: Installation
-description: Install shipdeck with cargo, pin a version, or run it from a clone or a git submodule.
+description: Install the prebuilt shipdeck with one command, pin a version, or build it from source with cargo.
 ---
 
-shipdeck is built from source with cargo. There are no prebuilt binaries and it is not published on crates.io, so every install path below compiles it on your machine.
+shipdeck runs on Linux and macOS; on Windows, use WSL. The quickest way in is the prebuilt binary. Building from source with cargo works too.
 
-## Install from GitHub
+## Install the prebuilt binary
+
+```sh
+curl -LsSf https://shipdeck.naz.ovh/install.sh | sh
+```
+
+The script downloads the build for your machine, checks its SHA-256, and puts `shipdeck` in `~/.local/bin` (or `$XDG_BIN_HOME` if you set it). If that folder is not on your `PATH` yet, it adds it in `~/.profile` and tells you how to load it into the current shell. Set `SHIPDECK_NO_MODIFY_PATH=1` to leave `~/.profile` alone, or `SHIPDECK_INSTALL_DIR` to install somewhere else:
+
+```sh
+curl -LsSf https://shipdeck.naz.ovh/install.sh | SHIPDECK_INSTALL_DIR=/usr/local/bin sh
+```
+
+There are builds for x86_64 and arm64 on both Linux and macOS. On Linux the script picks one of two: the gnu build when the system has glibc 2.28 or newer, and a static musl build otherwise, for Alpine and older distributions. Both are the same program.
+
+### Pin a prebuilt version
+
+Without options the script installs the latest release. `-V` picks one from the [releases on GitHub](https://github.com/Naz-Ovh/shipdeck/releases) instead (the `v` is optional):
+
+```sh
+curl -LsSf https://shipdeck.naz.ovh/install.sh | sh -s -- -V=v0.3.1
+```
+
+To upgrade, run the install command again. `sh -s -- --help` lists the options.
+
+## Build with cargo
+
+Every path from here on compiles shipdeck on your machine, so it needs a Rust toolchain and a C compiler (see [Requirements](#on-your-pc)). shipdeck is not on crates.io yet; cargo installs it from GitHub.
 
 ```sh
 cargo install --git https://github.com/Naz-Ovh/shipdeck shipdeck
@@ -15,10 +41,10 @@ This builds the `shipdeck` binary and puts it in cargo's bin folder (usually `~/
 
 ### Pin a version
 
-The repository has a tag per release (`v0.1.0`, `v0.2.0`, `v0.3.0`). To install exactly one of them, add cargo's `--tag` flag:
+The repository has a tag per release (`v0.1.0` up to `v0.3.1`). To install exactly one of them, add cargo's `--tag` flag:
 
 ```sh
-cargo install --git https://github.com/Naz-Ovh/shipdeck --tag v0.3.0 shipdeck
+cargo install --git https://github.com/Naz-Ovh/shipdeck --tag v0.3.1 shipdeck
 ```
 
 `--tag` is a plain cargo option, not something specific to shipdeck. Pinning is useful because two things name a version: the schema line at the top of your `deploy.yaml` files, and the server setup command shipdeck shows, which fetches `server-setup.sh` at the tag of the shipdeck you run.
@@ -47,7 +73,7 @@ You can keep shipdeck inside the project it deploys, pinned to a commit:
 
 ```sh
 git submodule add https://github.com/Naz-Ovh/shipdeck scripts/shipdeck
-git -C scripts/shipdeck checkout v0.3.0
+git -C scripts/shipdeck checkout v0.3.1
 ```
 
 Then either run it from there:
@@ -68,6 +94,8 @@ People who clone your project later need `git clone --recurse-submodules`, or `g
 ## Requirements
 
 ### On your PC
+
+The prebuilt binary needs only a Unix-like OS, a modern terminal and, optionally, git. Building from source also needs a Rust toolchain and a C compiler.
 
 | Need | Why |
 | --- | --- |
@@ -95,7 +123,7 @@ shipdeck --version
 ```
 
 ```txt
-shipdeck 0.3.0
+shipdeck 0.3.1
 ```
 
 `shipdeck --help` lists the flags. The [Command line](/docs/reference/cli) reference covers each one.
@@ -105,7 +133,7 @@ shipdeck 0.3.0
 shipdeck generates a JSON Schema for `deploy.yaml` and publishes it with every release tag. Put this line at the top of a `deploy.yaml`, and any editor that uses the YAML language server (the VS Code YAML extension, Neovim, Zed, JetBrains IDEs) gives you completion, descriptions and errors as you type:
 
 ```yaml title="deploy.yaml"
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.1/deploy.schema.json
 ```
 
 The URL contains the version, so update it when you upgrade shipdeck. shipdeck itself ignores comments; the line is only for your editor.
@@ -115,7 +143,7 @@ To map the schema for every `deploy.yaml` in a repository at once, add this to `
 ```json title=".vscode/settings.json"
 {
   "yaml.schemas": {
-    "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json": "**/deploy.yaml"
+    "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.1/deploy.schema.json": "**/deploy.yaml"
   }
 }
 ```

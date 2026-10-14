@@ -24,3 +24,7 @@
 
 /og/*
   Cache-Control: public, max-age=86400
+
+# the install script, readable in a browser; curl | sh ignores the type
+/install.sh
+  Content-Type: text/plain; charset=utf-8

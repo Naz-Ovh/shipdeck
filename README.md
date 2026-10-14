@@ -26,8 +26,9 @@ field is under [deploy.yaml](#deployyaml).
 ## Install
 
 ```sh
-# Linux and macOS
-curl -LsSf https://github.com/Naz-Ovh/shipdeck/releases/latest/download/shipdeck-installer.sh | sh
+# Linux and macOS: the latest release, or the one -V names
+curl -LsSf https://shipdeck.naz.ovh/install.sh | sh
+curl -LsSf https://shipdeck.naz.ovh/install.sh | sh -s -- -V=v0.3.1
 
 # from source
 cargo install --git https://github.com/Naz-Ovh/shipdeck shipdeck
