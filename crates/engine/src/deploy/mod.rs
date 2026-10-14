@@ -22,8 +22,7 @@ use crate::config::{
 use crate::human;
 use crate::release::{Manifest, ReleaseName};
 use crate::remote::{CommandEnv, Facts, HttpCheck, Place, Server, plan_rotation};
-use crate::setup;
-use crate::ssh::{Login, Pool};
+use crate::ssh::Pool;
 use report::{LogKind, Outcome, Reporter, Unit};
 
 /// Every step a deploy or rollback can have, in order.
@@ -904,21 +903,10 @@ async fn preflight(
             pool.login().describe()
         ),
     );
-    let session = match pool.get(endpoint).await {
-        Ok(session) => session,
-        Err(err) => {
-            setup_hint(
-                deployable,
-                pool.login(),
-                report,
-                "if the server is not set up yet",
-            );
-            return Err(err);
-        }
-    };
+    let session = pool.get(endpoint).await?;
     let server = Server::new(session, &config.service);
     let tools = deployable.required_tools();
-    let facts = server.facts(&endpoint.user, &tools).await?;
+    let facts = server.facts(&tools).await?;
     report.progress(step, 1, 2, Unit::Items, "server checked");
 
     let glibc = facts
@@ -949,38 +937,22 @@ async fn preflight(
 
     let dir = &config.service.dir;
     let user = &endpoint.user;
-    if !facts.dir_exists || !facts.dir_writable {
-        setup_hint(
-            deployable,
-            pool.login(),
-            report,
-            "the server needs its one-time setup",
+    if !facts.dir_exists {
+        // An app's first deploy makes its folder.
+        report.log(
+            LogKind::Info,
+            format!("first deploy of {}: creating {dir}", config.service.name),
         );
-        if !facts.dir_exists {
-            bail!("{dir} does not exist on the server");
-        }
+        server.create_app_dir(report).await?;
+    } else if !facts.dir_writable {
         bail!("{user} cannot write to {dir}");
     }
     if !facts.sudo_missing.is_empty() {
         for command in &facts.sudo_missing {
-            report.log(LogKind::Warn, format!("sudo not allowed: {command}"));
+            report.log(LogKind::Warn, format!("{user} may not run: sudo {command}"));
         }
-        setup_hint(
-            deployable,
-            pool.login(),
-            report,
-            "the server needs its one-time setup",
-        );
-        report.log(
-            LogKind::Info,
-            format!(
-                "or add this line yourself with: sudo visudo -f {}",
-                setup::sudoers_file(&config.service.name)
-            ),
-        );
-        report.log(LogKind::Command, facts.sudoers_line.clone());
         bail!(
-            "{user} may not run {} of the commands shipdeck needs without a password",
+            "{user} may not run {} of the commands shipdeck needs as root (sudo, without a password)",
             facts.sudo_missing.len()
         );
     }
@@ -1032,17 +1004,6 @@ fn start_path(deployable: &Deployable, facts: &Facts) -> Option<String> {
         (Program::Tool(tool), _) => facts.tool_path(&tool).map(str::to_string),
         _ => None,
     }
-}
-
-/// Shows the one-time setup command; `u` on the Deployables screen shows it too.
-pub(crate) fn setup_hint(deployable: &Deployable, login: &Login, report: &Reporter, why: &str) {
-    report.log(
-        LogKind::Info,
-        format!(
-            "{why}: run this once on the server as root (or press u on the Deployables screen):"
-        ),
-    );
-    report.log(LogKind::Command, setup::command(deployable, login).command);
 }
 
 /// What can be checked on this machine before connecting: the project

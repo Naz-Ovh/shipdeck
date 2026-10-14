@@ -23,7 +23,7 @@ live.
 | SSH session | One session per deployable, opened once and reused for every command and upload |
 | SSH login | `--key <path>` or `--password <value>`; with neither flag, the alias's `IdentityFile` from `~/.ssh/config`, then a password asked in the TUI |
 | SSH host | `ssh.host` may be a `~/.ssh/config` alias (`host: prod`); its `HostName`, `Port`, `User` and `IdentityFile` apply, and `deploy.yaml` wins |
-| Server setup | `server-setup.sh` in the repo, fetched with `curl ... \| bash -s -- <values>` and run once as root; pinned to the release tag. `u` shows the command with the deployable's values |
+| Server setup | None needed: shipdeck deploys as `ssh.user`, whoever the owner picks (root, ubuntu, ...). The first deploy of an app creates its folder; a missing permission is named at preflight. `server-setup.sh` (`u`) can still create a user with exactly those rights for one app; a per-server setup is planned (Still open) |
 | Configuration | One folder per deployable under a root folder passed on the command line, each with a `deploy.yaml` (0.1 used `deploy.json`; 0.2 a flat format; both are refused with where each key went) |
 | Config check | Every `deploy.yaml` is read before the TUI starts. Any mistake, in any file, stops shipdeck with every problem printed at once, compiler style, in colour: file, line, caret, hint |
 | Editor completion | The config types generate `deploy.schema.json` (draft-07), published at each release tag; examples start with the `yaml-language-server` line. The launch check walks the same schema, and a test keeps the file current |
@@ -288,6 +288,16 @@ answered with `n`; a manual rollback that runs `done` with
 worker shipping `.` minus `!cmd`, `dist` and `go.mod`, with `.git` left out.
 
 ## Still open
+
+- **Server setup, once per server (later).** Today `server-setup.sh` sets up
+  a user for one app. Planned: `curl … | bash` with no arguments, once per
+  server. It asks which user shipdeck logs in as, and whether that user logs
+  in with a pasted public key or a password (or keeps what it has). It
+  installs `shipdeck-root`, a root-owned command the user may run with sudo,
+  which creates app folders and installs, restarts and reads the journal of
+  units shipdeck installed itself; a registry of those units stops a typo in
+  `service.name` from replacing sshd or nginx. Each app's folder and service
+  still come from its first deploy, so dozens of apps need no further setup.
 
 - **Server glibc.** Run `ldd --version | head -1` on the server. If the build
   needs a newer glibc than the server has, the Build step stops and prints the

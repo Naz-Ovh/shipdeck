@@ -58,6 +58,35 @@ impl Server {
         sudo_commands(&self.dir, &self.service)
     }
 
+    /// Logged in as root, so nothing needs sudo.
+    pub fn is_root(&self) -> bool {
+        self.session.user == "root"
+    }
+
+    /// `sudo -n `, or nothing for root.
+    fn sudo(&self) -> &'static str {
+        if self.is_root() { "" } else { "sudo -n " }
+    }
+
+    /// Creates `service.dir` for an app's first deploy: as the user if it
+    /// may, else with sudo (then handed to the user), else it says so.
+    pub async fn create_app_dir(&self, report: &Reporter) -> Result<()> {
+        let script = format!(
+            "if mkdir -p {dir} 2>/dev/null; then exit 0; fi
+if sudo -n mkdir -p {dir} 2>/dev/null && sudo -n chown \"$(id -un):$(id -gn)\" {dir}; then
+  echo 'created with sudo'
+  exit 0
+fi
+echo \"$(id -un) may not create {shown}, and has no sudo without a password\" >&2
+exit 1",
+            dir = self.q_dir(),
+            shown = self.dir,
+        );
+        self.run(&format!("create {}", self.dir), &script, report)
+            .await?;
+        Ok(())
+    }
+
     /// Runs `script`, logging `what` and every output line, and fails on a
     /// non-zero exit.
     async fn run(&self, what: &str, script: &str, report: &Reporter) -> Result<Output> {
@@ -141,12 +170,12 @@ echo \"current -> $(readlink current)\"",
     /// Installs the unit `current` carries, reloads systemd and enables the
     /// service at boot.
     pub async fn install_unit(&self, report: &Reporter) -> Result<()> {
-        let (dir, svc) = (&self.dir, &self.service);
+        let (dir, svc, sudo) = (&self.dir, &self.service, self.sudo());
         let script = format!(
             "set -e
-sudo -n install -m 0644 {src} {dst}
-sudo -n systemctl daemon-reload
-sudo -n systemctl enable {svc_q} 2>&1",
+{sudo}install -m 0644 {src} {dst}
+{sudo}systemctl daemon-reload
+{sudo}systemctl enable {svc_q} 2>&1",
             src = sh_quote(&format!("{dir}/current/{svc}.service")),
             dst = sh_quote(&format!("/etc/systemd/system/{svc}.service")),
             svc_q = self.q_service(),
@@ -157,7 +186,7 @@ sudo -n systemctl enable {svc_q} 2>&1",
     }
 
     pub async fn restart(&self, report: &Reporter) -> Result<()> {
-        let script = format!("sudo -n systemctl restart {}", self.q_service());
+        let script = format!("{}systemctl restart {}", self.sudo(), self.q_service());
         self.run(&format!("restart {}", self.service), &script, report)
             .await?;
         Ok(())
@@ -268,7 +297,8 @@ echo {done}
         let out = self
             .session
             .exec(&format!(
-                "sudo -n journalctl -u {} -n 30 --no-pager 2>&1",
+                "{}journalctl -u {} -n 30 --no-pager 2>&1",
+                self.sudo(),
                 self.q_service()
             ))
             .await?;

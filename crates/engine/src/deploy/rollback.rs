@@ -109,15 +109,19 @@ async fn connect(
     report.log(LogKind::Command, format!("connect {}", endpoint.label()));
     let session = pool.get(endpoint).await?;
     let server = Server::new(session, &config.service);
-    let facts = server.facts(&endpoint.user, &[]).await?;
+    let facts = server.facts(&[]).await?;
     if !facts.sudo_missing.is_empty() {
-        super::setup_hint(
-            deployable,
-            pool.login(),
-            report,
-            "the server needs its one-time setup",
+        for command in &facts.sudo_missing {
+            report.log(
+                LogKind::Warn,
+                format!("{} may not run: sudo {command}", endpoint.user),
+            );
+        }
+        bail!(
+            "{} may not run {} of the commands shipdeck needs as root (sudo, without a password)",
+            endpoint.user,
+            facts.sudo_missing.len()
         );
-        bail!("{} may not run the commands shipdeck needs", endpoint.user);
     }
     let listing = server.list().await?;
     let Some(entry) = listing.entries.iter().find(|e| e.id == target) else {

@@ -9,6 +9,20 @@ Node.js, Python, ...), the build happens locally and only what you list
 travels. Each step of the pipeline can run your own commands, and
 `deploy.yaml` says plainly which ones run on your PC and which on the server.
 
+## Get started
+
+**1. The server.** shipdeck logs in as `ssh.user`, whoever you choose. Nothing
+is set up beforehand: each app's first deploy creates its folder and installs
+its service. If that user lacks a [permission](#permissions) it needs, the
+deploy stops at preflight and says which, before anything changes.
+
+**2. Write a `deploy.yaml`** in one folder per deployable, such as
+`scripts/deploy/my-api/deploy.yaml`. Start from [`examples/`](examples); every
+field is under [deploy.yaml](#deployyaml).
+
+**3. Deploy.** Run `shipdeck ./scripts/deploy`, pick the deployable and press
+`⏎`.
+
 ## Run it
 
 ```sh
@@ -361,45 +375,21 @@ edit it. Placeholders:
 An unknown placeholder stops the deploy at Preflight; `{{binary}}` does too
 when there is no `pipeline.pack.binary`.
 
-## One-time server setup
+## Permissions
 
-The deploy user has to exist before shipdeck can log in as it, and only root
-can create it. Press `u` on a deployable and shipdeck shows the one command
-to run on the server as root, with that deployable's values filled in:
+shipdeck deploys as `ssh.user`, whoever that is. On the server, that user
+must be able to:
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/server-setup.sh \
-  | bash -s -- --user deploy --dir /opt/my-api --service my-api --key 'ssh-ed25519 AAAA... me@pc'
-```
+| What | Why |
+| --- | --- |
+| create `service.dir` (itself, or with sudo), or write to it | the first deploy creates the app's folder; every deploy writes releases into it |
+| `systemctl daemon-reload`, `systemctl enable <service>`, `systemctl restart <service>` | install and restart the app |
+| `install -m 0644 <dir>/current/<service>.service /etc/systemd/system/<service>.service` | put the release's unit in place |
+| `journalctl -u <service> -n 30 --no-pager` | show the log when a release fails |
 
-`c` copies it, and shipdeck prints it again when you quit. Not root? Put
-`sudo` before `bash`. The link is pinned to the release tag of your shipdeck
-version, so what runs as root only changes with a new release. Read
-[`server-setup.sh`](server-setup.sh) first if you like; it is short.
-
-The script checks every value first (the same rules as `deploy.yaml`), then:
-
-1. creates the deploy user (no password; key login only),
-2. authorizes the key: the public half of `--key`, or of the alias's
-   `IdentityFile` (from its `.pub` file, or read from the private key itself),
-3. creates `--dir` owned by that user,
-4. installs `/etc/sudoers.d/shipdeck-<service>` after `visudo` accepts it, so
-   a mistake can never break sudo on the server,
-5. warns if `sshd` only lets listed users in.
-
-Running it again changes nothing that is already in place.
-
-The sudo rule allows exactly what shipdeck needs, nothing more:
-
-```
-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload, /usr/bin/systemctl enable my-app, /usr/bin/systemctl restart my-app, /usr/bin/install -m 0644 /opt/my-app/current/my-app.service /etc/systemd/system/my-app.service, /usr/bin/journalctl -u my-app -n 30 --no-pager
-```
-
-Because the deploy user writes the unit file it installs, it can run anything
-as the service user. Give it to nobody you would not give that power.
-
-Preflight checks all of this on every deploy and points at `u` when
-something is missing.
+As root these simply run. Any other user runs the last three through
+`sudo -n`, so it needs sudo without a password for them. Preflight checks
+each one and, when something is missing, stops and names it.
 
 ## On the server
 

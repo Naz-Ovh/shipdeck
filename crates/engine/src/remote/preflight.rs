@@ -19,10 +19,8 @@ pub struct Facts {
     pub current: Option<String>,
     /// `systemctl is-active` output.
     pub active: String,
-    /// The sudo commands the deploy user may not run yet.
+    /// The commands the user may not run with sudo (never any for root).
     pub sudo_missing: Vec<String>,
-    /// The sudoers line that would allow every needed command.
-    pub sudoers_line: String,
     /// Each program asked for, with where `command -v` found it.
     pub tools: Vec<(String, Option<String>)>,
 }
@@ -38,9 +36,14 @@ impl Facts {
 }
 
 impl Server {
-    /// Looks the server over as `user`, finding each of `tools` on its PATH.
-    pub async fn facts(&self, user: &str, tools: &[String]) -> Result<Facts> {
-        let commands = self.sudo_commands();
+    /// Looks the server over, finding each of `tools` on its PATH.
+    pub async fn facts(&self, tools: &[String]) -> Result<Facts> {
+        // Root runs them without sudo.
+        let commands = if self.is_root() {
+            Vec::new()
+        } else {
+            self.sudo_commands()
+        };
         let lookups: String = tools
             .iter()
             .map(|tool| {
@@ -69,7 +72,6 @@ p=\"$dir\"; while [ ! -d \"$p\" ]; do p=$(dirname \"$p\"); done
 echo \"free_kb=$(df -Pk \"$p\" | awk 'NR==2 {{print $4}}')\"
 echo \"current=$(readlink \"$dir/current\" 2>/dev/null)\"
 echo \"active=$(systemctl is-active {svc} 2>&1 | head -n1)\"
-for tool in systemctl install journalctl; do echo \"path_$tool=$(command -v $tool)\"; done
 {lookups}{checks}",
             dir = self.q_dir(),
             svc = self.q_service(),
@@ -88,25 +90,6 @@ for tool in systemctl install journalctl; do echo \"path_$tool=$(command -v $too
                 .unwrap_or_default()
         };
 
-        let full_path = |command: &str| {
-            let (tool, rest) = command.split_once(' ').unwrap_or((command, ""));
-            let path = get(&format!("path_{tool}"));
-            let path = if path.is_empty() {
-                format!("/usr/bin/{tool}")
-            } else {
-                path
-            };
-            format!("{path} {rest}").trim().to_string()
-        };
-        let sudoers_line = format!(
-            "{user} ALL=(root) NOPASSWD: {}",
-            commands
-                .iter()
-                .map(|c| full_path(c))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-
         Ok(Facts {
             arch: normalize_arch(&get("arch")),
             glibc: GlibcVersion::parse(&get("glibc")),
@@ -122,7 +105,6 @@ for tool in systemctl install journalctl; do echo \"path_$tool=$(command -v $too
                 .filter(|(k, _)| *k == "sudo_missing")
                 .map(|(_, v)| v.to_string())
                 .collect(),
-            sudoers_line,
             tools: tools
                 .iter()
                 .map(|tool| {

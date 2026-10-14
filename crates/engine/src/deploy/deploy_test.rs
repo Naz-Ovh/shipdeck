@@ -40,7 +40,6 @@ fn facts(tools: &[(&str, Option<&str>)]) -> Facts {
         current: None,
         active: String::new(),
         sudo_missing: Vec::new(),
-        sudoers_line: String::new(),
         tools: tools
             .iter()
             .map(|(name, path)| (name.to_string(), path.map(str::to_string)))

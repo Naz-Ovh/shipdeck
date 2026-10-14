@@ -60,6 +60,8 @@ impl Output {
 pub struct Session {
     handle: Handle<Client>,
     pub label: String,
+    /// Who it is logged in as.
+    pub user: String,
 }
 
 impl Session {
@@ -279,7 +281,11 @@ impl Pool {
             Ok(Ok(handle)) => handle,
         };
         login::authenticate(&mut handle, target, &self.login, &self.asker, &self.secrets).await?;
-        Ok(Session { handle, label })
+        Ok(Session {
+            handle,
+            label,
+            user: target.user.clone(),
+        })
     }
 
     pub async fn close_all(&self) {

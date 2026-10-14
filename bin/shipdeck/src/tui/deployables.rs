@@ -13,7 +13,7 @@ use shipdeck_engine::release::ReleaseName;
 use shipdeck_engine::ssh::Login;
 
 use super::app::{App, Live};
-use super::theme::{self, ACCENT, ERR, MUTED, OK, SURFACE, TEXT, VIOLET, WARN};
+use super::theme::{self, ACCENT, ERR, MUTED, OK, SURFACE, TEXT, VIOLET};
 
 pub fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     if app.deployables.is_empty() {
@@ -90,8 +90,8 @@ fn live_summary(live: &Live, tick: u64) -> Vec<Span<'static>> {
             Style::new().fg(ERR),
         )],
         Live::Ready(status) if !status.dir_exists => vec![Span::styled(
-            "▲ remote folder missing: one-time setup needed",
-            Style::new().fg(WARN),
+            "not deployed yet: the first deploy creates its folder",
+            theme::muted(),
         )],
         Live::Ready(status) => match &status.current {
             None => vec![Span::styled("nothing deployed yet", theme::muted())],
