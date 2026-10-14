@@ -10,8 +10,8 @@
 # * uploads those artifacts to temporary workflow zip
 # * on success, uploads the artifacts to a GitHub Release
 #
-# Note that a GitHub Release with this tag is assumed to exist as a draft
-# with the appropriate title/body, and will be undrafted for you.
+# Note that the GitHub Release will be created with a generated
+# title/body based on your changelogs.
 
 name: Release
 permissions:
@@ -126,23 +126,6 @@ jobs:
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
             echo "$HOME/.cargo/bin" >> $GITHUB_PATH
           fi
-      - name: "Stop unless a draft release waits for this tag"
-        run: |
-          curl -fsSL \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$RUNNER_TEMP/releases.json"
-          python3 - "$RUNNER_TEMP/releases.json" "$GITHUB_REF_NAME" <<'EOF'
-          import json, sys
-          path, tag = sys.argv[1], sys.argv[2]
-          releases = json.load(open(path))
-          if not any(r["draft"] and r["tag_name"] == tag for r in releases):
-              sys.exit(
-                  f"No draft release for {tag}. Draft one in GitHub (Releases, "
-                  f"Draft a new release, tag {tag}), then re-run this workflow."
-              )
-          print(f"Draft release for {tag} found")
-          EOF
       - name: Install dist
         run: ${{ matrix.install_dist.run }}
       # Get the dist-manifest
@@ -295,12 +278,14 @@ jobs:
       - name: Create GitHub Release
         env:
           PRERELEASE_FLAG: "${{ fromJson(steps.host.outputs.manifest).announcement_is_prerelease && '--prerelease' || '' }}"
+          ANNOUNCEMENT_TITLE: "${{ fromJson(steps.host.outputs.manifest).announcement_title }}"
+          ANNOUNCEMENT_BODY: "${{ fromJson(steps.host.outputs.manifest).announcement_github_body }}"
           RELEASE_COMMIT: "${{ github.sha }}"
         run: |
-          # If we're editing a release in place, we need to upload things ahead of time
-          gh release upload "${{ needs.plan.outputs.tag }}" artifacts/*
+          # Write and read notes from a file to avoid quoting breaking things
+          echo "$ANNOUNCEMENT_BODY" > $RUNNER_TEMP/notes.txt
 
-          gh release edit "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --draft=false
+          gh release create "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
 
   announce:
     needs:

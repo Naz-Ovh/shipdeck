@@ -466,13 +466,9 @@ cargo run -q -p shipdeck -- --schema > deploy.schema.json
 
 The setup command fetches `server-setup.sh`, and editors fetch
 `deploy.schema.json`, at the tag `v<version>`, so every release needs its tag
-pushed. A release has three steps:
-
-1. Bump `[workspace.package] version` in `Cargo.toml`, update the schema line
-   in `examples/` and this README, regenerate `deploy.schema.json`, and commit.
-2. On GitHub, draft a release (Releases, Draft a new release) for the tag
-   `v<version>` and write its notes. Save it as a draft; do not publish it.
-3. Push the tag:
+pushed. Bump `[workspace.package] version` in `Cargo.toml`, update the schema
+line in `examples/` and this README, regenerate `deploy.schema.json`, commit,
+and push the tag:
 
 ```sh
 git tag v0.3.0 && git push origin main v0.3.0
@@ -487,12 +483,13 @@ The tag push runs `.github/workflows/release.yml`, which
 `dist-workspace.toml`. Nothing else runs it, pull requests included. It builds
 six binaries (gnu and static musl for x86_64 and aarch64 Linux, plus both
 macOS architectures) and checks that no gnu binary needs a glibc newer than
-`min-glibc-version`. Then it uploads the archives, their checksums and
-`shipdeck-installer.sh` into your draft and publishes it, so a release is
-never public without its binaries. If the build or the check fails, the
-release stays a draft. If no draft waits for the tag, every build job stops
-before it compiles: draft the release, then re-run the workflow. The docs site
-deploys once the release is published.
+`min-glibc-version`. Only then does it create the GitHub Release, with the
+archives, their checksums and `shipdeck-installer.sh` attached, so a release
+is never public without its binaries. If the build or the check fails, no
+release is made. The docs site deploys once the release is published. Do not
+make the release on GitHub by hand: the workflow then fails, because the
+release already exists. The release notes come from dist; edit them on GitHub
+afterwards if you like.
 
 After changing `dist-workspace.toml`, run `dist generate`: the release
 workflow refuses to run while `release.yml` is out of date.
