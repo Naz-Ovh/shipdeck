@@ -85,7 +85,7 @@ mistake, it does not start, and prints every problem in every file at once
 ## deploy.yaml
 
 ```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.1/deploy.schema.json
 name: Web (prod)
 project: ../../../web                       # your source; local commands run here
 ssh:
@@ -331,13 +331,13 @@ same descriptions as above, for any editor using the YAML language server
 `deploy.yaml` with:
 
 ```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.1/deploy.schema.json
 ```
 
 or map it once for the whole repository in `.vscode/settings.json`:
 
 ```json
-{ "yaml.schemas": { "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json": "**/deploy.yaml" } }
+{ "yaml.schemas": { "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.1/deploy.schema.json": "**/deploy.yaml" } }
 ```
 
 ### From 0.2
@@ -453,6 +453,14 @@ cargo test --workspace
 SHIPDECK_DUMP=/tmp/frames cargo test -p shipdeck   # writes every screen as text
 ```
 
+There is no CI for these: [lefthook](https://lefthook.dev) runs them on your
+machine. Install it once (for example `go install
+github.com/evilmartians/lefthook/v2@latest`), then run `lefthook install` in
+each clone. Every commit checks that the README, the examples and
+`deploy.schema.json` name the version in `Cargo.toml`. Every push runs fmt,
+check, clippy and test, and refuses a `v<version>` tag whose commit has
+another version in `Cargo.toml`. The scripts are in `scripts/lefthook/`.
+
 The config types in `crates/engine/src/config/mod.rs` are the schema: their
 doc comments become the editor descriptions, and the launch check walks the
 same schema. After changing them, regenerate the file (a test fails until
@@ -471,7 +479,7 @@ line in `examples/` and this README, regenerate `deploy.schema.json`, commit,
 and push the tag:
 
 ```sh
-git tag v0.3.0 && git push origin main v0.3.0
+git tag v0.3.1 && git push origin main v0.3.1
 ```
 
 `setup_test.rs` fails if `server-setup.sh` and `remote::sudo_commands` ever
