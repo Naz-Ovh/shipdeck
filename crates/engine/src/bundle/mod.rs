@@ -1,19 +1,19 @@
-//! Packing a release into one `.tar.gz` in memory: the binary, the build's
-//! `build.files`, the deployable's `bundle` files, `release.json` and the
-//! systemd unit.
+//! Packing a release into one `.tar.gz` in memory: the binary, the files
+//! `pipeline.pack.files` picks, `release.json` and the systemd unit.
 
+pub mod files;
 pub mod unit;
 
 use std::io::{self, Read};
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use flate2::Compression;
 use flate2::write::GzEncoder;
 
-use crate::config::{Deployable, bundle_path};
+use crate::config::{Deployable, release_path};
 use crate::release::{MANIFEST_FILE, Manifest};
+use files::{Kind, Selection};
 
 /// A packed release, ready to upload.
 #[derive(Debug)]
@@ -22,6 +22,8 @@ pub struct Bundle {
     pub files: usize,
     /// Size before compression.
     pub input_bytes: u64,
+    /// Project files a file from the deploy folder replaced.
+    pub replaced: Vec<String>,
 }
 
 enum Source {
@@ -47,7 +49,9 @@ pub fn pack(
     unit: &str,
     mut progress: impl FnMut(u64, u64),
 ) -> Result<Bundle> {
-    let entries = collect(deployable, manifest, unit)?;
+    let selection = files::select(deployable)?;
+    let replaced = selection.replaced.clone();
+    let entries = collect(deployable, manifest, unit, selection)?;
     let total: u64 = entries.iter().map(|e| e.size).sum();
     let files = entries
         .iter()
@@ -110,12 +114,19 @@ pub fn pack(
         data,
         files,
         input_bytes: total,
+        replaced,
     })
 }
 
 /// Everything that goes into the archive, in order, with its mode.
-fn collect(deployable: &Deployable, manifest: &Manifest, unit: &str) -> Result<Vec<Entry>> {
-    let unit_name = format!("{}.service", deployable.config.remote.service);
+fn collect(
+    deployable: &Deployable,
+    manifest: &Manifest,
+    unit: &str,
+    selection: Selection,
+) -> Result<Vec<Entry>> {
+    let service = &deployable.config.service;
+    let unit_name = format!("{}.service", service.name);
     let manifest_json = serde_json::to_vec_pretty(manifest)?;
 
     let mut entries = Vec::new();
@@ -123,12 +134,39 @@ fn collect(deployable: &Deployable, manifest: &Manifest, unit: &str) -> Result<V
         let size = std::fs::metadata(&binary)
             .with_context(|| format!("the build did not produce {}", binary.display()))?
             .len();
+        if let Some(item) = selection.items.get(&name) {
+            bail!(
+                "{name} would be in the release twice: pipeline.pack.binary, and {} from the {} folder",
+                item.local.display(),
+                item.source.name()
+            );
+        }
         entries.push(Entry {
             path: name,
             source: Source::File(binary),
             mode: 0o755,
             size,
         });
+    }
+    for reserved in [MANIFEST_FILE, unit_name.as_str()] {
+        if let Some(item) = selection.items.get(reserved) {
+            bail!(
+                "{} would replace the release's own {reserved}; leave it out of pipeline.pack.files",
+                item.local.display()
+            );
+        }
+    }
+    let shared: Vec<String> = service.shared.iter().map(|s| release_path(s)).collect();
+    for path in selection.items.keys() {
+        if let Some(folder) = shared
+            .iter()
+            .find(|folder| Path::new(path).starts_with(Path::new(folder.as_str())))
+        {
+            bail!(
+                "{path} is packed, but service.shared links {folder} to shared/{folder} on the server; \
+                 leave it out with pipeline.pack.files.exclude"
+            );
+        }
     }
     entries.push(Entry {
         path: MANIFEST_FILE.into(),
@@ -143,85 +181,29 @@ fn collect(deployable: &Deployable, manifest: &Manifest, unit: &str) -> Result<V
         mode: 0o644,
     });
 
-    // Entries were validated when deploy.yaml loaded and checked before;
-    // this catches a file that vanished since.
-    deployable.check_files()?;
-    let build_dir = deployable.build_dir();
-    for item in &deployable.config.build.files {
-        add(&build_dir.join(item), bundle_path(item), &mut entries)?;
-    }
-    deployable.check_bundle()?;
-    for item in &deployable.config.bundle {
-        add(
-            &deployable.folder.join(item),
-            bundle_path(item),
-            &mut entries,
-        )?;
+    for (path, item) in selection.items {
+        entries.push(match item.kind {
+            Kind::Dir => Entry {
+                path,
+                source: Source::Dir,
+                mode: 0o755,
+                size: 0,
+            },
+            Kind::Link(target) => Entry {
+                path,
+                source: Source::Link(target),
+                mode: 0o777,
+                size: 0,
+            },
+            Kind::File { size, mode } => Entry {
+                path,
+                source: Source::File(item.local),
+                mode,
+                size,
+            },
+        });
     }
     Ok(entries)
-}
-
-/// Adds a listed entry. A link the entry itself names is followed, so
-/// `dist -> build/out` ships the folder; links inside a folder stay links,
-/// so `node_modules/.bin` keeps working.
-fn add(local: &Path, archive_path: String, entries: &mut Vec<Entry>) -> Result<()> {
-    let meta = std::fs::metadata(local).with_context(|| format!("reading {}", local.display()))?;
-    add_found(local, archive_path, meta, entries)
-}
-
-fn add_found(
-    local: &Path,
-    archive_path: String,
-    meta: std::fs::Metadata,
-    entries: &mut Vec<Entry>,
-) -> Result<()> {
-    if meta.file_type().is_symlink() {
-        let target = std::fs::read_link(local)
-            .with_context(|| format!("reading the link {}", local.display()))?;
-        entries.push(Entry {
-            path: archive_path,
-            source: Source::Link(target),
-            mode: 0o777,
-            size: 0,
-        });
-    } else if meta.is_dir() {
-        entries.push(Entry {
-            path: archive_path.clone(),
-            source: Source::Dir,
-            mode: 0o755,
-            size: 0,
-        });
-        let mut children: Vec<PathBuf> = std::fs::read_dir(local)
-            .with_context(|| format!("reading {}", local.display()))?
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .collect();
-        children.sort();
-        for child in children {
-            let name = child
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let meta = std::fs::symlink_metadata(&child)
-                .with_context(|| format!("reading {}", child.display()))?;
-            add_found(&child, format!("{archive_path}/{name}"), meta, entries)?;
-        }
-    } else if meta.is_file() {
-        let name = archive_path.rsplit('/').next().unwrap_or(&archive_path);
-        // Secrets stay readable by their owner only, whatever the local mode is.
-        let mode = if name.starts_with(".env") {
-            0o600
-        } else {
-            meta.permissions().mode() & 0o777
-        };
-        entries.push(Entry {
-            path: archive_path,
-            source: Source::File(local.to_path_buf()),
-            mode,
-            size: meta.len(),
-        });
-    }
-    // Sockets and pipes are skipped; they mean nothing on another machine.
-    Ok(())
 }
 
 struct Counting<R, F> {

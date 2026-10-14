@@ -1,10 +1,11 @@
-//! The deploy: preflight, build, pack, upload, switch, restart, health,
-//! rotate. A failure after the switch puts the previous release back.
+//! A deploy runs the pipeline: preflight, build, pack, upload, unpack,
+//! setup, switch, restart, health and done, then failed if a step failed.
+//! A failure after the switch asks whether to put the previous release back.
 
 pub mod report;
 mod rollback;
 
-pub use rollback::{ROLLBACK_STEPS, rollback};
+pub use rollback::{rollback, rollback_step_names, rollback_steps};
 
 use std::path::Path;
 use std::sync::Arc;
@@ -13,69 +14,91 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow, bail};
 
 use crate::build;
+use crate::bundle::files::{self, Kind, Source};
 use crate::bundle::{self, unit};
-use crate::config::{CommandLine, DeployConfig, Deployable, HealthConfig, Program};
+use crate::config::{
+    Commands, DeployConfig, Deployable, Program, ROLLBACK_ANSWER_SECS, Rollback, release_path,
+};
 use crate::human;
-use crate::release::Manifest;
-use crate::remote::{Facts, HttpCheck, Server, plan_rotation};
+use crate::release::{Manifest, ReleaseName};
+use crate::remote::{CommandEnv, Facts, HttpCheck, Place, Server, plan_rotation};
 use crate::setup;
 use crate::ssh::{Login, Pool};
 use report::{LogKind, Outcome, Reporter, Unit};
 
-/// Every step a deploy can have, in order. Hook steps appear only when
-/// `deploy.yaml` has hooks for them.
+/// Every step a deploy or rollback can have, in order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
-    Before,
+    Connect,
     Preflight,
     Build,
     Pack,
     Upload,
-    Prepare,
+    Unpack,
+    Setup,
     Switch,
     Restart,
     Health,
-    Rotate,
-    After,
+    Done,
+    Failed,
 }
 
 impl Step {
     pub fn name(self) -> &'static str {
         match self {
-            Self::Before => "Before",
+            Self::Connect => "Connect",
             Self::Preflight => "Preflight",
             Self::Build => "Build",
             Self::Pack => "Pack",
             Self::Upload => "Upload",
-            Self::Prepare => "Prepare",
+            Self::Unpack => "Unpack",
+            Self::Setup => "Setup",
             Self::Switch => "Switch",
             Self::Restart => "Restart",
             Self::Health => "Health",
-            Self::Rotate => "Rotate",
-            Self::After => "After",
+            Self::Done => "Done",
+            Self::Failed => "Failed",
+        }
+    }
+
+    /// As deploy.yaml and `SHIPDECK_STEP` spell it.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Connect => "connect",
+            Self::Preflight => "preflight",
+            Self::Build => "build",
+            Self::Pack => "pack",
+            Self::Upload => "upload",
+            Self::Unpack => "unpack",
+            Self::Setup => "setup",
+            Self::Switch => "switch",
+            Self::Restart => "restart",
+            Self::Health => "health",
+            Self::Done => "done",
+            Self::Failed => "failed",
         }
     }
 }
 
-/// The steps a deploy of `config` goes through.
+/// The steps a deploy of `config` goes through. Failed is listed only when
+/// `pipeline.failed` has commands.
 pub fn deploy_steps(config: &DeployConfig) -> Vec<Step> {
-    let hooks = &config.hooks;
-    [
-        (Step::Before, !hooks.before.is_empty()),
-        (Step::Preflight, true),
-        (Step::Build, true),
-        (Step::Pack, true),
-        (Step::Upload, true),
-        (Step::Prepare, !hooks.server.is_empty()),
-        (Step::Switch, true),
-        (Step::Restart, true),
-        (Step::Health, true),
-        (Step::Rotate, true),
-        (Step::After, !hooks.after.is_empty()),
-    ]
-    .into_iter()
-    .filter_map(|(step, used)| used.then_some(step))
-    .collect()
+    let mut steps = vec![
+        Step::Preflight,
+        Step::Build,
+        Step::Pack,
+        Step::Upload,
+        Step::Unpack,
+        Step::Setup,
+        Step::Switch,
+        Step::Restart,
+        Step::Health,
+        Step::Done,
+    ];
+    if !config.pipeline.failed.run.local.is_empty() {
+        steps.push(Step::Failed);
+    }
+    steps
 }
 
 /// The names of [`deploy_steps`], for the screen.
@@ -83,19 +106,19 @@ pub fn deploy_step_names(config: &DeployConfig) -> Vec<&'static str> {
     deploy_steps(config).into_iter().map(Step::name).collect()
 }
 
-/// Step indices for one deploy, as the reporter counts them.
-struct Plan(Vec<Step>);
+/// What `SHIPDECK_ACTION` says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Action {
+    Deploy,
+    Rollback,
+}
 
-impl Plan {
-    fn at(&self, step: Step) -> usize {
-        self.0
-            .iter()
-            .position(|s| *s == step)
-            .expect("the plan has every step the deploy reports")
-    }
-
-    fn len(&self) -> usize {
-        self.0.len()
+impl Action {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Deploy => "deploy",
+            Self::Rollback => "rollback",
+        }
     }
 }
 
@@ -103,350 +126,760 @@ impl Plan {
 const MIN_FREE: u64 = 100 * 1024 * 1024;
 /// Consecutive healthy probes, one second apart, before a release counts as up.
 const STABLE_PROBES: u32 = 3;
+/// The pause before a failed health check runs again.
+const CHECK_RETRY: Duration = Duration::from_secs(2);
 
 pub async fn deploy(deployable: Deployable, pool: Arc<Pool>, report: Reporter) {
-    let outcome = run(&deployable, &pool, &report).await;
-    report.done(outcome);
+    let mut run = Run::new(
+        &deployable,
+        &report,
+        deploy_steps(&deployable.config),
+        Action::Deploy,
+    );
+    let ended = run.deploy(&pool).await;
+    run.failed(&ended).await;
+    report.done(ended.outcome);
 }
 
-async fn run(deployable: &Deployable, pool: &Pool, report: &Reporter) -> Outcome {
-    let config = &deployable.config;
-    let plan = Plan(deploy_steps(config));
-    let total = plan.len();
-    let stop = |step: Step, err: anyhow::Error| stop(report, plan.at(step), total, err);
+/// How a run ended, and the step that failed if one did.
+pub(crate) struct Ended {
+    outcome: Outcome,
+    failed: Option<(Step, String)>,
+}
 
-    // Before: the local hooks, ahead of everything else.
-    if !config.hooks.before.is_empty() {
-        let step = plan.at(Step::Before);
-        report.start(step, "Before: running hooks.before on this machine");
-        let started = Instant::now();
-        if let Err(err) = local_hooks(deployable, &config.hooks.before, None, report, step).await {
-            return stop(Step::Before, err);
+impl Ended {
+    fn ok(release: &str) -> Self {
+        Self {
+            outcome: Outcome::Succeeded {
+                release: release.to_string(),
+            },
+            failed: None,
         }
-        report.finish(
-            step,
-            format!(
-                "{} · {}",
-                count(config.hooks.before.len(), "command"),
-                human::duration(started.elapsed())
-            ),
-        );
+    }
+}
+
+/// One deploy or rollback in progress: its steps and what is known so far.
+pub(crate) struct Run<'a> {
+    deployable: &'a Deployable,
+    report: &'a Reporter,
+    steps: Vec<Step>,
+    action: Action,
+    /// The release this run puts live, once known.
+    release: Option<String>,
+    version: Option<String>,
+    /// The release that was live before.
+    previous: Option<String>,
+}
+
+impl<'a> Run<'a> {
+    pub(crate) fn new(
+        deployable: &'a Deployable,
+        report: &'a Reporter,
+        steps: Vec<Step>,
+        action: Action,
+    ) -> Self {
+        Self {
+            deployable,
+            report,
+            steps,
+            action,
+            release: None,
+            version: None,
+            previous: None,
+        }
     }
 
-    // Preflight
-    let step = plan.at(Step::Preflight);
-    report.start(step, "Preflight: checking the server");
-    let (server, facts) = match preflight(deployable, pool, report, step).await {
-        Ok(found) => found,
-        Err(err) => return stop(Step::Preflight, err),
-    };
-
-    // Build
-    let step = plan.at(Step::Build);
-    report.start(step, "Build: building on this machine");
-    let (name, source) = match build::release_name(deployable).await {
-        Ok(found) => found,
-        Err(err) => return stop(Step::Build, err),
-    };
-    let id = name.id();
-    report.release(&id);
-    report.log(
-        LogKind::Info,
-        format!("release {id} (version from {source})"),
-    );
-    if name.dirty {
-        report.log(
-            LogKind::Warn,
-            "the source has uncommitted changes; the release is marked dirty",
-        );
+    fn config(&self) -> &'a DeployConfig {
+        &self.deployable.config
     }
-    let started = Instant::now();
-    if let Err(err) = build::run(deployable, report, step).await {
-        return stop(Step::Build, err);
-    }
-    let built = match check_build(deployable, &facts, report) {
-        Ok(summary) => summary,
-        Err(err) => return stop(Step::Build, err),
-    };
-    report.finish(
-        step,
-        format!("{built} · {}", human::duration(started.elapsed())),
-    );
 
-    // Pack
-    let step = plan.at(Step::Pack);
-    report.start(step, "Pack: bundling the release");
-    let deployer = build::deployer(&deployable.build_dir()).await;
-    let manifest = Manifest::new(&name, &deployer);
-    let packed = async {
-        let start_path = start_path(deployable, &facts);
-        let unit = unit::render_for(deployable, &name, start_path.as_deref())?;
-        report.log(
-            LogKind::Info,
-            format!(
-                "ExecStart={}",
-                unit::exec_start(deployable, start_path.as_deref())
-            ),
-        );
-        let (owned, reporter) = (deployable.clone(), report.clone());
-        let mut throttle = Throttle::default();
-        let bundle = tokio::task::spawn_blocking(move || {
-            bundle::pack(&owned, &manifest, &unit, |done, total| {
-                if throttle.ready(done, total) {
-                    reporter.progress(step, done, total, Unit::Bytes, "compressing");
-                }
-            })
-        })
-        .await
-        .map_err(|err| anyhow!("packing stopped: {err}"))??;
-        if let Some(free) = facts.free_bytes {
-            let needed = bundle.data.len() as u64 * 2 + bundle.input_bytes;
-            if free < needed {
-                bail!(
-                    "the server has {} free; this release needs about {}",
-                    human::bytes(free),
-                    human::bytes(needed)
-                );
+    fn at(&self, step: Step) -> usize {
+        self.steps
+            .iter()
+            .position(|s| *s == step)
+            .expect("the plan has every step the run reports")
+    }
+
+    fn start(&self, step: Step, what: &str) {
+        self.report
+            .start(self.at(step), &format!("{}: {what}", step.name()));
+    }
+
+    fn finish(&self, step: Step, detail: impl Into<String>) {
+        self.report.finish(self.at(step), detail);
+    }
+
+    fn skip(&self, step: Step, detail: impl Into<String>) {
+        self.report.skip(self.at(step), detail);
+    }
+
+    /// Marks every step after `failed` skipped, except Failed itself.
+    fn skip_rest(&self, failed: Step, why: &str) {
+        for (index, step) in self.steps.iter().enumerate().skip(self.at(failed) + 1) {
+            if *step != Step::Failed {
+                self.report.skip(index, why);
             }
         }
-        Ok(bundle)
     }
-    .await;
-    let bundle = match packed {
-        Ok(bundle) => bundle,
-        Err(err) => return stop(Step::Pack, err),
-    };
-    report.finish(
-        step,
-        format!(
-            "{} files · {} → {}",
-            bundle.files,
-            human::bytes(bundle.input_bytes),
-            human::bytes(bundle.data.len() as u64)
-        ),
-    );
 
-    // Upload and unpack
-    let step = plan.at(Step::Upload);
-    report.start(step, "Upload: sending the release");
-    let started = Instant::now();
-    let uploaded = async {
-        server.prepare(report).await?;
-        let target = server.upload_path(&id);
+    /// A failure before anything live changed.
+    fn stop(&self, step: Step, err: anyhow::Error) -> Ended {
+        self.report.fail(self.at(step), short(&err));
+        self.report.log(LogKind::Error, format!("{err:#}"));
+        self.skip_rest(step, "stopped");
+        let error = format!("{err:#}");
+        Ended {
+            outcome: Outcome::Failed {
+                error: error.clone(),
+            },
+            failed: Some((step, error)),
+        }
+    }
+
+    /// `SHIPDECK_*` for a command in `step`.
+    fn vars(&self, step: Step, error: Option<&str>) -> Vec<(&'static str, String)> {
+        let config = self.config();
+        let mut vars = vec![
+            ("SHIPDECK_ACTION", self.action.key().to_string()),
+            ("SHIPDECK_STEP", step.key().to_string()),
+            ("SHIPDECK_NAME", config.name.clone()),
+            ("SHIPDECK_SERVICE", config.service.name.clone()),
+            ("SHIPDECK_HOST", self.deployable.endpoint.name.clone()),
+            ("SHIPDECK_APP_DIR", config.service.dir.clone()),
+            (
+                "SHIPDECK_SHARED_DIR",
+                format!("{}/shared", config.service.dir),
+            ),
+        ];
+        if let Some(id) = &self.release {
+            vars.push(("SHIPDECK_RELEASE", id.clone()));
+        }
+        if let Some(version) = &self.version {
+            vars.push(("SHIPDECK_VERSION", version.clone()));
+        }
+        if let Some(previous) = &self.previous {
+            vars.push(("SHIPDECK_PREVIOUS", previous.clone()));
+        }
+        if let Some(error) = error {
+            vars.push(("SHIPDECK_ERROR", error.to_string()));
+        }
+        vars
+    }
+
+    /// Runs `commands` on this machine in `project`, one after another.
+    /// Progress goes to `row`; `SHIPDECK_STEP` says `step`.
+    async fn local(
+        &self,
+        row: Step,
+        step: Step,
+        error: Option<&str>,
+        commands: &Commands,
+    ) -> Result<()> {
+        if commands.is_empty() {
+            return Ok(());
+        }
+        let dir = self.deployable.project_dir();
+        if !dir.is_dir() {
+            bail!("the project folder {} does not exist", dir.display());
+        }
+        let absolute = |path: &Path| {
+            std::path::absolute(path)
+                .unwrap_or(path.to_path_buf())
+                .display()
+                .to_string()
+        };
+        let mut env = self.vars(step, error);
+        env.push(("SHIPDECK_FOLDER", absolute(&self.deployable.folder)));
+        env.push(("SHIPDECK_PROJECT", absolute(&dir)));
+        let index = self.at(row);
+        for (done, command) in commands.iter().enumerate() {
+            self.report.progress(
+                index,
+                done as u64,
+                commands.len() as u64,
+                Unit::Items,
+                command.trim(),
+            );
+            build::run_local(command, &dir, &env, self.report, index).await?;
+        }
+        Ok(())
+    }
+
+    /// Runs `commands` on the server at `place`, one after another.
+    async fn remote(
+        &self,
+        server: &Server,
+        place: Place,
+        step: Step,
+        commands: &Commands,
+    ) -> Result<()> {
+        if commands.is_empty() {
+            return Ok(());
+        }
+        let service = &self.config().service;
+        let env = CommandEnv {
+            service: service.env.clone(),
+            env_file: service.env_file.as_deref().map(release_path),
+            vars: self.vars(step, None),
+        };
+        let index = self.at(step);
+        for (done, command) in commands.iter().enumerate() {
+            self.report.progress(
+                index,
+                done as u64,
+                commands.len() as u64,
+                Unit::Items,
+                command.trim(),
+            );
+            server.command(&place, command, &env, self.report).await?;
+        }
+        Ok(())
+    }
+
+    async fn deploy(&mut self, pool: &Pool) -> Ended {
+        let deployable = self.deployable;
+        let pipeline = &self.config().pipeline;
+        let report = self.report;
+
+        // Preflight: shipdeck's checks, then the server's commands, then
+        // this machine's. Nothing is built or changed yet.
+        self.start(Step::Preflight, "checking your PC and the server");
+        let index = self.at(Step::Preflight);
+        let (server, facts, summary) = match preflight(deployable, pool, report, index).await {
+            Ok(found) => found,
+            Err(err) => return self.stop(Step::Preflight, err),
+        };
+        self.previous = facts.current.clone();
+        let commands = &pipeline.preflight.run;
+        if let Err(err) = self
+            .remote(&server, Place::AppDir, Step::Preflight, &commands.server)
+            .await
+        {
+            return self.stop(Step::Preflight, err);
+        }
+        if let Err(err) = self
+            .local(Step::Preflight, Step::Preflight, None, &commands.local)
+            .await
+        {
+            return self.stop(Step::Preflight, err);
+        }
+        // Files from the deploy folder are there before the build; project
+        // files are checked once it has run.
+        match files::walk_source(deployable, Source::Deploy) {
+            Ok(items) => {
+                for (path, item) in &items {
+                    if let Kind::File { size, .. } = item.kind {
+                        report.log(
+                            LogKind::Success,
+                            format!("deploy folder: {path} ({})", human::bytes(size)),
+                        );
+                    }
+                }
+            }
+            Err(err) => return self.stop(Step::Preflight, err),
+        }
+        self.finish(Step::Preflight, summary);
+
+        // Build
+        self.start(Step::Build, "building on your PC");
+        let (name, source) = match build::release_name(deployable).await {
+            Ok(found) => found,
+            Err(err) => return self.stop(Step::Build, err),
+        };
+        let id = name.id();
+        self.release = Some(id.clone());
+        self.version = Some(name.version.clone());
+        report.release(&id);
         report.log(
-            LogKind::Command,
+            LogKind::Info,
+            format!("release {id} (version from {source})"),
+        );
+        if name.dirty {
+            report.log(
+                LogKind::Warn,
+                "the source has uncommitted changes; the release is marked dirty",
+            );
+        }
+        let started = Instant::now();
+        let build_commands = &pipeline.build.run.local;
+        if build_commands.is_empty() {
+            report.log(
+                LogKind::Info,
+                "pipeline.build.run.local is empty; shipping the files as they are",
+            );
+        } else if let Err(err) = self
+            .local(Step::Build, Step::Build, None, build_commands)
+            .await
+        {
+            return self.stop(Step::Build, err.context("the build failed"));
+        }
+        let built = match check_build(deployable, &facts, report) {
+            Ok(summary) => summary,
+            Err(err) => return self.stop(Step::Build, err),
+        };
+        self.finish(
+            Step::Build,
+            format!("{built} · {}", human::duration(started.elapsed())),
+        );
+
+        // Pack
+        self.start(Step::Pack, "packing the release");
+        let index = self.at(Step::Pack);
+        let deployer = build::deployer(&deployable.project_dir()).await;
+        let manifest = Manifest::new(&name, &deployer);
+        let packed = async {
+            let start_path = start_path(deployable, &facts);
+            let unit = unit::render_for(deployable, &name, start_path.as_deref())?;
+            report.log(
+                LogKind::Info,
+                format!(
+                    "ExecStart={}",
+                    unit::exec_start(deployable, start_path.as_deref())
+                ),
+            );
+            let (owned, reporter) = (deployable.clone(), report.clone());
+            let mut throttle = Throttle::default();
+            let bundle = tokio::task::spawn_blocking(move || {
+                bundle::pack(&owned, &manifest, &unit, |done, total| {
+                    if throttle.ready(done, total) {
+                        reporter.progress(index, done, total, Unit::Bytes, "compressing");
+                    }
+                })
+            })
+            .await
+            .map_err(|err| anyhow!("packing stopped: {err}"))??;
+            if let Some(free) = facts.free_bytes {
+                let needed = bundle.data.len() as u64 * 2 + bundle.input_bytes;
+                if free < needed {
+                    bail!(
+                        "the server has {} free; this release needs about {}",
+                        human::bytes(free),
+                        human::bytes(needed)
+                    );
+                }
+            }
+            Ok(bundle)
+        }
+        .await;
+        let bundle = match packed {
+            Ok(bundle) => bundle,
+            Err(err) => return self.stop(Step::Pack, err),
+        };
+        for path in &bundle.replaced {
+            report.log(
+                LogKind::Info,
+                format!("{path} from the deploy folder replaces the project's {path}"),
+            );
+        }
+        self.finish(
+            Step::Pack,
             format!(
-                "{} › upload {} to {target}",
-                server.session().label,
+                "{} files · {} → {}",
+                bundle.files,
+                human::bytes(bundle.input_bytes),
                 human::bytes(bundle.data.len() as u64)
             ),
         );
-        let mut throttle = Throttle::default();
-        server
-            .session()
-            .upload(&bundle.data, &target, |sent, total| {
-                if throttle.ready(sent, total) {
-                    let speed = sent as f64 / started.elapsed().as_secs_f64().max(0.001);
-                    report.progress(
-                        step,
-                        sent,
-                        total,
-                        Unit::Bytes,
-                        format!("{}/s", human::bytes(speed as u64)),
-                    );
-                }
-            })
-            .await?;
-        server.unpack(&id, report).await
-    }
-    .await;
-    if let Err(err) = uploaded {
-        let _ = server.discard(&id, report).await;
-        return stop(Step::Upload, err);
-    }
-    report.finish(
-        step,
-        format!(
-            "{} in {}",
-            human::bytes(bundle.data.len() as u64),
-            human::duration(started.elapsed())
-        ),
-    );
 
-    // Prepare: the server hooks, inside the new release, before it goes live.
-    if !config.hooks.server.is_empty() {
-        let step = plan.at(Step::Prepare);
-        report.start(
-            step,
-            &format!("Prepare: running hooks.server in releases/{id}"),
-        );
+        // Upload
+        self.start(Step::Upload, "sending the release");
+        let index = self.at(Step::Upload);
         let started = Instant::now();
-        let hooks = &config.hooks.server;
-        let mut prepared = Ok(());
-        for (done, hook) in hooks.iter().enumerate() {
-            report.progress(
-                step,
-                done as u64,
-                hooks.len() as u64,
-                Unit::Items,
-                hook.trim(),
+        let uploaded = async {
+            server.prepare(report).await?;
+            let target = server.upload_path(&id);
+            report.log(
+                LogKind::Command,
+                format!(
+                    "{} › upload {} to {target}",
+                    server.session().label,
+                    human::bytes(bundle.data.len() as u64)
+                ),
             );
-            prepared = server.hook(&id, hook, report).await;
-            if prepared.is_err() {
-                break;
-            }
+            let mut throttle = Throttle::default();
+            server
+                .session()
+                .upload(&bundle.data, &target, |sent, total| {
+                    if throttle.ready(sent, total) {
+                        let speed = sent as f64 / started.elapsed().as_secs_f64().max(0.001);
+                        report.progress(
+                            index,
+                            sent,
+                            total,
+                            Unit::Bytes,
+                            format!("{}/s", human::bytes(speed as u64)),
+                        );
+                    }
+                })
+                .await
         }
-        if let Err(err) = prepared {
-            // Nothing live has changed yet.
+        .await;
+        if let Err(err) = uploaded {
             let _ = server.discard(&id, report).await;
-            return stop(Step::Prepare, err);
+            return self.stop(Step::Upload, err);
         }
-        report.finish(
-            step,
+        self.finish(
+            Step::Upload,
             format!(
-                "{} · {}",
-                count(hooks.len(), "command"),
+                "{} in {}",
+                human::bytes(bundle.data.len() as u64),
                 human::duration(started.elapsed())
             ),
         );
-    }
 
-    // Switch
-    let step = plan.at(Step::Switch);
-    report.start(step, "Switch: making it the current release");
-    let previous = facts.current.clone();
-    let switched = async {
-        server.switch(&id, report).await?;
-        server.install_unit(report).await
-    }
-    .await;
-    if let Err(err) = switched {
-        report.fail(step, short(&err));
-        report.log(LogKind::Error, format!("{err:#}"));
-        // Nothing was restarted, so the old process is still serving.
-        return match &previous {
-            Some(previous) => match restore(&server, previous, report).await {
-                Ok(()) => {
-                    let _ = server.discard(&id, report).await;
-                    skip_rest(report, step, total, "stopped");
-                    Outcome::Failed {
-                        error: format!("{err:#}"),
-                    }
-                }
-                Err(restore_err) => Outcome::RollbackFailed {
-                    error: format!("{err:#}"),
-                    rollback_error: format!("{restore_err:#}"),
-                },
-            },
-            None => {
-                skip_rest(report, step, total, "stopped");
-                Outcome::Failed {
-                    error: format!("{err:#}"),
-                }
-            }
-        };
-    }
-    report.finish(step, format!("current → {id}"));
-
-    // Restart
-    let step = plan.at(Step::Restart);
-    report.start(step, &format!("Restart: {}", config.remote.service));
-    if let Err(err) = server.restart(report).await {
-        return recover(
-            &server,
-            report,
-            step,
-            err,
-            previous.as_deref(),
-            Some(&id),
-            total,
-        )
+        // Unpack
+        self.start(Step::Unpack, &format!("unpacking into releases/{id}"));
+        let shared = &self.config().service.shared;
+        let unpacked = async {
+            server.unpack(&id, report).await?;
+            server.link_shared(&id, shared, report).await
+        }
         .await;
-    }
-    report.finish(step, "");
-
-    // Health
-    let step = plan.at(Step::Health);
-    report.start(step, "Health: waiting for the new release to settle");
-    match wait_healthy(&server, &config.health, report, step).await {
-        Ok(summary) => report.finish(step, summary),
-        Err(err) => {
-            return recover(
-                &server,
-                report,
-                step,
-                err,
-                previous.as_deref(),
-                Some(&id),
-                total,
-            )
-            .await;
+        if let Err(err) = unpacked {
+            let _ = server.discard(&id, report).await;
+            return self.stop(Step::Unpack, err);
         }
-    }
+        self.finish(
+            Step::Unpack,
+            if shared.is_empty() {
+                format!("releases/{id}")
+            } else {
+                format!(
+                    "releases/{id} · {} linked",
+                    count(shared.len(), "shared folder")
+                )
+            },
+        );
 
-    // Rotate
-    let step = plan.at(Step::Rotate);
-    report.start(step, "Rotate: tidying old releases");
-    match rotate(&server, deployable, report, step).await {
-        Ok(summary) => report.finish(step, summary),
-        Err(err) => {
-            report.log(LogKind::Warn, format!("rotation: {err:#}"));
-            report.warn(step, short(&err));
-        }
-    }
-    report.log(LogKind::Success, format!("{id} is live"));
-
-    // After: the local hooks, once it is live. A failure changes nothing.
-    if !config.hooks.after.is_empty() {
-        let step = plan.at(Step::After);
-        report.start(step, "After: running hooks.after on this machine");
-        let started = Instant::now();
-        match local_hooks(deployable, &config.hooks.after, Some(&id), report, step).await {
-            Ok(()) => report.finish(
-                step,
+        // Setup: in the new release, while the old one still serves.
+        let setup = &pipeline.setup;
+        if setup.run.server.is_empty() && setup.check.server.is_empty() {
+            self.skip(Step::Setup, "nothing to run");
+        } else {
+            self.start(Step::Setup, &format!("setting up releases/{id}"));
+            let started = Instant::now();
+            let place = Place::Release(id.clone());
+            let mut done = self
+                .remote(&server, place.clone(), Step::Setup, &setup.run.server)
+                .await;
+            if done.is_ok() {
+                done = self
+                    .remote(&server, place, Step::Setup, &setup.check.server)
+                    .await
+                    .map_err(|err| err.context("a setup check failed"));
+            }
+            if let Err(err) = done {
+                let _ = server.discard(&id, report).await;
+                let live = match &self.previous {
+                    Some(previous) => format!("; {previous} is still live"),
+                    None => String::new(),
+                };
+                report.log(LogKind::Info, format!("releases/{id} was removed{live}"));
+                return self.stop(Step::Setup, err);
+            }
+            self.finish(
+                Step::Setup,
                 format!(
                     "{} · {}",
-                    count(config.hooks.after.len(), "command"),
+                    count(setup.run.server.len() + setup.check.server.len(), "command"),
                     human::duration(started.elapsed())
                 ),
-            ),
+            );
+        }
+
+        // Switch
+        self.start(Step::Switch, "making it the current release");
+        let switched = async {
+            server.switch(&id, report).await?;
+            server.install_unit(report).await
+        }
+        .await;
+        if let Err(err) = switched {
+            return self.recover(&server, Step::Switch, err).await;
+        }
+        self.finish(Step::Switch, format!("current → {id}"));
+
+        // Restart
+        self.start(Step::Restart, &self.config().service.name);
+        if let Err(err) = server.restart(report).await {
+            return self.recover(&server, Step::Restart, err).await;
+        }
+        self.finish(Step::Restart, "");
+
+        // Health
+        self.start(Step::Health, "waiting for the new release to settle");
+        match self.health(&server).await {
+            Ok(summary) => self.finish(Step::Health, summary),
+            Err(err) => return self.recover(&server, Step::Health, err).await,
+        }
+
+        self.done(&server).await;
+        Ended::ok(&id)
+    }
+
+    /// Waits until the service is up, then runs the health checks, trying
+    /// them again until `timeout_secs` has passed.
+    async fn health(&self, server: &Server) -> Result<String> {
+        let health = &self.config().pipeline.health;
+        let index = self.at(Step::Health);
+        let started = Instant::now();
+        let summary = wait_healthy(server, health, self.report, index).await?;
+        let checks = &health.check;
+        if checks.server.is_empty() && checks.local.is_empty() {
+            return Ok(summary);
+        }
+        let deadline = started + Duration::from_secs(health.timeout_secs);
+        loop {
+            let mut passed = self
+                .remote(server, Place::Current, Step::Health, &checks.server)
+                .await;
+            if passed.is_ok() {
+                passed = self
+                    .local(Step::Health, Step::Health, None, &checks.local)
+                    .await;
+            }
+            match passed {
+                Ok(()) => {
+                    return Ok(format!(
+                        "{summary} · {} passed",
+                        count(checks.server.len() + checks.local.len(), "check")
+                    ));
+                }
+                Err(err) if Instant::now() + CHECK_RETRY < deadline => {
+                    let left = deadline.saturating_duration_since(Instant::now());
+                    self.report.log(
+                        LogKind::Warn,
+                        format!(
+                            "{err:#}; trying again in {}s ({}s left)",
+                            CHECK_RETRY.as_secs(),
+                            left.as_secs()
+                        ),
+                    );
+                    tokio::time::sleep(CHECK_RETRY).await;
+                }
+                Err(err) => {
+                    return Err(err.context(format!(
+                        "the health checks still fail after {}s",
+                        health.timeout_secs
+                    )));
+                }
+            }
+        }
+    }
+
+    /// The release is live: tidy old releases after a deploy, then run
+    /// `pipeline.done`. Nothing here changes what is live.
+    async fn done(&self, server: &Server) {
+        let report = self.report;
+        let id = self.release.clone().unwrap_or_default();
+        report.log(LogKind::Success, format!("{id} is live"));
+        let run = &self.config().pipeline.done.run;
+        if self.action == Action::Rollback && run.server.is_empty() && run.local.is_empty() {
+            self.skip(Step::Done, "nothing to run");
+            return;
+        }
+        self.start(
+            Step::Done,
+            if self.action == Action::Deploy {
+                "tidying old releases"
+            } else {
+                "running pipeline.done"
+            },
+        );
+        let index = self.at(Step::Done);
+        let mut notes = Vec::new();
+        let mut problem = None;
+        if self.action == Action::Deploy {
+            match rotate(server, self.deployable, report, index).await {
+                Ok(summary) => notes.push(summary),
+                Err(err) => {
+                    report.log(LogKind::Warn, format!("tidying: {err:#}"));
+                    problem = Some(err);
+                }
+            }
+        }
+        let mut ran = self
+            .remote(server, Place::Current, Step::Done, &run.server)
+            .await;
+        if ran.is_ok() {
+            ran = self.local(Step::Done, Step::Done, None, &run.local).await;
+        }
+        match ran {
+            Ok(()) if !(run.server.is_empty() && run.local.is_empty()) => {
+                notes.push(count(run.server.len() + run.local.len(), "command"));
+            }
+            Ok(()) => {}
             Err(err) => {
                 report.log(
                     LogKind::Warn,
-                    format!("hooks.after: {err:#}; {id} stays live"),
+                    format!("pipeline.done: {err:#}; {id} stays live"),
                 );
-                report.warn(step, short(&err));
+                problem = Some(err);
+            }
+        }
+        match problem {
+            Some(err) => report.warn(index, short(&err)),
+            None => self.finish(Step::Done, notes.join(" · ")),
+        }
+    }
+
+    /// Runs `pipeline.failed` when a step failed. Its own failure is only
+    /// logged.
+    pub(crate) async fn failed(&self, ended: &Ended) {
+        if !self.steps.contains(&Step::Failed) {
+            return;
+        }
+        let Some((step, error)) = &ended.failed else {
+            self.skip(Step::Failed, "nothing failed");
+            return;
+        };
+        self.start(
+            Step::Failed,
+            &format!("running pipeline.failed (after {})", step.key()),
+        );
+        let first = error.lines().next().unwrap_or_default();
+        let commands = &self.config().pipeline.failed.run.local;
+        match self.local(Step::Failed, *step, Some(first), commands).await {
+            Ok(()) => self.finish(Step::Failed, count(commands.len(), "command")),
+            Err(err) => {
+                self.report
+                    .log(LogKind::Warn, format!("pipeline.failed: {err:#}"));
+                self.report.warn(self.at(Step::Failed), short(&err));
             }
         }
     }
 
-    Outcome::Succeeded { release: id }
-}
+    /// After a failed switch, restart or health check: show the journal,
+    /// ask (or not) and put the previous release back.
+    async fn recover(&self, server: &Server, step: Step, err: anyhow::Error) -> Ended {
+        let report = self.report;
+        report.fail(self.at(step), short(&err));
+        report.log(LogKind::Error, format!("{err:#}"));
+        match server.journal().await {
+            Ok(lines) if !lines.is_empty() => {
+                report.log(LogKind::Info, "last journal lines:");
+                for line in lines {
+                    report.log(LogKind::Err, line);
+                }
+            }
+            _ => report.log(LogKind::Warn, "could not read the journal"),
+        }
+        let error = format!("{err:#}");
+        let id = self.release.clone().unwrap_or_default();
 
-/// Runs `hooks` one after another on this machine, in `build.cwd`.
-async fn local_hooks(
-    deployable: &Deployable,
-    hooks: &[String],
-    release: Option<&str>,
-    report: &Reporter,
-    step: usize,
-) -> Result<()> {
-    let dir = deployable.build_dir();
-    if !dir.is_dir() {
-        bail!("build.cwd {} does not exist", dir.display());
+        let Some(previous) = self.previous.clone().filter(|p| *p != id) else {
+            report.log(
+                LogKind::Warn,
+                "nothing was live before, so there is nothing to roll back to",
+            );
+            self.skip_rest(step, "stopped");
+            return Ended {
+                outcome: Outcome::Failed {
+                    error: error.clone(),
+                },
+                failed: Some((step, error)),
+            };
+        };
+        if !self.should_roll_back(step, &err, &previous).await {
+            report.log(
+                LogKind::Warn,
+                format!(
+                    "{id} stays live as you chose; roll back any time from the Releases screen"
+                ),
+            );
+            self.skip_rest(step, "kept as it is");
+            return Ended {
+                outcome: Outcome::Kept {
+                    release: id,
+                    error: error.clone(),
+                },
+                failed: Some((step, error)),
+            };
+        }
+        self.skip_rest(step, "rolled back");
+        report.log(LogKind::Warn, format!("rolling back to {previous}"));
+        let restored = async {
+            restore(server, &previous, report).await?;
+            server.restart(report).await?;
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            let probe = server.probe(None).await?;
+            if probe.state != "active" {
+                bail!(
+                    "{previous} did not come back either: systemd says {}",
+                    probe.state
+                );
+            }
+            Ok(())
+        }
+        .await;
+        let outcome = match restored {
+            Ok(()) => {
+                // A deploy's failed release goes; a rollback's target was an
+                // old release and stays.
+                if self.action == Action::Deploy {
+                    let _ = server.discard(&id, report).await;
+                }
+                report.log(LogKind::Success, format!("{previous} is live again"));
+                Outcome::RolledBack {
+                    error: error.clone(),
+                    to: previous,
+                }
+            }
+            Err(rollback_err) => {
+                report.log(LogKind::Error, format!("rollback failed: {rollback_err:#}"));
+                Outcome::RollbackFailed {
+                    error: error.clone(),
+                    rollback_error: format!("{rollback_err:#}"),
+                }
+            }
+        };
+        Ended {
+            outcome,
+            failed: Some((step, error)),
+        }
     }
-    let env = build::local_env(deployable, release);
-    for (done, hook) in hooks.iter().enumerate() {
-        report.progress(
-            step,
-            done as u64,
-            hooks.len() as u64,
-            Unit::Items,
-            hook.trim(),
+
+    /// `pipeline.health.rollback`: auto rolls back; ask waits for an answer
+    /// and rolls back when none comes in time.
+    async fn should_roll_back(&self, step: Step, err: &anyhow::Error, previous: &str) -> bool {
+        let report = self.report;
+        if self.config().pipeline.health.rollback == Rollback::Auto {
+            return true;
+        }
+        let id = self.release.clone().unwrap_or_default();
+        report.log(
+            LogKind::Info,
+            format!(
+                "asking whether to roll back to {previous}; with no answer in {ROLLBACK_ANSWER_SECS}s it rolls back"
+            ),
         );
-        build::run_local(&CommandLine::Shell(hook.clone()), &dir, &env, report, step).await?;
+        let answer = report.ask_rollback(
+            &id,
+            previous,
+            step.name(),
+            &short(err),
+            ROLLBACK_ANSWER_SECS,
+        );
+        match tokio::time::timeout(Duration::from_secs(ROLLBACK_ANSWER_SECS), answer).await {
+            Ok(Ok(true)) => {
+                report.log(LogKind::Info, "you chose to roll back");
+                true
+            }
+            Ok(Ok(false)) => {
+                report.log(LogKind::Warn, format!("you chose to keep {id}"));
+                false
+            }
+            // Nobody is there to answer.
+            Ok(Err(_)) => true,
+            Err(_) => {
+                report.log(
+                    LogKind::Warn,
+                    format!("no answer in {ROLLBACK_ANSWER_SECS}s; rolling back"),
+                );
+                true
+            }
+        }
     }
-    Ok(())
 }
 
 async fn preflight(
@@ -454,9 +887,9 @@ async fn preflight(
     pool: &Pool,
     report: &Reporter,
     step: usize,
-) -> Result<(Server, Facts)> {
+) -> Result<(Server, Facts, String)> {
     let config = &deployable.config;
-    check_local(deployable, report)?;
+    check_local(deployable)?;
     let endpoint = &deployable.endpoint;
     let address = if endpoint.is_alias() {
         format!(" → {}", endpoint.address())
@@ -483,9 +916,10 @@ async fn preflight(
             return Err(err);
         }
     };
-    let server = Server::new(session, &config.remote);
+    let server = Server::new(session, &config.service);
     let tools = deployable.required_tools();
     let facts = server.facts(&endpoint.user, &tools).await?;
+    report.progress(step, 1, 2, Unit::Items, "server checked");
 
     let glibc = facts
         .glibc
@@ -513,7 +947,7 @@ async fn preflight(
         ),
     );
 
-    let dir = &config.remote.dir;
+    let dir = &config.service.dir;
     let user = &endpoint.user;
     if !facts.dir_exists || !facts.dir_writable {
         setup_hint(
@@ -541,7 +975,7 @@ async fn preflight(
             LogKind::Info,
             format!(
                 "or add this line yourself with: sudo visudo -f {}",
-                setup::sudoers_file(&config.remote.service)
+                setup::sudoers_file(&config.service.name)
             ),
         );
         report.log(LogKind::Command, facts.sudoers_line.clone());
@@ -556,9 +990,8 @@ async fn preflight(
     {
         bail!("only {} free on the server", human::bytes(free));
     }
-
-    report.finish(step, format!("{} · {glibc} · {free} free", facts.arch));
-    Ok((server, facts))
+    let summary = format!("{} · {glibc} · {free} free", facts.arch);
+    Ok((server, facts, summary))
 }
 
 /// Every program the deploy needs is on the server, and the one the
@@ -573,7 +1006,7 @@ fn check_tools(deployable: &Deployable, facts: &Facts, report: &Reporter) -> Res
     }
     if !missing.is_empty() {
         bail!(
-            "{} cannot find {} on the server; install {} or fix remote.start and remote.requires",
+            "{} cannot find {} on the server; install {} or fix service.start and pipeline.preflight.requires",
             deployable.endpoint.user,
             missing.join(", "),
             if missing.len() == 1 { "it" } else { "them" }
@@ -612,45 +1045,51 @@ pub(crate) fn setup_hint(deployable: &Deployable, login: &Login, report: &Report
     report.log(LogKind::Command, setup::command(deployable, login).command);
 }
 
-/// What can be checked on this machine before connecting or compiling: the
-/// bundle files, the build folder and the unit template.
-fn check_local(deployable: &Deployable, report: &Reporter) -> Result<()> {
-    deployable.check_bundle()?;
-    for (entry, _) in deployable.bundle_status() {
-        let path = deployable.folder.join(&entry);
-        let what = if path.is_dir() {
-            "folder".to_string()
-        } else {
-            std::fs::metadata(&path)
-                .map(|m| human::bytes(m.len()))
-                .unwrap_or_default()
-        };
-        report.log(LogKind::Success, format!("bundle {entry} ({what})"));
+/// What can be checked on this machine before connecting: the project
+/// folder and the unit template.
+fn check_local(deployable: &Deployable) -> Result<()> {
+    let project = deployable.project_dir();
+    if !project.is_dir() {
+        bail!(
+            "the project folder {} does not exist (project: {})",
+            project.display(),
+            deployable.config.project
+        );
     }
-    let build_dir = deployable.build_dir();
-    if !build_dir.is_dir() {
-        bail!("build.cwd {} does not exist", build_dir.display());
-    }
-    let sample = crate::release::ReleaseName::new("0.0.0", "check", false, chrono::Utc::now());
+    let sample = ReleaseName::new("0.0.0", "check", false, chrono::Utc::now());
     unit::render_for(deployable, &sample, None)?;
     Ok(())
 }
 
-/// Checks what the build produced: every `build.files` entry exists, and the
-/// binary can run on the server. Returns a short summary.
+/// Checks what the build produced: the binary can run on the server, and
+/// every project pattern in `pipeline.pack.files` finds something.
 fn check_build(deployable: &Deployable, facts: &Facts, report: &Reporter) -> Result<String> {
-    let files = &deployable.config.build.files;
-    deployable.check_files()?;
     let mut summary = Vec::new();
     if let Some(binary) = deployable.binary_path() {
         summary.push(check_binary(&binary, facts, report)?);
     }
-    if !files.is_empty() {
+    let items = files::walk_source(deployable, Source::Project)?;
+    if !items.is_empty() {
+        let count_files = items
+            .values()
+            .filter(|i| matches!(i.kind, Kind::File { .. }))
+            .count();
         report.log(
             LogKind::Success,
-            format!("build.files: {}", files.join(", ")),
+            format!(
+                "project files: {} from {}",
+                count(count_files, "file"),
+                deployable
+                    .config
+                    .pipeline
+                    .pack
+                    .files
+                    .include
+                    .project
+                    .join(", ")
+            ),
         );
-        summary.push(count(files.len(), "build output"));
+        summary.push(count(count_files, "file"));
     }
     Ok(summary.join(" · "))
 }
@@ -691,7 +1130,7 @@ fn check_binary(binary: &Path, facts: &Facts, report: &Reporter) -> Result<Strin
 /// times in a row, it crash-loops, or the timeout passes.
 pub(crate) async fn wait_healthy(
     server: &Server,
-    health: &HealthConfig,
+    health: &crate::config::Health,
     report: &Reporter,
     step: usize,
 ) -> Result<String> {
@@ -716,7 +1155,7 @@ pub(crate) async fn wait_healthy(
             bail!("systemd reports the service as failed");
         }
         if probe.http == HttpCheck::NoClient {
-            bail!("health.url is set, but the server has neither curl nor wget");
+            bail!("pipeline.health.url is set, but the server has neither curl nor wget");
         }
         streak = if probe.healthy() { streak + 1 } else { 0 };
 
@@ -762,75 +1201,6 @@ pub(crate) async fn wait_healthy(
     }
 }
 
-/// After a failed restart or health check: show the journal, put
-/// `previous` back, and drop the failed release if given.
-pub(crate) async fn recover(
-    server: &Server,
-    report: &Reporter,
-    step: usize,
-    err: anyhow::Error,
-    previous: Option<&str>,
-    discard: Option<&str>,
-    total: usize,
-) -> Outcome {
-    report.fail(step, short(&err));
-    report.log(LogKind::Error, format!("{err:#}"));
-    match server.journal().await {
-        Ok(lines) if !lines.is_empty() => {
-            report.log(LogKind::Info, "last journal lines:");
-            for line in lines {
-                report.log(LogKind::Err, line);
-            }
-        }
-        _ => report.log(LogKind::Warn, "could not read the journal"),
-    }
-    skip_rest(report, step, total, "rolled back");
-
-    let Some(previous) = previous else {
-        report.log(
-            LogKind::Warn,
-            "nothing was live before, so there is no release to roll back to",
-        );
-        return Outcome::Failed {
-            error: format!("{err:#}"),
-        };
-    };
-    report.log(LogKind::Warn, format!("rolling back to {previous}"));
-    let restored = async {
-        restore(server, previous, report).await?;
-        server.restart(report).await?;
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        let probe = server.probe(None).await?;
-        if probe.state != "active" {
-            bail!(
-                "{previous} did not come back either: systemd says {}",
-                probe.state
-            );
-        }
-        Ok(())
-    }
-    .await;
-    match restored {
-        Ok(()) => {
-            if let Some(id) = discard {
-                let _ = server.discard(id, report).await;
-            }
-            report.log(LogKind::Success, format!("{previous} is live again"));
-            Outcome::RolledBack {
-                error: format!("{err:#}"),
-                to: previous.to_string(),
-            }
-        }
-        Err(rollback_err) => {
-            report.log(LogKind::Error, format!("rollback failed: {rollback_err:#}"));
-            Outcome::RollbackFailed {
-                error: format!("{err:#}"),
-                rollback_error: format!("{rollback_err:#}"),
-            }
-        }
-    }
-}
-
 /// Points `current` back at `id` and reinstalls its unit.
 async fn restore(server: &Server, id: &str, report: &Reporter) -> Result<()> {
     server.switch(id, report).await?;
@@ -843,7 +1213,7 @@ async fn rotate(
     report: &Reporter,
     step: usize,
 ) -> Result<String> {
-    let keep = deployable.config.releases;
+    let keep = deployable.config.service.keep;
     let listing = server.list().await?;
     let plan = plan_rotation(&listing, keep);
     if plan.is_empty() {
@@ -852,7 +1222,7 @@ async fn rotate(
             .iter()
             .filter(|e| e.kind == crate::remote::Kind::Open)
             .count();
-        return Ok(format!("{open}/{} open, nothing to tidy", keep.open));
+        return Ok(format!("{open}/{} open", keep.open));
     }
     let total = plan.len() as u64;
     let mut done = 0;
@@ -877,28 +1247,12 @@ async fn rotate(
         server.drop_backup(id, report).await?;
         done += 1;
     }
-    report.progress(step, done, total, Unit::Items, "done");
+    report.progress(step, done, total, Unit::Items, "tidied");
     Ok(format!(
         "{} compressed · {} deleted",
         plan.compress.len(),
         plan.drop_open.len() + plan.drop_backup.len()
     ))
-}
-
-/// A failure before anything live changed.
-fn stop(report: &Reporter, step: usize, total: usize, err: anyhow::Error) -> Outcome {
-    report.fail(step, short(&err));
-    report.log(LogKind::Error, format!("{err:#}"));
-    skip_rest(report, step, total, "stopped");
-    Outcome::Failed {
-        error: format!("{err:#}"),
-    }
-}
-
-fn skip_rest(report: &Reporter, failed: usize, total: usize, why: &str) {
-    for step in failed + 1..total {
-        report.skip(step, why);
-    }
 }
 
 /// `1 command`, `3 commands`.

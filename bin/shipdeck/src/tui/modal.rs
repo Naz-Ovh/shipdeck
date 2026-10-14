@@ -11,6 +11,11 @@ use shipdeck_engine::release::ReleaseName;
 use shipdeck_engine::remote::Kind;
 use shipdeck_engine::setup::SetupCommand;
 
+use std::time::Instant;
+
+use shipdeck_engine::config::{ROLLBACK_ANSWER_SECS, Rollback};
+use shipdeck_engine::deploy::report::RollbackQuestion;
+
 use super::app::{App, Live, Modal};
 use super::theme::{self, ACCENT, ERR, INK, MUTED, SURFACE, TEXT, VIOLET, WARN};
 
@@ -19,7 +24,16 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
         return;
     };
     let (title, color, mut lines, buttons) = match modal {
-        Modal::ConfirmDeploy { deployable } => confirm_deploy(app, *deployable),
+        Modal::ConfirmDeploy {
+            deployable,
+            missing,
+        } => confirm_deploy(app, *deployable, missing.as_deref()),
+        Modal::AskRollback {
+            deployable,
+            question,
+            deadline,
+            ..
+        } => ask_rollback(app, *deployable, question, *deadline),
         Modal::ConfirmRollback {
             deployable,
             target,
@@ -42,7 +56,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
                     theme::text(),
                 )),
             ],
-            vec![("y", "quit anyway"), ("n", "keep running")],
+            vec![("y", "quit anyway".into()), ("n", "keep running".into())],
         ),
         Modal::Secret {
             title,
@@ -73,7 +87,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
                     theme::faint(),
                 )),
             ],
-            vec![("⏎", "log in"), ("esc", "cancel")],
+            vec![("⏎", "log in".into()), ("esc", "cancel".into())],
         ),
         Modal::TrustHost {
             host,
@@ -101,7 +115,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
                     theme::muted(),
                 )),
             ],
-            vec![("y", "trust and connect"), ("n", "refuse")],
+            vec![("y", "trust and connect".into()), ("n", "refuse".into())],
         ),
     };
 
@@ -151,12 +165,13 @@ type Dialog = (
     String,
     Color,
     Vec<Line<'static>>,
-    Vec<(&'static str, &'static str)>,
+    Vec<(&'static str, String)>,
 );
 
-fn confirm_deploy(app: &App, index: usize) -> Dialog {
+fn confirm_deploy(app: &App, index: usize, missing: Option<&str>) -> Dialog {
     let deployable = &app.deployables[index];
     let config = &deployable.config;
+    let pipeline = &config.pipeline;
     let live = match &app.live[index] {
         Live::Ready(status) => status
             .current
@@ -169,58 +184,109 @@ fn confirm_deploy(app: &App, index: usize) -> Dialog {
             .unwrap_or_else(|| "nothing yet".into()),
         _ => "unknown until preflight".into(),
     };
-    let missing: Vec<String> = deployable
-        .bundle_status()
-        .into_iter()
-        .filter(|(_, exists)| !exists)
-        .map(|(entry, _)| entry)
-        .collect();
+    let build = match pipeline.build.run.local.0.as_slice() {
+        [] => "nothing to build".to_string(),
+        [one] => one.trim().to_string(),
+        [first, rest @ ..] => format!("{} (+{} more)", first.trim(), rest.len()),
+    };
+    let failing = match pipeline.health.rollback {
+        Rollback::Ask => format!(
+            "If it fails after the switch, shipdeck asks before putting the previous release back, \
+             and does so on its own after {ROLLBACK_ANSWER_SECS} s."
+        ),
+        Rollback::Auto => {
+            "If it fails after the switch, the previous release is put back at once.".into()
+        }
+    };
 
     let mut lines = vec![
         Line::from(Span::styled(config.name.clone(), theme::bold(ACCENT))),
         Line::default(),
         row(
             "to",
-            format!("{}:{}", deployable.endpoint.label(), config.remote.dir),
+            format!("{}:{}", deployable.endpoint.label(), config.service.dir),
         ),
-        row("service", config.remote.service.clone()),
-        row(
-            "build",
-            config
-                .build
-                .command
-                .as_ref()
-                .map(|command| command.display())
-                .unwrap_or_else(|| "nothing to build".into()),
-        ),
+        row("service", config.service.name.clone()),
+        row("build", build),
         row("live now", live),
         Line::default(),
         Line::from(Span::styled(
-            "The new release goes live after a restart (about 1–2 s of downtime). \
-             If it fails its health check, the previous release is put back automatically.",
+            format!(
+                "The new release goes live after a restart (about 1–2 s of downtime). {failing}"
+            ),
             theme::muted(),
         )),
     ];
-    if !missing.is_empty() {
+    if let Some(missing) = missing {
         lines.push(Line::default());
-        let text = if config.hooks.before.is_empty() {
-            format!(
-                "Missing bundle files: {}. The deploy stops at Preflight, before connecting or building.",
-                missing.join(", ")
-            )
+        let when = if pipeline.preflight.run.local.is_empty() {
+            "The deploy will stop at Preflight, before building."
         } else {
-            format!(
-                "Missing bundle files: {}. hooks.before must create them, or the deploy stops at Preflight.",
-                missing.join(", ")
-            )
+            "pipeline.preflight.run.local must create them, or the deploy stops at Preflight."
         };
-        lines.push(Line::from(Span::styled(text, Style::new().fg(ERR))));
+        lines.push(Line::from(Span::styled(
+            format!("{missing}. {when}"),
+            Style::new().fg(ERR),
+        )));
     }
     (
         "Deploy".into(),
         ACCENT,
         lines,
-        vec![("y", "deploy"), ("n", "cancel")],
+        vec![("y", "deploy".into()), ("n", "cancel".into())],
+    )
+}
+
+/// How the rollback question names the two releases: by version, with the
+/// commit and build time when both have the same version.
+fn names(new: &str, old: &str) -> (String, String) {
+    let short = |id: &str| {
+        ReleaseName::parse(id)
+            .map(|n| format!("v{}", n.version))
+            .unwrap_or_else(|| id.to_string())
+    };
+    if short(new) != short(old) {
+        return (short(new), short(old));
+    }
+    let long = |id: &str| {
+        ReleaseName::parse(id)
+            .map(|n| format!("v{} ({} {})", n.version, n.git, n.stamp.format("%H:%M:%S")))
+            .unwrap_or_else(|| id.to_string())
+    };
+    (long(new), long(old))
+}
+
+fn ask_rollback(app: &App, index: usize, question: &RollbackQuestion, deadline: Instant) -> Dialog {
+    let slug = &app.deployables[index].slug;
+    let (new, old) = names(&question.release, &question.previous);
+    let left = deadline.saturating_duration_since(Instant::now()).as_secs() + 1;
+    let left = left.min(question.seconds);
+    let lines = vec![
+        Line::from(vec![
+            Span::styled(
+                format!("{new} failed at {}: ", question.step),
+                theme::bold(TEXT),
+            ),
+            Span::styled(question.error.clone(), Style::new().fg(ERR)),
+        ]),
+        Line::from(Span::styled(
+            format!("{old} was live before it."),
+            theme::text(),
+        )),
+        Line::default(),
+        Line::from(vec![
+            Span::styled(format!("Roll back to {old}?"), theme::bold(WARN)),
+            Span::styled(format!("      rolling back in {left}s"), theme::muted()),
+        ]),
+    ];
+    (
+        format!("{slug} · {} failed", question.step.to_lowercase()),
+        ERR,
+        lines,
+        vec![
+            ("y", "roll back now".into()),
+            ("n", format!("keep {new} live")),
+        ],
     )
 }
 
@@ -260,7 +326,7 @@ fn confirm_rollback(
         "Roll back".into(),
         WARN,
         lines,
-        vec![("y", "roll back"), ("n", "cancel")],
+        vec![("y", "roll back".into()), ("n", "cancel".into())],
     )
 }
 
@@ -283,8 +349,8 @@ fn setup_dialog(app: &App, index: usize, setup: &SetupCommand) -> Dialog {
                  for {} (checked by visudo first). Running it again changes nothing already \
                  in place. Not root? Put sudo before bash.",
                 env!("CARGO_PKG_VERSION"),
-                config.remote.dir,
-                config.remote.service
+                config.service.dir,
+                config.service.name
             ),
             theme::muted(),
         )),
@@ -312,7 +378,7 @@ fn setup_dialog(app: &App, index: usize, setup: &SetupCommand) -> Dialog {
         "Server setup".into(),
         ACCENT,
         lines,
-        vec![("c", "copy"), ("⏎", "close")],
+        vec![("c", "copy".into()), ("⏎", "close".into())],
     )
 }
 

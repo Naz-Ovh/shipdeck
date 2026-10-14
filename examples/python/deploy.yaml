@@ -1,31 +1,34 @@
-# A Python app: nothing to build; each release gets its own virtualenv.
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
+# A Python app: the source ships as it is; the server builds its virtualenv.
 name: Reports (prod)
+project: ../../../reports
 
 ssh:
   host: prod
   user: deploy
 
-hooks:
-  before:
-    - python3 -m pytest -q
-  server:
-    - python3 -m venv .venv
-    - .venv/bin/pip install --quiet -r requirements.txt
-    # Migrations see the release's .env when it is loaded first:
-    # - set -a && . ./.env && set +a && .venv/bin/python -m app.migrate
-
-build:
-  cwd: ../../../reports
-  # No command: the files ship as they are.
-  files: [app, requirements.txt]
-  version_from: ../../../reports/pyproject.toml
-
-remote:
+service:
+  name: reports
   dir: /opt/reports
-  service: reports
   start: .venv/bin/python -m app
-  requires: [python3]
   env_file: .env
 
-bundle:
-  - .env
+pipeline:
+  preflight:
+    requires: [python3]
+    run:
+      local: python3 -m pytest -q
+  pack:
+    files:
+      include:
+        project: [.]              # the whole project...
+        deploy: [.env]
+      exclude:
+        project: [tests, "**/__pycache__", .venv, "**/*.pyc"]   # ...but these
+  setup:
+    run:
+      server:
+        - python3 -m venv .venv
+        - .venv/bin/pip install -q -r requirements.txt
+    check:
+      server: .venv/bin/python -c "import app"

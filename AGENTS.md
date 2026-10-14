@@ -12,8 +12,10 @@ rolls back any release. Design and decisions: `docs/plan.md`. Usage: `README.md`
 
 ## Layout
 
-- `crates/engine/` (`shipdeck-engine`): `config` (deploy.yaml), `build`
-  (version, the build and local hooks, ELF checks), `bundle` (tar.gz, unit), `ssh` (sessions,
+- `crates/engine/` (`shipdeck-engine`): `config` (deploy.yaml: types that
+  are the JSON Schema, the line-aware YAML tree, the launch check, globs),
+  `build` (version, local commands, ELF checks), `bundle` (picking files,
+  tar.gz, unit), `ssh` (sessions,
   login, host keys, `~/.ssh/config` aliases), `remote` (server scripts),
   `release` (ids, release.json), `setup` (the server setup command),
   `deploy` (the deploy and rollback flows, `report` for progress).
@@ -22,10 +24,15 @@ rolls back any release. Design and decisions: `docs/plan.md`. Usage: `README.md`
 ## Code
 
 - Every value that reaches a remote shell is either validated in
-  `config::DeployConfig::validate`, checked with `release::is_safe_id`, or
-  quoted with `ssh::sh_quote`. Keep it that way. The one exception is
-  `hooks.server`: shell commands by design, written by whoever deploys and
-  run as the deploy user.
+  `config/rules.rs`, checked with `release::is_safe_id`, or quoted with
+  `ssh::sh_quote`. Keep it that way. The one exception is the `server`
+  commands in `pipeline`: shell by design, written by whoever deploys and run
+  as the deploy user.
+- A config mistake is a `config::Problem` with the line it is on and a hint,
+  never a bare string: shipdeck reports them all before it starts.
+- The config types are the schema. Every field needs a doc comment (editors
+  show it); after a change run `cargo run -q -p shipdeck -- --schema >
+  deploy.schema.json` (a test fails until you do).
 - Remote scripts are POSIX `sh`; they run through `sh -c`, whatever the login shell.
 - The sudo commands in `remote::sudo_commands` are a contract with the sudoers
   line people install. Changing one breaks every existing server, and
@@ -35,8 +42,9 @@ rolls back any release. Design and decisions: `docs/plan.md`. Usage: `README.md`
   doing anything; keep it that way, and tag every release (`v<version>`).
 - Tests and docs use neutral examples (`my-api`, `203.0.113.x`), never real
   hosts, IPs or project names.
-- `examples/<kind>/deploy.yaml` must keep parsing (`config_test.rs` checks);
-  a new field goes into the README table and an example.
+- `examples/<kind>/deploy.yaml` must keep parsing and start with the schema
+  line for this version (`config_test.rs` checks); a new field goes into the
+  README table and an example.
 - Release ids and the `current`/`releases`/`backups`/`shared` layout are a
   contract with servers already deployed to. Change them only on purpose.
 - Tests live next to the code in `<module>_test.rs`:

@@ -8,9 +8,13 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use tokio::sync::mpsc::unbounded_channel;
 
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use shipdeck_engine::config::{DeployConfig, Deployable, Discovery, parse};
 use shipdeck_engine::deploy::deploy_step_names;
-use shipdeck_engine::deploy::report::{LogKind, OpEvent, OpUpdate, Outcome, StepState, Unit};
+
+use shipdeck_engine::deploy::report::{
+    LogKind, OpEvent, OpUpdate, Outcome, RollbackQuestion, StepState, Unit,
+};
 use shipdeck_engine::release::ReleaseName;
 use shipdeck_engine::remote::{Kind, Listing, ReleaseEntry, Status};
 use shipdeck_engine::setup;
@@ -31,40 +35,69 @@ fn deployable(slug: &str, name: &str, host: &str) -> Deployable {
     let yaml = format!(
         "
 name: {name}
+project: ../../../Server
 ssh: {{ host: {alias}, user: deploy }}
-build:
-  cwd: ../../../Server
-  command: [cargo, zigbuild, --release, -p, my-api]
-  binary: target/release/server
-remote: {{ dir: /opt/{slug}, service: {slug}, args: [-E=.env] }}
-bundle: [.env, files/]
-health: {{ url: \"http://127.0.0.1:6520/\", timeout_secs: 20 }}
+service: {{ name: {slug}, dir: /opt/{slug}, start: ./server -E=.env }}
+pipeline:
+  build:
+    run:
+      local: cargo zigbuild --release -p my-api
+  pack:
+    binary: target/release/server
+    files:
+      include:
+        deploy: [.env, files/]
+  health: {{ url: \"http://127.0.0.1:6520/\", timeout_secs: 20 }}
 ",
         alias = slug.split('-').next().unwrap()
     );
     with_config(slug, host, parse(&yaml).unwrap())
 }
 
-/// A Node app: build output instead of a binary, and every kind of hook.
+/// A Node app: build output instead of a binary, and commands in most steps.
 fn node_app() -> Deployable {
     let config = parse(
         "
 name: Web (prod)
+project: ../../../web
 ssh: { host: web, user: deploy }
-hooks:
-  before: [npm test]
-  server: [npm ci --omit=dev]
-  after: [./notify.sh]
-build:
-  cwd: ../../../web
-  command: npm ci && npm run build
-  files: [dist, package.json, package-lock.json]
-remote:
+service:
+  name: web
   dir: /opt/web
-  service: web
   start: node dist/main.js
-  requires: [npm]
-bundle: [.env]
+  env_file: .env
+  shared: [uploads]
+pipeline:
+  preflight:
+    requires: [npm]
+    run:
+      server: pg_isready -q
+      local: npm test
+  build:
+    run:
+      local: [npm ci, npm run build]
+  pack:
+    files:
+      include:
+        project: [dist, package.json, package-lock.json]
+        deploy: [.env]
+      exclude:
+        project: [\"**/*.map\"]
+  setup:
+    run:
+      server: [npm ci --omit=dev, npm run migrate]
+    check:
+      server: node --check dist/main.js
+  health:
+    url: http://127.0.0.1:3000/health
+    check:
+      local: curl -fsS https://web.example.com/health
+  done:
+    run:
+      local: ./notify.sh \"web $SHIPDECK_VERSION is live\"
+  failed:
+    run:
+      local: ./notify.sh \"failed at $SHIPDECK_STEP\"
 ",
     )
     .unwrap();
@@ -101,10 +134,7 @@ fn app() -> App {
             deployable("api-beta", "My API (beta)", "203.0.113.12"),
             node_app(),
         ],
-        broken: vec![(
-            PathBuf::from("scripts/deploy/old"),
-            "in scripts/deploy/old/deploy.yaml: unknown field `colour` at line 8, column 1".into(),
-        )],
+        problems: Vec::new(),
     };
     let pool = Arc::new(Pool::new(Login::Auto, questions));
     let mut app = App::new(
@@ -264,7 +294,7 @@ async fn draws_every_screen_at_common_and_small_sizes() {
                 detail: Some("11.8 MiB in 2.8s".into()),
             },
         );
-        for step in 4..6 {
+        for step in 4..8 {
             send(
                 &mut app,
                 OpEvent::Step {
@@ -285,7 +315,7 @@ async fn draws_every_screen_at_common_and_small_sizes() {
         send(
             &mut app,
             OpEvent::Step {
-                step: 6,
+                step: 8,
                 state: StepState::Running,
                 detail: None,
             },
@@ -293,7 +323,7 @@ async fn draws_every_screen_at_common_and_small_sizes() {
         send(
             &mut app,
             OpEvent::Step {
-                step: 6,
+                step: 8,
                 state: StepState::Failed,
                 detail: Some("the service crashed and was restarted 1 time(s)".into()),
             },
@@ -301,7 +331,7 @@ async fn draws_every_screen_at_common_and_small_sizes() {
         send(
             &mut app,
             OpEvent::Step {
-                step: 7,
+                step: 9,
                 state: StepState::Skipped,
                 detail: Some("rolled back".into()),
             },
@@ -333,7 +363,13 @@ async fn draws_every_screen_at_common_and_small_sizes() {
         app.modals.clear();
 
         app.screen = Screen::Deployables;
-        app.modals.push_back(Modal::ConfirmDeploy { deployable: 0 });
+        app.modals.push_back(Modal::ConfirmDeploy {
+            deployable: 0,
+            missing: Some(
+                "pipeline.pack.files.include.deploy in scripts/deploy/api-prod: .env (not found)"
+                    .into(),
+            ),
+        });
         render(&mut app, width, height, "confirm-deploy");
         app.modals.clear();
 
@@ -367,7 +403,7 @@ async fn draws_every_screen_at_common_and_small_sizes() {
 }
 
 #[tokio::test]
-async fn draws_an_app_with_hooks() {
+async fn draws_a_node_pipeline_and_the_rollback_question() {
     for (width, height) in [(160, 46), (100, 30), (60, 18)] {
         let mut app = app();
         app.list.select(Some(3));
@@ -377,27 +413,30 @@ async fn draws_an_app_with_hooks() {
         assert_eq!(
             steps,
             [
-                "Before",
                 "Preflight",
                 "Build",
                 "Pack",
                 "Upload",
-                "Prepare",
+                "Unpack",
+                "Setup",
                 "Switch",
                 "Restart",
                 "Health",
-                "Rotate",
-                "After"
+                "Done",
+                "Failed"
             ]
         );
         app.op = Some(Operation::new(1, OpKind::Deploy, 3, &steps));
         app.screen = Screen::Operation;
         for (step, detail) in [
-            (0, "1 command · 4.1s"),
-            (1, "x86_64 · glibc 2.39 · 41.2 GiB free"),
-            (2, "3 build outputs · 12.0s"),
-            (3, "412 files · 3.1 MiB → 0.9 MiB"),
-            (4, "0.9 MiB in 0.6s"),
+            (0, "x86_64 · glibc 2.39 · 41.2 GiB free"),
+            (1, "412 files · 12.0s"),
+            (2, "412 files · 3.1 MiB → 0.9 MiB"),
+            (3, "0.9 MiB in 0.6s"),
+            (
+                4,
+                "releases/v1.4.0-77aa001-20261014.160501 · 1 shared folder linked",
+            ),
         ] {
             send(
                 &mut app,
@@ -421,7 +460,7 @@ async fn draws_an_app_with_hooks() {
             OpEvent::Progress {
                 step: 5,
                 done: 0,
-                total: 1,
+                total: 3,
                 unit: Unit::Items,
                 label: "npm ci --omit=dev".into(),
             },
@@ -435,8 +474,99 @@ async fn draws_an_app_with_hooks() {
                         .into(),
             },
         );
-        render(&mut app, width, height, "node-prepare");
+        render(&mut app, width, height, "node-setup");
+
+        for step in 5..8 {
+            send(
+                &mut app,
+                OpEvent::Step {
+                    step,
+                    state: StepState::Done,
+                    detail: None,
+                },
+            );
+        }
+        send(
+            &mut app,
+            OpEvent::Step {
+                step: 8,
+                state: StepState::Failed,
+                detail: Some("not healthy after 20s: the health url said: 502".into()),
+            },
+        );
+        let (reply, answer) = tokio::sync::oneshot::channel();
+        send(
+            &mut app,
+            OpEvent::AskRollback(RollbackQuestion {
+                release: "v1.4.0-77aa001-20261014.160501".into(),
+                previous: "v1.3.9-5d6e7f8-20261013.090000".into(),
+                step: "Health",
+                error: "not healthy after 20s: the health url said: 502".into(),
+                seconds: 30,
+                reply,
+            }),
+        );
+        assert!(matches!(
+            app.modals.front(),
+            Some(Modal::AskRollback { .. })
+        ));
+        render(&mut app, width, height, "ask-rollback");
+
+        // `n` keeps the new release and answers the deploy.
+        app.on_event(Event::Key(KeyEvent::new(
+            KeyCode::Char('n'),
+            KeyModifiers::NONE,
+        )));
+        assert!(app.modals.is_empty());
+        assert_eq!(answer.await, Ok(false));
+
+        send(
+            &mut app,
+            OpEvent::Step {
+                step: 9,
+                state: StepState::Skipped,
+                detail: Some("kept as it is".into()),
+            },
+        );
+        send(
+            &mut app,
+            OpEvent::Step {
+                step: 10,
+                state: StepState::Done,
+                detail: Some("1 command".into()),
+            },
+        );
+        send(
+            &mut app,
+            OpEvent::Finished(Outcome::Kept {
+                release: "v1.4.0-77aa001-20261014.160501".into(),
+                error: "not healthy after 20s: the health url said: 502".into(),
+            }),
+        );
+        render(&mut app, width, height, "node-kept");
     }
+}
+
+#[tokio::test]
+async fn an_unanswered_question_closes_when_its_time_is_up() {
+    let mut app = app();
+    let steps = deploy_step_names(&app.deployables[0].config);
+    app.op = Some(Operation::new(1, OpKind::Deploy, 0, &steps));
+    let (reply, _answer) = tokio::sync::oneshot::channel();
+    send(
+        &mut app,
+        OpEvent::AskRollback(RollbackQuestion {
+            release: RELEASES[0].into(),
+            previous: RELEASES[1].into(),
+            step: "Restart",
+            error: "restart failed".into(),
+            seconds: 0,
+            reply,
+        }),
+    );
+    assert_eq!(app.modals.len(), 1);
+    app.on_tick();
+    assert!(app.modals.is_empty());
 }
 
 #[tokio::test]

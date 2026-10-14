@@ -1,28 +1,97 @@
 use super::*;
 
-const SAMPLE: &str = "
+const SAMPLE: &str = "\
 name: Demo
 ssh: { host: example.com, user: deploy }
-build:
-  command: [cargo, build]
-  binary: target/release/demo
-remote: { dir: /opt/demo, service: demo }
+service: { name: demo, dir: /opt/demo }
+pipeline:
+  build:
+    run:
+      local: cargo build --release
+  pack:
+    binary: target/release/demo
+";
+
+/// The full example from the README.
+const NODE: &str = "\
+name: Web (prod)
+project: ../../../web
+ssh:
+  host: prod
+  user: deploy
+service:
+  name: web
+  dir: /opt/web
+  start: node dist/main.js
+  env_file: .env
+  env: { NODE_ENV: production }
+  shared: [uploads]
+  keep: { open: 3, compressed: 7 }
+pipeline:
+  preflight:
+    requires: [node, npm]
+    run:
+      server: pg_isready -q
+      local: npm test
+  build:
+    version_from: package.json
+    run:
+      local: [npm ci, npm run build]
+  pack:
+    files:
+      include:
+        project: [dist, package.json, package-lock.json]
+        deploy: [.env]
+      exclude:
+        project: [\"**/*.map\"]
+  setup:
+    run:
+      server:
+        - npm ci --omit=dev
+        - npm run migrate
+    check:
+      server: node --check dist/main.js
+  health:
+    url: http://127.0.0.1:3000/health
+    check:
+      server: ./bin/smoke-test
+      local: curl -fsS https://web.example.com/health
+    timeout_secs: 30
+    rollback: auto
+  done:
+    run:
+      server: ./bin/warm-cache
+      local: ./notify.sh \"web $SHIPDECK_VERSION is live\"
+  failed:
+    run:
+      local: ./notify.sh \"failed at $SHIPDECK_STEP\"
 ";
 
 fn sample() -> DeployConfig {
     parse(SAMPLE).unwrap()
 }
 
-fn endpoint(config: &DeployConfig) -> crate::ssh::Endpoint {
-    crate::ssh::Endpoint::from_config(&config.ssh, crate::ssh::ssh_config::HostConfig::default())
-        .unwrap()
+/// The problems in `yaml`, which must have some.
+fn problems(yaml: &str) -> Vec<Problem> {
+    match parse(yaml) {
+        Ok(_) => panic!("expected problems in:\n{yaml}"),
+        Err(problems) => problems,
+    }
+}
+
+fn messages(yaml: &str) -> Vec<String> {
+    problems(yaml).into_iter().map(|p| p.message).collect()
 }
 
 fn deployable(folder: &Path, config: DeployConfig) -> Deployable {
     Deployable {
         folder: folder.to_path_buf(),
         slug: "demo".into(),
-        endpoint: endpoint(&config),
+        endpoint: crate::ssh::Endpoint::from_config(
+            &config.ssh,
+            crate::ssh::ssh_config::HostConfig::default(),
+        )
+        .unwrap(),
         config,
     }
 }
@@ -37,349 +106,460 @@ fn scratch(name: &str) -> PathBuf {
 #[test]
 fn fills_in_defaults() {
     let config = sample();
+    assert_eq!(config.project, ".");
     assert_eq!(config.ssh.port, None);
-    assert_eq!(config.ssh.user.as_deref(), Some("deploy"));
-    assert_eq!(config.build.cwd, ".");
-    assert_eq!(config.hooks, Hooks::default());
     assert_eq!(
-        config.releases,
-        Retention {
+        config.service.keep,
+        Keep {
             open: 5,
             compressed: 15
         }
     );
-    assert_eq!(config.health.timeout_secs, 20);
+    let pipeline = &config.pipeline;
+    assert_eq!(pipeline.health.timeout_secs, 20);
+    assert_eq!(pipeline.health.rollback, Rollback::Ask);
+    assert!(pipeline.preflight.run.local.is_empty() && pipeline.done.run.server.is_empty());
+    assert_eq!(pipeline.build.run.local.0, ["cargo build --release"]);
 }
 
 #[test]
-fn unknown_fields_are_errors_with_a_line_number() {
-    let err = parse(&format!("{SAMPLE}colour: red\n"))
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("colour"), "{err}");
-    assert!(err.contains("line 8"), "{err}");
+fn reads_every_step_of_the_full_example() {
+    let config = parse(NODE).unwrap();
+    assert_eq!(config.project, "../../../web");
+    assert_eq!(config.service.shared, ["uploads"]);
+    assert_eq!(
+        config.service.keep,
+        Keep {
+            open: 3,
+            compressed: 7
+        }
+    );
+    let p = &config.pipeline;
+    assert_eq!(p.preflight.requires, ["node", "npm"]);
+    assert_eq!(p.preflight.run.server.0, ["pg_isready -q"]);
+    assert_eq!(p.build.run.local.0, ["npm ci", "npm run build"]);
+    assert_eq!(p.pack.files.include.deploy, [".env"]);
+    assert_eq!(p.pack.files.exclude.project, ["**/*.map"]);
+    assert_eq!(p.setup.run.server.len(), 2);
+    assert_eq!(p.setup.check.server.0, ["node --check dist/main.js"]);
+    assert_eq!(p.health.timeout_secs, 30);
+    assert_eq!(p.health.rollback, Rollback::Auto);
+    assert_eq!(p.health.check.local.len(), 1);
+    assert_eq!(
+        p.done.run.local.0,
+        ["./notify.sh \"web $SHIPDECK_VERSION is live\""]
+    );
+    assert_eq!(p.failed.run.local.len(), 1);
 }
 
 #[test]
-fn reads_a_json_config_too() {
-    // JSON is YAML, so a renamed deploy.json keeps working.
+fn json_is_yaml_too() {
     let config = parse(
         r#"{
             "name": "Demo",
             "ssh": { "host": "example.com", "user": "deploy" },
-            "build": { "command": ["cargo", "build"], "binary": "target/release/demo" },
-            "remote": { "dir": "/opt/demo", "service": "demo", "args": ["-E=.env"] },
-            "bundle": [".env"]
+            "service": { "name": "demo", "dir": "/opt/demo", "start": "./demo -E=.env" },
+            "pipeline": { "pack": { "binary": "target/release/demo" } }
         }"#,
     )
     .unwrap();
-    assert_eq!(config.remote.args, ["-E=.env"]);
+    assert_eq!(config.service.start.as_deref(), Some("./demo -E=.env"));
 }
 
 #[test]
-fn a_command_is_a_shell_line_or_a_list() {
-    let shell = parse(&SAMPLE.replace("[cargo, build]", "npm ci && npm run build")).unwrap();
-    assert_eq!(
-        shell.build.command,
-        Some(CommandLine::Shell("npm ci && npm run build".into()))
-    );
-    assert_eq!(
-        sample().build.command,
-        Some(CommandLine::Args(vec!["cargo".into(), "build".into()]))
-    );
-    assert_eq!(sample().build.command.unwrap().display(), "cargo build");
+fn plain_yaml_scalars_read_as_text() {
+    let config = parse(&SAMPLE.replace(
+        "service: { name: demo, dir: /opt/demo }",
+        "service:\n  name: demo\n  dir: /opt/demo\n  env:\n    PORT: 3000\n    DEBUG: no\n    RATIO: 1.5",
+    ))
+    .unwrap();
+    assert_eq!(config.service.env["PORT"], "3000");
+    assert_eq!(config.service.env["DEBUG"], "no");
+    assert_eq!(config.service.env["RATIO"], "1.5");
 }
 
-const NODE: &str = "
-name: Web (prod)
-ssh: { host: prod, user: deploy }
-hooks:
-  before:
-    - npm test
-  server:
-    - npm ci --omit=dev
-  after: [echo done]
-build:
-  cwd: ../../web
-  command: npm ci && npm run build
-  files: [dist, package.json, package-lock.json]
-remote:
-  dir: /opt/web
-  service: web
-  start: node dist/main.js --port 8080
-  requires: [npm]
-";
+#[test]
+fn a_key_with_nothing_after_it_means_the_default() {
+    let config = parse(&format!("{SAMPLE}  setup:\n  health:\n    url:\n")).unwrap();
+    assert!(config.pipeline.setup.run.server.is_empty());
+    assert_eq!(config.pipeline.health.url, None);
+}
 
 #[test]
-fn a_node_app_ships_files_and_starts_with_node() {
-    let config = parse(NODE).unwrap();
-    assert_eq!(config.hooks.before, ["npm test"]);
-    assert_eq!(config.hooks.server, ["npm ci --omit=dev"]);
-    assert_eq!(config.hooks.after, ["echo done"]);
-    assert_eq!(config.build.binary, None);
-    let deployable = deployable(Path::new("/tmp/deploy/web"), config);
+fn every_problem_in_a_file_is_reported_at_once_in_line_order() {
+    let found = problems(
+        "\
+name: Demo
+ssh: { host: example.com, user: deploy }
+service: { name: demo.service, dir: opt/demo }
+pipeline:
+  unpack:
+    run: { server: tar x }
+  pack:
+    binary: target/release/demo
+  health:
+    timeout_secs: 1
+    rollback: later
+",
+    );
+    let lines: Vec<(usize, &str)> = found
+        .iter()
+        .map(|p| (p.at.unwrap().start.0, p.message.as_str()))
+        .collect();
     assert_eq!(
-        deployable.start(),
+        lines,
+        [
+            (3, "`service.name` is the name without .service"),
+            (3, "`service.dir` must be an absolute path"),
+            (5, "unpack does not take commands"),
+            (10, "`pipeline.health.timeout_secs` must be at least 3"),
+            (11, "`pipeline.health.rollback` must be ask or auto"),
+        ]
+    );
+}
+
+#[test]
+fn a_step_takes_commands_only_where_it_can_run_them() {
+    let cases = [
         (
-            Program::Tool("node".into()),
-            "dist/main.js --port 8080".into()
-        )
+            "  build:\n    run:\n      server: npm run build\n",
+            "build cannot run commands on the server",
+            "build runs on your PC only",
+        ),
+        (
+            "  setup:\n    run:\n      local: npm ci\n",
+            "setup cannot run commands on your PC",
+            "setup runs on the server only",
+        ),
+        (
+            "  failed:\n    run:\n      server: ./alert\n",
+            "failed cannot run commands on the server",
+            "failed runs on your PC only",
+        ),
+        (
+            "  health:\n    run:\n      server: ./check\n",
+            "health has no `run`",
+            "not a field of health",
+        ),
+        (
+            "  restart:\n    run:\n      server: ./x\n",
+            "restart does not take commands",
+            "restart is done by shipdeck",
+        ),
+    ];
+    let bare = SAMPLE.replace(
+        "  build:\n    run:\n      local: cargo build --release\n",
+        "",
     );
-    assert_eq!(deployable.required_tools(), ["node", "npm"]);
-    assert_eq!(deployable.binary_name(), None);
+    for (step, message, label) in cases {
+        let yaml = bare.replace("  pack:\n", &format!("{step}  pack:\n"));
+        let found = problems(&yaml);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].message, message);
+        assert_eq!(found[0].label, label);
+        assert!(found[0].at.is_some());
+    }
 }
 
 #[test]
-fn the_binary_is_the_default_start() {
-    let deployable = deployable(Path::new("/tmp/deploy/demo"), sample());
+fn a_bare_command_is_told_where_to_run() {
+    let found = problems(&SAMPLE.replace("    run:\n      local: cargo", "    run: cargo"));
+    assert_eq!(found[0].message, "`pipeline.build.run` must be a map");
     assert_eq!(
-        deployable.start(),
-        (Program::InRelease("demo".into()), String::new())
+        found[0].help.as_deref(),
+        Some("`run: { local: cargo build --release }`")
     );
-    assert!(deployable.required_tools().is_empty());
-
-    let mut config = sample();
-    config.remote.start = Some("/usr/bin/env demo".into());
-    config.remote.requires = vec!["env".into(), "/usr/bin/env".into()];
-    let deployable = deployable_with(config);
-    assert_eq!(
-        deployable.start().0,
-        Program::Absolute("/usr/bin/env".into())
-    );
-    assert_eq!(deployable.required_tools(), ["/usr/bin/env", "env"]);
 }
 
-fn deployable_with(config: DeployConfig) -> Deployable {
-    deployable(Path::new("/tmp/deploy/demo"), config)
+#[test]
+fn unknown_keys_get_a_suggestion_or_the_list() {
+    let found = problems(&format!("{SAMPLE}  helth:\n    url: http://x\n"));
+    assert_eq!(found[0].message, "unknown key `pipeline.helth`");
+    assert_eq!(found[0].help.as_deref(), Some("did you mean `health`?"));
+
+    let found = problems(&format!("{SAMPLE}colour: red\n"));
+    assert_eq!(found[0].at.unwrap().start, (10, 0));
+    assert!(
+        found[0]
+            .help
+            .as_deref()
+            .unwrap()
+            .contains("the top level takes")
+    );
+
+    let found = problems(&SAMPLE.replace(
+        "binary:",
+        "files:\n      include:\n        src: [dist]\n    binary:",
+    ));
+    assert_eq!(
+        found[0].message,
+        "unknown key `pipeline.pack.files.include.src`"
+    );
+    assert_eq!(found[0].label, "not a source");
+    assert_eq!(
+        found[0].help.as_deref(),
+        Some("sources are project and deploy")
+    );
+}
+
+#[test]
+fn keys_from_0_2_say_where_they_went_and_hold_back_other_checks() {
+    let found = messages(
+        "\
+name: Old
+ssh: { host: prod, user: deploy }
+remote: { dir: /opt/old, service: old }
+build: { command: cargo build, binary: target/release/old }
+hooks: { after: [echo hi] }
+",
+    );
+    // No "nothing to ship" or "`service` is missing": those follow from the move.
+    assert_eq!(
+        found,
+        [
+            "`remote` moved in shipdeck 0.3",
+            "`build` moved in shipdeck 0.3",
+            "`hooks` moved in shipdeck 0.3",
+        ]
+    );
+}
+
+#[test]
+fn an_unquoted_negated_pattern_is_caught() {
+    let found = problems(&SAMPLE.replace(
+        "binary:",
+        "files:\n      include:\n        project: [dist, !dist/maps]\n    binary:",
+    ));
+    assert_eq!(
+        found[0].message,
+        "`pipeline.pack.files.include.project[1]` reads as a YAML tag"
+    );
+    assert_eq!(
+        found[0].help.as_deref(),
+        Some("put it in quotes: \"!dist/maps\"")
+    );
+    assert_eq!(found[0].at.unwrap().start, (11, 24));
+}
+
+#[test]
+fn missing_and_empty_values_are_named() {
+    assert_eq!(
+        messages(""),
+        [
+            "`name` is missing",
+            "`ssh` is missing",
+            "`service` is missing"
+        ]
+    );
+    let found = messages(&SAMPLE.replace("dir: /opt/demo", "dir:"));
+    assert_eq!(found, ["`service.dir` is empty"]);
+    let found = messages(&SAMPLE.replace(", dir: /opt/demo", ""));
+    assert_eq!(found, ["`service.dir` is missing"]);
+}
+
+#[test]
+fn yaml_mistakes_point_at_their_line() {
+    let found = problems(&format!("{SAMPLE}  setup: {{\n"));
+    assert!(
+        found[0].message.starts_with("this is not valid YAML"),
+        "{found:?}"
+    );
+    assert!(found[0].at.is_some());
+    let found = problems(&format!("{SAMPLE}name: Again\n"));
+    assert_eq!(found[0].message, "`name` is written twice");
+    assert_eq!(found[0].label, "first written on line 1");
+}
+
+#[test]
+fn rejects_unsafe_service_values() {
+    let bad = [
+        ("dir: /opt/demo", "dir: /"),
+        ("dir: /opt/demo", "dir: /opt/../etc"),
+        ("dir: /opt/demo", "dir: \"/opt/my app\""),
+        ("name: demo", "name: \"demo;rm\""),
+        ("name: demo", "name: \"a b\""),
+    ];
+    for (from, to) in bad {
+        let yaml = SAMPLE.replace(from, to);
+        assert_eq!(problems(&yaml).len(), 1, "{to} should be rejected");
+    }
+    for start in ["", "node a\\b", "$(id) x", "'node' x", "../bin/x"] {
+        let yaml = SAMPLE.replace(
+            "dir: /opt/demo }",
+            &format!("dir: /opt/demo, start: {start:?} }}"),
+        );
+        assert!(parse(&yaml).is_err(), "start {start:?} should be rejected");
+    }
+    for file in ["/etc/passwd", "../.env", "a b"] {
+        let yaml = SAMPLE.replace(
+            "dir: /opt/demo }",
+            &format!("dir: /opt/demo, env_file: {file:?} }}"),
+        );
+        assert!(
+            parse(&yaml).is_err(),
+            "env_file {file:?} should be rejected"
+        );
+    }
+    for (key, value) in [("1X", "a"), ("A-B", "a"), ("OK", "say \\\"hi\\\"")] {
+        let yaml = SAMPLE.replace(
+            "dir: /opt/demo }",
+            &format!("dir: /opt/demo, env: {{ {key}: \"{value}\" }} }}"),
+        );
+        assert!(
+            parse(&yaml).is_err(),
+            "env {key}={value} should be rejected"
+        );
+    }
+    for shared in ["/abs", "../up", "release.json", "a b"] {
+        let yaml = SAMPLE.replace(
+            "dir: /opt/demo }",
+            &format!("dir: /opt/demo, shared: [{shared:?}] }}"),
+        );
+        assert!(
+            parse(&yaml).is_err(),
+            "shared {shared:?} should be rejected"
+        );
+    }
+    let yaml = SAMPLE.replace(
+        "dir: /opt/demo }",
+        "dir: /opt/demo, shared: [data, data/cache] }",
+    );
+    assert!(messages(&yaml)[0].contains("overlap"));
+    let yaml = SAMPLE.replace("dir: /opt/demo }", "dir: /opt/demo, keep: { open: 0 } }");
+    assert_eq!(messages(&yaml), ["`service.keep.open` must be at least 1"]);
+}
+
+#[test]
+fn rejects_unsafe_pipeline_values() {
+    let found = messages(&format!(
+        "{SAMPLE}  preflight:\n    requires: [\"no de\"]\n"
+    ));
+    assert_eq!(found, ["\"no de\" is not a program name"]);
+    let found = messages(&format!(
+        "{SAMPLE}  done:\n    run:\n      local: [ok, \"  \"]\n"
+    ));
+    assert_eq!(found, ["this command is empty"]);
+    let found = messages(&format!("{SAMPLE}  health:\n    url: localhost:3000\n"));
+    assert_eq!(
+        found,
+        ["`pipeline.health.url` must start with http:// or https://"]
+    );
+    let found = messages(&format!("{SAMPLE}  health:\n    url: \"http://x/'a'\"\n"));
+    assert_eq!(
+        found,
+        ["`pipeline.health.url` must not contain quotes, spaces or newlines"]
+    );
+    let found = messages(&format!("{SAMPLE}  health:\n    timeout_secs: -1\n"));
+    assert_eq!(
+        found,
+        ["`pipeline.health.timeout_secs` must be a whole number"]
+    );
+}
+
+fn with_files(include_project: &str) -> String {
+    SAMPLE.replace(
+        "    binary: target/release/demo\n",
+        &format!(
+            "    binary: target/release/demo\n    files:\n      include:\n        project: {include_project}\n"
+        ),
+    )
+}
+
+#[test]
+fn checks_patterns_at_launch() {
+    let found = messages(&with_files("[\"dist/{a,b\"]"));
+    assert_eq!(found, ["\"dist/{a,b\" has a `{` that is never closed"]);
+    let found = messages(&with_files("[../secret]"));
+    assert_eq!(found, ["\"../secret\" climbs out with `..`"]);
+    let found = messages(&with_files("[/etc/passwd]"));
+    assert!(found[0].contains("starts with /"), "{found:?}");
+    let found = messages(&with_files("[dist, ./dist/]"));
+    assert_eq!(found, ["\"./dist/\" is listed twice"]);
+    let found = messages(&with_files("[release.json]"));
+    assert_eq!(found, ["release.json belongs to shipdeck"]);
+    let found = messages(&with_files("[demo.service]"));
+    assert_eq!(found, ["demo.service belongs to shipdeck"]);
+    // The same names deeper down are fine, and so is the whole project.
+    assert!(parse(&with_files("[files/release.json, .]")).is_ok());
+    let shared =
+        with_files("[uploads]").replace("dir: /opt/demo }", "dir: /opt/demo, shared: [uploads] }");
+    assert_eq!(
+        messages(&shared),
+        ["\"uploads\" is in `service.shared`, so it cannot be shipped too"]
+    );
 }
 
 #[test]
 fn something_must_ship_and_something_must_start() {
-    let mut config = sample();
-    config.build.binary = None;
-    let err = config.validate().unwrap_err().to_string();
-    assert!(err.contains("nothing to ship"), "{err}");
-
-    config.build.files = vec!["dist".into()];
-    let err = config.validate().unwrap_err().to_string();
-    assert!(err.contains("`remote.start` is needed"), "{err}");
-
-    config.remote.start = Some("node dist/main.js".into());
-    assert!(config.validate().is_ok());
-}
-
-#[test]
-fn rejects_unsafe_start_commands_and_tools() {
-    for start in [
-        "",
-        "node a\nrm -rf /",
-        "$(id) x",
-        "'node' x",
-        "../bin/x",
-        "node a\\b",
-    ] {
-        let mut config = sample();
-        config.remote.start = Some(start.into());
-        assert!(config.validate().is_err(), "{start:?} should be rejected");
-    }
-    for file in ["/etc/passwd", "../.env", "a b", ""] {
-        let mut config = sample();
-        config.remote.env_file = Some(file.into());
-        assert!(
-            config.validate().is_err(),
-            "env_file {file:?} should be rejected"
-        );
-    }
-    for tool in ["", "no de", "a;b", "../x"] {
-        let mut config = sample();
-        config.remote.requires = vec![tool.into()];
-        assert!(config.validate().is_err(), "{tool:?} should be rejected");
-    }
-}
-
-#[test]
-fn rejects_empty_hooks_and_commands() {
-    let mut config = sample();
-    config.hooks.server = vec!["  ".into()];
-    assert!(
-        config
-            .validate()
-            .unwrap_err()
-            .to_string()
-            .contains("hooks.server")
+    let found = messages(&SAMPLE.replace("    binary: target/release/demo\n", "    binary:\n"));
+    assert_eq!(
+        found,
+        [
+            "`service.start` is needed when there is no `pipeline.pack.binary`",
+            "nothing to ship",
+        ]
     );
-
-    for command in [CommandLine::Shell(" ".into()), CommandLine::Args(vec![])] {
-        let mut config = sample();
-        config.build.command = Some(command);
-        assert!(config.validate().is_err());
-    }
-}
-
-#[test]
-fn rejects_unsafe_remote_dir() {
-    for dir in ["opt/demo", "/", "/opt/../etc", "/opt/my app", "/opt/$(id)"] {
-        let mut config = sample();
-        config.remote.dir = dir.into();
-        assert!(config.validate().is_err(), "{dir} should be rejected");
-    }
-}
-
-#[test]
-fn rejects_service_with_suffix_or_shell_characters() {
-    for service in ["demo.service", "demo;rm", "", "a b"] {
-        let mut config = sample();
-        config.remote.service = service.into();
-        assert!(config.validate().is_err(), "{service:?} should be rejected");
-    }
-}
-
-#[test]
-fn rejects_paths_outside_their_folder() {
-    for entry in ["../secret", "/etc/passwd", "files/../../x"] {
-        let mut config = sample();
-        config.bundle = vec![entry.into()];
-        assert!(
-            config.validate().is_err(),
-            "bundle {entry} should be rejected"
+    // Negated patterns alone bring nothing in.
+    let yaml = with_files("[\"!dist\"]").replace("    binary: target/release/demo\n", "");
+    assert!(messages(&yaml).contains(&"nothing to ship".to_string()));
+    let yaml = with_files("[dist]")
+        .replace("    binary: target/release/demo\n", "")
+        .replace(
+            "dir: /opt/demo }",
+            "dir: /opt/demo, start: node dist/main.js }",
         );
-        let mut config = sample();
-        config.build.files = vec![entry.into()];
-        assert!(
-            config.validate().is_err(),
-            "files {entry} should be rejected"
-        );
-    }
+    assert!(parse(&yaml).is_ok());
 }
 
 #[test]
-fn rejects_zero_open_releases() {
-    let mut config = sample();
-    config.releases.open = 0;
-    assert!(config.validate().is_err());
-}
-
-fn with_bundle(entries: &[&str]) -> DeployConfig {
-    let mut config = sample();
-    config.bundle = entries.iter().map(|e| e.to_string()).collect();
-    config
-}
-
-#[test]
-fn rejects_entries_naming_the_whole_folder() {
-    for entry in ["", ".", "./", "./."] {
-        let err = with_bundle(&[entry]).validate().unwrap_err();
-        assert!(
-            err.to_string().contains("whole deployable folder"),
-            "{entry:?}"
-        );
-        let mut config = sample();
-        config.build.files = vec![entry.into()];
-        let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("whole build folder"), "{entry:?}");
-    }
-}
-
-#[test]
-fn rejects_duplicate_and_overlapping_entries() {
-    let err = with_bundle(&[".env", "./.env"]).validate().unwrap_err();
-    assert!(err.to_string().contains("twice"));
-    let err = with_bundle(&["files/", "files/a.txt"])
-        .validate()
-        .unwrap_err();
-    assert!(err.to_string().contains("overlap"));
-    let err = with_bundle(&["files/a.txt", "files"])
-        .validate()
-        .unwrap_err();
-    assert!(err.to_string().contains("overlap"));
-    // A shared prefix is not an overlap.
-    assert!(
-        with_bundle(&["files", "files-extra", ".env"])
-            .validate()
-            .is_ok()
+fn the_binary_is_the_default_start() {
+    let demo = deployable(Path::new("/tmp/deploy/demo"), sample());
+    assert_eq!(
+        demo.start(),
+        (Program::InRelease("demo".into()), String::new())
     );
+    assert!(demo.required_tools().is_empty());
 
-    // build.files and bundle share the release root.
-    let mut config = with_bundle(&["config"]);
-    config.build.files = vec!["config".into()];
-    let err = config.validate().unwrap_err().to_string();
-    assert!(err.contains("shipped twice"), "{err}");
-    config.build.files = vec!["config/base.yaml".into()];
-    let err = config.validate().unwrap_err().to_string();
-    assert!(err.contains("overlap"), "{err}");
-}
-
-#[test]
-fn rejects_entries_that_replace_release_files() {
-    for entry in ["release.json", "demo", "./demo.service"] {
-        let err = with_bundle(&[entry]).validate().unwrap_err();
-        assert!(err.to_string().contains("would replace"), "{entry}");
-        let mut config = sample();
-        config.build.files = vec![entry.into()];
-        let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("would replace"), "{entry}");
-    }
-    // The same names deeper down are fine.
-    assert!(with_bundle(&["files/release.json"]).validate().is_ok());
-}
-
-#[test]
-fn bundle_paths_are_stored_without_dots_or_slashes() {
-    assert_eq!(bundle_path("./files/"), "files");
-    assert_eq!(bundle_path("files/./sub/a.txt"), "files/sub/a.txt");
-    assert_eq!(bundle_path("."), "");
-}
-
-#[test]
-fn check_bundle_lists_every_missing_entry() {
-    let dir = scratch("check");
-    std::fs::create_dir_all(dir.join("files")).unwrap();
-    let deployable = deployable(&dir, with_bundle(&[".env", "files/", "certs/key.pem"]));
-    let err = deployable.check_bundle().unwrap_err().to_string();
-    assert!(err.starts_with("2 of 3 bundle entries"), "{err}");
-    assert!(
-        err.contains(".env: missing") && err.contains("certs/key.pem: missing"),
-        "{err}"
+    let web = deployable(Path::new("/tmp/deploy/web"), parse(NODE).unwrap());
+    assert_eq!(
+        web.start(),
+        (Program::Tool("node".into()), "dist/main.js".into())
     );
+    assert_eq!(web.required_tools(), ["node", "npm"]);
+    assert_eq!(web.binary_name(), None);
+    assert_eq!(web.project_dir(), Path::new("/tmp/deploy/web/../../../web"));
 
-    std::fs::write(dir.join(".env"), "A=1").unwrap();
-    std::fs::create_dir_all(dir.join("certs")).unwrap();
-    std::fs::write(dir.join("certs/key.pem"), "k").unwrap();
-    assert!(deployable.check_bundle().is_ok());
-    std::fs::remove_dir_all(dir).unwrap();
-}
-
-#[test]
-fn check_files_looks_in_the_build_folder() {
-    let dir = scratch("files");
-    std::fs::create_dir_all(dir.join("app/dist")).unwrap();
     let mut config = sample();
-    config.build.cwd = "app".into();
-    config.build.files = vec!["dist".into(), "package.json".into()];
-    let deployable = deployable(&dir, config);
-    let err = deployable.check_files().unwrap_err().to_string();
-    assert!(err.starts_with("1 of 2 build.files entries"), "{err}");
-    std::fs::write(dir.join("app/package.json"), "{}").unwrap();
-    assert!(deployable.check_files().is_ok());
-    std::fs::remove_dir_all(dir).unwrap();
+    config.service.start = Some("/usr/bin/env demo".into());
+    config.pipeline.preflight.requires = vec!["env".into(), "/usr/bin/env".into()];
+    let absolute = deployable(Path::new("/tmp/deploy/demo"), config);
+    assert_eq!(absolute.start().0, Program::Absolute("/usr/bin/env".into()));
+    assert_eq!(absolute.required_tools(), ["/usr/bin/env", "env"]);
 }
 
 #[test]
-fn version_file_is_found_in_the_build_folder() {
+fn version_file_is_found_in_the_project() {
     let dir = scratch("version");
-    let mut config = sample();
-    config.build.cwd = "app".into();
     std::fs::create_dir_all(dir.join("app")).unwrap();
+    let mut config = sample();
+    config.project = "app".into();
     let found = deployable(&dir, config.clone());
     assert_eq!(found.version_file(), None);
     std::fs::write(dir.join("app/package.json"), "{}").unwrap();
     std::fs::write(dir.join("app/VERSION"), "1.0.0").unwrap();
     assert_eq!(found.version_file(), Some(dir.join("app/package.json")));
 
-    config.build.version_from = Some("app/VERSION".into());
+    config.pipeline.build.version_from = Some("VERSION".into());
     let named = deployable(&dir, config);
     assert_eq!(named.version_file(), Some(dir.join("app/VERSION")));
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn release_paths_are_stored_without_dots_or_slashes() {
+    assert_eq!(release_path("./files/"), "files");
+    assert_eq!(release_path("files/./sub/a.txt"), "files/sub/a.txt");
+    assert_eq!(release_path("."), "");
 }
 
 #[test]
@@ -390,9 +570,9 @@ fn user_may_come_from_ssh_config() {
 }
 
 #[test]
-fn discovery_reports_old_and_doubled_configs() {
+fn discovery_collects_every_problem_and_keeps_the_good_ones() {
     let root = scratch("discover");
-    for name in ["api", "old", "twice"] {
+    for name in ["api", "old", "twice", "broken"] {
         std::fs::create_dir_all(root.join(name)).unwrap();
     }
     std::fs::create_dir_all(root.join("notes")).unwrap();
@@ -400,54 +580,152 @@ fn discovery_reports_old_and_doubled_configs() {
     std::fs::write(root.join("old/deploy.json"), "{}").unwrap();
     std::fs::write(root.join("twice/deploy.yaml"), SAMPLE).unwrap();
     std::fs::write(root.join("twice/deploy.yml"), SAMPLE).unwrap();
+    std::fs::write(
+        root.join("broken/deploy.yaml"),
+        SAMPLE.replace("/opt/demo", "opt/demo"),
+    )
+    .unwrap();
 
     let found = discover(&root).unwrap();
     let slugs: Vec<&str> = found.deployables.iter().map(|d| d.slug.as_str()).collect();
     assert_eq!(slugs, ["api"]);
-    let broken: Vec<(String, &str)> = found
-        .broken
+    let problems: Vec<(String, String)> = found
+        .problems
         .iter()
-        .map(|(path, why)| {
+        .map(|file| {
             (
-                path.file_name().unwrap().to_string_lossy().into_owned(),
-                why.as_str(),
+                file.path
+                    .parent()
+                    .unwrap()
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
+                file.problems[0].message.clone(),
             )
         })
         .collect();
-    assert_eq!(broken.len(), 2, "{broken:?}");
-    assert_eq!(broken[0].0, "old");
-    assert!(broken[0].1.contains("now reads deploy.yaml"), "{broken:?}");
-    assert_eq!(broken[1].0, "twice");
-    assert!(broken[1].1.contains("keep one"), "{broken:?}");
+    assert_eq!(
+        problems,
+        [
+            (
+                "broken".to_string(),
+                "`service.dir` must be an absolute path".to_string()
+            ),
+            (
+                "old".to_string(),
+                "shipdeck reads deploy.yaml now, not deploy.json".to_string()
+            ),
+            (
+                "twice".to_string(),
+                "this folder has both deploy.yaml and deploy.yml".to_string()
+            ),
+        ]
+    );
+    assert!(found.problems[0].source.is_some());
     std::fs::remove_dir_all(root).unwrap();
 }
 
-/// The examples in the repository must stay valid.
 #[test]
-fn examples_parse() {
+fn renders_problems_like_a_compiler() {
+    let text = "\
+name: Demo
+ssh: { host: example.com, user: deploy }
+service: { name: demo, dir: /opt/demo }
+pipeline:
+  build:
+    run:
+      server: make
+  pack:
+    binary: target/release/demo
+";
+    let files = vec![FileProblems {
+        path: PathBuf::from("/work/deploy/api/deploy.yaml"),
+        source: Some(text.to_string()),
+        problems: parse(text).unwrap_err(),
+    }];
+    let plain = render(&files, Path::new("/work"), false);
+    assert_eq!(
+        plain,
+        "\
+✘ shipdeck did not start: 1 deploy.yaml file has 1 problem
+
+api/deploy.yaml
+  error: build cannot run commands on the server
+    ┌─ deploy/api/deploy.yaml:7:7
+    │
+  6 │     run:
+  7 │       server: make
+    │       ^^^^^^ build runs on your PC only
+    │
+    = help: the server sets up the release in `pipeline.setup.run.server`
+"
+    );
+    let color = render(&files, Path::new("/work"), true);
+    assert!(color.contains("\x1b[1;31merror\x1b[0m"), "{color:?}");
+    assert!(
+        color.contains("\x1b[35mpipeline.setup.run.server\x1b[0m"),
+        "{color:?}"
+    );
+    assert!(color.contains("\x1b[1;33m^^^^^^ build runs on your PC only\x1b[0m"));
+    assert!(color.contains("\x1b[1;32mhelp\x1b[0m"));
+}
+
+/// The examples in the repository must stay valid and carry the schema
+/// line for this version.
+#[test]
+fn examples_parse_and_point_at_this_schema() {
     let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
     let mut seen = 0;
     for entry in std::fs::read_dir(&examples).unwrap() {
         let file = entry.unwrap().path().join(FILE_NAMES[0]);
         let text = std::fs::read_to_string(&file).unwrap();
-        if let Err(err) = parse(&text) {
-            panic!("{}: {err:#}", file.display());
+        if let Err(problems) = parse(&text) {
+            panic!("{}: {problems:#?}", file.display());
         }
+        assert_eq!(
+            text.lines().next(),
+            Some(schema::modeline().as_str()),
+            "{}",
+            file.display()
+        );
         seen += 1;
     }
     assert!(seen >= 4, "expected the rust, go, node and python examples");
 }
 
+/// `deploy.schema.json` at the repository root is what these types say.
 #[test]
-fn plain_yaml_scalars_read_as_text() {
-    let config = parse(&format!("{SAMPLE}\nhealth: {{ timeout_secs: 30 }}\n")).unwrap();
-    assert_eq!(config.health.timeout_secs, 30);
-    let config = parse(&SAMPLE.replace(
-        "remote: { dir: /opt/demo, service: demo }",
-        "remote:\n  dir: /opt/demo\n  service: demo\n  env:\n    PORT: 3000\n    DEBUG: no\n    RATIO: 1.5",
-    ))
-    .unwrap();
-    assert_eq!(config.remote.env["PORT"], "3000");
-    assert_eq!(config.remote.env["DEBUG"], "no");
-    assert_eq!(config.remote.env["RATIO"], "1.5");
+fn the_published_schema_is_current() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(schema::FILE_NAME);
+    let committed = std::fs::read_to_string(&path).unwrap_or_default();
+    assert!(
+        committed == schema::text(),
+        "{} is out of date; run: cargo run -q -p shipdeck -- --schema > {}",
+        schema::FILE_NAME,
+        schema::FILE_NAME
+    );
+}
+
+#[test]
+fn the_schema_closes_every_object_and_documents_every_field() {
+    let schema = schema::generate();
+    assert_eq!(schema["$id"], schema::url());
+    assert_eq!(schema["$schema"], "http://json-schema.org/draft-07/schema#");
+    let mut objects = vec![&schema];
+    objects.extend(schema["definitions"].as_object().unwrap().values());
+    for object in objects {
+        let Some(properties) = object.get("properties").and_then(|p| p.as_object()) else {
+            continue;
+        };
+        assert_eq!(object["additionalProperties"], false, "{object}");
+        for (name, property) in properties {
+            assert!(
+                property.get("description").is_some(),
+                "`{name}` needs a doc comment: editors show it"
+            );
+        }
+    }
 }

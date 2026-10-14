@@ -12,7 +12,7 @@ use crate::release::ReleaseName;
 
 /// The release name, and where its version came from (for the log).
 pub async fn release_name(deployable: &Deployable) -> Result<(ReleaseName, String)> {
-    let dir = deployable.build_dir();
+    let dir = deployable.project_dir();
     let (version, source) = match deployable.version_file() {
         Some(file) => {
             let name = file

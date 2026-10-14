@@ -10,12 +10,14 @@ repository.workspace = true
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
+fast-glob.workspace = true
 flate2.workspace = true
+granit-parser.workspace = true
 object.workspace = true
 russh.workspace = true
 russh-sftp.workspace = true
+schemars.workspace = true
 serde.workspace = true
-serde-saphyr.workspace = true
 serde_json.workspace = true
 tar.workspace = true
 tokio.workspace = true

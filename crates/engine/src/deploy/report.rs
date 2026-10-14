@@ -2,6 +2,7 @@
 //! progress, log lines and the final outcome.
 
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::oneshot;
 
 pub type OpId = u64;
 
@@ -56,6 +57,27 @@ pub enum Outcome {
         error: String,
         rollback_error: String,
     },
+    /// The new version failed after the switch, and you chose to keep it.
+    Kept {
+        release: String,
+        error: String,
+    },
+}
+
+/// The deploy asks whether to roll back. No answer within `seconds` (or
+/// nobody to answer) means yes.
+#[derive(Debug)]
+pub struct RollbackQuestion {
+    /// The release that failed.
+    pub release: String,
+    /// The release that was live before it.
+    pub previous: String,
+    /// The step that failed, such as `Health`.
+    pub step: &'static str,
+    pub error: String,
+    pub seconds: u64,
+    /// `true` rolls back; `false` keeps the new release.
+    pub reply: oneshot::Sender<bool>,
 }
 
 #[derive(Debug)]
@@ -78,6 +100,7 @@ pub enum OpEvent {
     },
     /// The id of the release this operation works on, once it is known.
     Release(String),
+    AskRollback(RollbackQuestion),
     Finished(Outcome),
 }
 
@@ -165,6 +188,27 @@ impl Reporter {
 
     pub fn release(&self, id: &str) {
         self.send(OpEvent::Release(id.to_string()));
+    }
+
+    /// Asks whether to roll back; the answer arrives on the receiver.
+    pub fn ask_rollback(
+        &self,
+        release: &str,
+        previous: &str,
+        step: &'static str,
+        error: &str,
+        seconds: u64,
+    ) -> oneshot::Receiver<bool> {
+        let (reply, answer) = oneshot::channel();
+        self.send(OpEvent::AskRollback(RollbackQuestion {
+            release: release.to_string(),
+            previous: previous.to_string(),
+            step,
+            error: error.to_string(),
+            seconds,
+            reply,
+        }));
+        answer
     }
 
     pub fn done(&self, outcome: Outcome) {

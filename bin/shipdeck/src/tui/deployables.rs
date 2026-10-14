@@ -8,7 +8,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{HighlightSpacing, List, ListItem, Paragraph, Wrap};
 
 use shipdeck_engine::bundle::unit;
-use shipdeck_engine::config::Deployable;
+use shipdeck_engine::config::{Commands, Deployable, ROLLBACK_ANSWER_SECS, Rollback};
 use shipdeck_engine::release::ReleaseName;
 use shipdeck_engine::ssh::Login;
 
@@ -19,17 +19,8 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     if app.deployables.is_empty() {
         return empty(frame, area, app);
     }
-    let [left, right] =
+    let [list_area, right] =
         Layout::horizontal([Constraint::Percentage(42), Constraint::Percentage(58)]).areas(area);
-
-    let (list_area, problems_area) = if app.broken.is_empty() {
-        (left, None)
-    } else {
-        let height = (app.broken.len() as u16 * 2 + 2).min(left.height / 2);
-        let [list, problems] =
-            Layout::vertical([Constraint::Min(6), Constraint::Length(height)]).areas(left);
-        (list, Some(problems))
-    };
 
     let items: Vec<ListItem> = app
         .deployables
@@ -47,9 +38,6 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
         .highlight_spacing(HighlightSpacing::Always);
     frame.render_stateful_widget(list, list_area, &mut app.list);
 
-    if let Some(area) = problems_area {
-        problems(frame, area, app);
-    }
     if let Some(index) = app.selected() {
         details(
             frame,
@@ -138,6 +126,7 @@ fn details(
     tick: u64,
 ) {
     let config = &deployable.config;
+    let service = &config.service;
     let mut lines = vec![
         Line::from(Span::styled(
             config.name.clone(),
@@ -176,19 +165,19 @@ fn details(
     field(
         &mut lines,
         "folder",
-        vec![Span::styled(config.remote.dir.clone(), theme::text())],
+        vec![Span::styled(service.dir.clone(), theme::text())],
     );
-    let mut service = vec![Span::styled(config.remote.service.clone(), theme::text())];
+    let mut unit = vec![Span::styled(service.name.clone(), theme::text())];
     if let Live::Ready(status) = live
         && !status.active.is_empty()
     {
-        service.push(Span::raw("  "));
-        service.push(theme::badge(
+        unit.push(Span::raw("  "));
+        unit.push(theme::badge(
             &status.active,
             theme::service_color(&status.active),
         ));
     }
-    field(&mut lines, "service", service);
+    field(&mut lines, "service", unit);
     field(
         &mut lines,
         "runs as",
@@ -202,118 +191,89 @@ fn details(
             theme::text(),
         )],
     );
-    let tools = deployable.required_tools();
-    if !tools.is_empty() {
-        field(
-            &mut lines,
-            "needs",
-            vec![Span::styled(tools.join(", "), theme::text())],
-        );
-    }
     field(&mut lines, "live", live_summary(live, tick));
 
-    section(&mut lines, "Build");
-    let build = &config.build;
-    field(
-        &mut lines,
-        "run",
-        match &build.command {
-            Some(command) => vec![Span::styled(command.display(), Style::new().fg(VIOLET))],
-            None => vec![Span::styled("nothing to build", theme::muted())],
-        },
-    );
-    field(
-        &mut lines,
-        "in",
-        vec![Span::styled(build.cwd.clone(), theme::text())],
-    );
-    if let Some(binary) = &build.binary {
-        field(
-            &mut lines,
-            "binary",
-            vec![Span::styled(binary.clone(), theme::text())],
-        );
+    section(&mut lines, "Pipeline");
+    let pipeline = &config.pipeline;
+    let mut step = Step::new(&mut lines);
+    step.commands("preflight", "server", &pipeline.preflight.run.server);
+    step.commands("preflight", "local", &pipeline.preflight.run.local);
+    if !pipeline.preflight.requires.is_empty() {
+        step.text("preflight", "needs", pipeline.preflight.requires.join(", "));
     }
-    if !build.files.is_empty() {
-        field(
-            &mut lines,
-            "ships",
-            vec![Span::styled(build.files.join(", "), theme::text())],
-        );
+    if pipeline.build.run.local.is_empty() {
+        step.faint("build", "nothing to build");
+    } else {
+        step.commands("build", "local", &pipeline.build.run.local);
     }
-
-    let hooks = &config.hooks;
-    if !(hooks.before.is_empty() && hooks.server.is_empty() && hooks.after.is_empty()) {
-        section(&mut lines, "Hooks");
-        for (when, commands) in [
-            ("before", &hooks.before),
-            ("server", &hooks.server),
-            ("after", &hooks.after),
-        ] {
-            for command in commands {
-                field(
-                    &mut lines,
-                    when,
-                    vec![Span::styled(
-                        command.trim().to_string(),
-                        Style::new().fg(VIOLET),
-                    )],
-                );
-            }
+    let pack = &pipeline.pack;
+    if let Some(binary) = &pack.binary {
+        step.text("pack", "binary", binary.clone());
+    }
+    for (side, list) in [
+        ("project", &pack.files.include.project),
+        ("deploy", &pack.files.include.deploy),
+    ] {
+        if !list.is_empty() {
+            step.text("pack", side, list.join(", "));
         }
     }
-
-    section(&mut lines, "Bundle");
-    let bundle = deployable.bundle_status();
-    if bundle.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "  nothing from this folder",
-            theme::muted(),
-        )));
+    let excluded: Vec<&str> = pack
+        .files
+        .exclude
+        .project
+        .iter()
+        .chain(&pack.files.exclude.deploy)
+        .map(String::as_str)
+        .collect();
+    if !excluded.is_empty() {
+        step.text("pack", "leaves", excluded.join(", "));
     }
-    for (entry, exists) in bundle {
-        lines.push(if exists {
-            Line::from(vec![
-                Span::styled("  ✔ ", theme::bold(OK)),
-                Span::styled(entry, theme::text()),
-            ])
-        } else {
-            Line::from(vec![
-                Span::styled("  ✘ ", theme::bold(ERR)),
-                Span::styled(entry, Style::new().fg(ERR)),
-                Span::styled(
-                    if config.hooks.before.is_empty() {
-                        "  missing, the deploy will stop"
-                    } else {
-                        "  missing; hooks.before must create it"
-                    },
-                    theme::muted(),
-                ),
-            ])
-        });
-    }
+    step.commands("setup", "server", &pipeline.setup.run.server);
+    step.commands("setup", "check", &pipeline.setup.check.server);
+    let health = &pipeline.health;
+    let waits = match &health.url {
+        Some(url) => format!("{url} · {}s", health.timeout_secs),
+        None => format!("systemd active · {}s", health.timeout_secs),
+    };
+    step.text("health", "waits", waits);
+    step.commands("health", "server", &health.check.server);
+    step.commands("health", "local", &health.check.local);
+    let rollback = match health.rollback {
+        Rollback::Ask => format!("asks, then rolls back after {ROLLBACK_ANSWER_SECS}s"),
+        Rollback::Auto => "rolls back at once".to_string(),
+    };
+    step.text("health", "failing", rollback);
+    step.commands("done", "server", &pipeline.done.run.server);
+    step.commands("done", "local", &pipeline.done.run.local);
+    step.commands("failed", "local", &pipeline.failed.run.local);
 
     section(&mut lines, "Policy");
     field(
         &mut lines,
-        "releases",
+        "keeps",
         vec![Span::styled(
             format!(
                 "{} unpacked + {} compressed",
-                config.releases.open, config.releases.compressed
+                service.keep.open, service.keep.compressed
             ),
             theme::text(),
         )],
     );
-    let health = match &config.health.url {
-        Some(url) => format!("active + {url} within {}s", config.health.timeout_secs),
-        None => format!("systemd active within {}s", config.health.timeout_secs),
-    };
-    field(
-        &mut lines,
-        "health",
-        vec![Span::styled(health, theme::text())],
-    );
+    if !service.shared.is_empty() {
+        field(
+            &mut lines,
+            "shared",
+            vec![Span::styled(service.shared.join(", "), theme::text())],
+        );
+    }
+    if let Some(file) = &service.env_file {
+        field(
+            &mut lines,
+            "env file",
+            vec![Span::styled(file.clone(), theme::text())],
+        );
+    }
     let unit = if deployable.unit_template_path().is_file() {
         "service.template"
     } else {
@@ -327,6 +287,52 @@ fn details(
             .block(theme::panel(deployable.slug.clone(), false)),
         area,
     );
+}
+
+/// Pipeline rows: the step's name once, then where each line runs.
+struct Step<'a> {
+    lines: &'a mut Vec<Line<'static>>,
+    last: &'static str,
+}
+
+impl<'a> Step<'a> {
+    fn new(lines: &'a mut Vec<Line<'static>>) -> Self {
+        Self { lines, last: "" }
+    }
+
+    fn row(&mut self, step: &'static str, side: &str, value: Span<'static>) {
+        let name = if step == self.last { "" } else { step };
+        self.last = step;
+        let side_color = match side {
+            "local" => OK,
+            "server" | "check" => VIOLET,
+            _ => MUTED,
+        };
+        self.lines.push(Line::from(vec![
+            Span::styled(format!("  {name:<10}"), theme::text()),
+            Span::styled(format!("{side:<8}"), Style::new().fg(side_color)),
+            value,
+        ]));
+    }
+
+    fn commands(&mut self, step: &'static str, side: &str, commands: &Commands) {
+        for (index, command) in commands.iter().enumerate() {
+            let side = if index == 0 { side } else { "" };
+            self.row(
+                step,
+                side,
+                Span::styled(command.trim().to_string(), theme::text()),
+            );
+        }
+    }
+
+    fn text(&mut self, step: &'static str, side: &str, text: String) {
+        self.row(step, side, Span::styled(text, theme::text()));
+    }
+
+    fn faint(&mut self, step: &'static str, text: &str) {
+        self.row(step, "", Span::styled(text.to_string(), theme::faint()));
+    }
 }
 
 fn section(lines: &mut Vec<Line<'static>>, title: &str) {
@@ -343,32 +349,9 @@ fn field(lines: &mut Vec<Line<'static>>, name: &str, value: Vec<Span<'static>>) 
     lines.push(Line::from(spans));
 }
 
-fn problems(frame: &mut Frame, area: Rect, app: &App) {
-    let mut lines = Vec::new();
-    for (folder, err) in &app.broken {
-        let name = folder
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        lines.push(Line::from(Span::styled(
-            format!("✘ {name}"),
-            theme::bold(ERR),
-        )));
-        lines.push(Line::from(Span::styled(format!("  {err}"), theme::muted())));
-    }
-    let block = theme::panel(format!("Problems · {}", app.broken.len()), false)
-        .border_style(Style::new().fg(ERR));
-    frame.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .block(block),
-        area,
-    );
-}
-
 fn empty(frame: &mut Frame, area: Rect, app: &App) {
     let root = app.root.display().to_string();
-    let mut lines = vec![
+    let lines = vec![
         Line::from(Span::styled("No deployables yet", theme::bold(ACCENT))),
         Line::default(),
         Line::from(Span::styled(
@@ -390,19 +373,6 @@ fn empty(frame: &mut Frame, area: Rect, app: &App) {
             theme::muted(),
         )),
     ];
-    if !app.broken.is_empty() {
-        lines.push(Line::default());
-        lines.push(Line::from(Span::styled(
-            "These folders have a config that could not be used:",
-            Style::new().fg(ERR),
-        )));
-        for (folder, err) in &app.broken {
-            lines.push(Line::from(Span::styled(
-                format!("✘ {}: {err}", folder.display()),
-                Style::new().fg(ERR),
-            )));
-        }
-    }
     let height = (lines.len() as u16 + 4).min(area.height);
     let box_area = area.centered(Constraint::Percentage(70), Constraint::Length(height));
     frame.render_widget(

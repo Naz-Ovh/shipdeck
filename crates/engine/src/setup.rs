@@ -24,12 +24,17 @@ pub struct SetupCommand {
 /// The script at the tag of this shipdeck version, so what runs as root only
 /// changes with a new release.
 pub fn script_url() -> String {
+    raw_url(SCRIPT_NAME)
+}
+
+/// A file at the root of the shipdeck repository, at this version's tag.
+pub fn raw_url(file: &str) -> String {
     let repository = env!("CARGO_PKG_REPOSITORY").trim_end_matches('/');
     let path = repository
         .strip_prefix("https://github.com/")
         .unwrap_or(repository);
     format!(
-        "https://raw.githubusercontent.com/{path}/v{}/{SCRIPT_NAME}",
+        "https://raw.githubusercontent.com/{path}/v{}/{file}",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -70,9 +75,9 @@ pub fn arguments(deployable: &Deployable, public_key: Option<&str>) -> Vec<Strin
         "--user".to_string(),
         deployable.endpoint.user.clone(),
         "--dir".to_string(),
-        deployable.config.remote.dir.clone(),
+        deployable.config.service.dir.clone(),
         "--service".to_string(),
-        deployable.config.remote.service.clone(),
+        deployable.config.service.name.clone(),
     ];
     if let Some(key) = public_key {
         args.push("--key".to_string());

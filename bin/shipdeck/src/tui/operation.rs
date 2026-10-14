@@ -14,7 +14,7 @@ use shipdeck_engine::deploy::report::{Outcome, StepState, Unit};
 use shipdeck_engine::human;
 use shipdeck_engine::release::ReleaseName;
 
-use super::app::{App, OpKind, Operation, Progress, StepView};
+use super::app::{App, Modal, OpKind, Operation, Progress, StepView};
 use super::theme::{self, ACCENT, BORDER, ERR, OK, SURFACE, TEXT, VIOLET, WARN};
 
 pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
@@ -46,7 +46,7 @@ fn banner(frame: &mut Frame, area: Rect, app: &App, op: &Operation) {
     let (title, color) = match (&op.kind, &op.finished) {
         (_, None) => (op_title(op), ACCENT),
         (_, Some((Outcome::Succeeded { .. }, _))) => (op_title(op), OK),
-        (_, Some((Outcome::RolledBack { .. }, _))) => (op_title(op), WARN),
+        (_, Some((Outcome::RolledBack { .. } | Outcome::Kept { .. }, _))) => (op_title(op), WARN),
         (_, Some(_)) => (op_title(op), ERR),
     };
     let block = Block::bordered()
@@ -79,7 +79,7 @@ fn banner(frame: &mut Frame, area: Rect, app: &App, op: &Operation) {
                 Span::styled(config.name.clone(), theme::bold(TEXT)),
                 Span::styled("  →  ", theme::faint()),
                 Span::styled(
-                    format!("{}:{}", deployable.endpoint.label(), config.remote.dir),
+                    format!("{}:{}", deployable.endpoint.label(), config.service.dir),
                     theme::muted(),
                 ),
             ],
@@ -91,7 +91,16 @@ fn banner(frame: &mut Frame, area: Rect, app: &App, op: &Operation) {
     let second = match &op.finished {
         None => {
             let running = op.steps.iter().find(|s| s.state == StepState::Running);
-            let what = running.map(|s| s.name).unwrap_or("Starting");
+            let asking = app
+                .modals
+                .iter()
+                .any(|m| matches!(m, Modal::AskRollback { op: id, .. } if *id == op.id));
+            let what = match running {
+                _ if asking => "Waiting for your answer",
+                Some(step) => step.name,
+                None if op.completed_steps() > 0 => "Working",
+                None => "Starting",
+            };
             Line::from(vec![
                 Span::styled(
                     format!("{} ", theme::spinner(app.tick)),
@@ -147,6 +156,15 @@ fn outcome_line(op: &Operation, outcome: &Outcome) -> Line<'static> {
             Span::styled(format!("  {failed_step} failed: "), theme::bold(WARN)),
             Span::styled(first_line(error), Style::new().fg(WARN)),
             Span::styled(format!("  · {to} is live again"), theme::muted()),
+        ]),
+        Outcome::Kept { error, release } => Line::from(vec![
+            theme::badge("KEPT", WARN),
+            Span::styled(format!("  {failed_step} failed: "), theme::bold(WARN)),
+            Span::styled(first_line(error), Style::new().fg(WARN)),
+            Span::styled(
+                format!("  · {release} stays live as you chose"),
+                theme::muted(),
+            ),
         ]),
         Outcome::RollbackFailed {
             error,
@@ -266,7 +284,7 @@ fn progress(frame: &mut Frame, area: Rect, op: &Operation, tick: u64) {
     let color = match &op.finished {
         None => ACCENT,
         Some((Outcome::Succeeded { .. }, _)) => OK,
-        Some((Outcome::RolledBack { .. }, _)) => WARN,
+        Some((Outcome::RolledBack { .. } | Outcome::Kept { .. }, _)) => WARN,
         Some(_) => ERR,
     };
     frame.render_widget(

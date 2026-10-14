@@ -1,6 +1,6 @@
 //! What shipdeck does on the server, as small `sh` scripts over one session.
 //!
-//! Layout under `remote.dir`:
+//! Layout under `service.dir`:
 //! `current -> releases/<id>`, `releases/<id>/`, `backups/<id>.tar.gz`, `shared/`.
 
 mod health;
@@ -11,11 +11,12 @@ pub use health::{HttpCheck, Probe};
 pub use preflight::Facts;
 pub use releases::{Kind, Listing, ReleaseEntry, RotationPlan, Status, plan_rotation};
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anyhow::{Result, bail};
 
-use crate::config::RemoteConfig;
+use crate::config::{Service, release_path};
 use crate::deploy::report::{LogKind, Reporter};
 use crate::release::is_safe_id;
 use crate::ssh::{Output, Session, Stream, sh_quote};
@@ -27,11 +28,11 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(session: Arc<Session>, remote: &RemoteConfig) -> Self {
+    pub fn new(session: Arc<Session>, service: &Service) -> Self {
         Self {
             session,
-            dir: remote.dir.clone(),
-            service: remote.service.clone(),
+            dir: service.dir.clone(),
+            service: service.name.clone(),
         }
     }
 
@@ -162,29 +163,85 @@ sudo -n systemctl enable {svc_q} 2>&1",
         Ok(())
     }
 
-    /// Runs one `hooks.server` command inside `releases/<id>`, streaming its
-    /// output to the log.
-    pub async fn hook(&self, id: &str, command: &str, report: &Reporter) -> Result<()> {
+    /// Links each `service.shared` folder into `releases/<id>`, creating it
+    /// in `shared/` the first time.
+    pub async fn link_shared(&self, id: &str, shared: &[String], report: &Reporter) -> Result<()> {
         ensure_id(id)?;
-        let dir = &self.dir;
+        if shared.is_empty() {
+            return Ok(());
+        }
+        let mut script = format!("set -e\ncd {}\n", self.q_dir());
+        for entry in shared {
+            let entry = release_path(entry);
+            let link = sh_quote(&format!("releases/{id}/{entry}"));
+            script.push_str(&format!(
+                "mkdir -p {shared}
+if [ -e {link} ] || [ -L {link} ]; then echo {exists} >&2; exit 1; fi
+mkdir -p \"$(dirname {link})\"
+ln -s {target} {link}
+echo {done}
+",
+                shared = sh_quote(&format!("shared/{entry}")),
+                target = sh_quote(&format!("{}/shared/{entry}", self.dir)),
+                exists = sh_quote(&format!(
+                    "releases/{id}/{entry} came in the release, but it is shared"
+                )),
+                done = sh_quote(&format!("{entry} -> shared/{entry}")),
+            ));
+        }
+        self.run("link service.shared into the release", &script, report)
+            .await?;
+        Ok(())
+    }
+
+    /// Runs one command from deploy.yaml at `place`, streaming its output.
+    /// It sees `service.env`, then `service.env_file` (as systemd reads it:
+    /// no shell expansion), then `vars`.
+    pub async fn command(
+        &self,
+        place: &Place,
+        command: &str,
+        env: &CommandEnv,
+        report: &Reporter,
+    ) -> Result<()> {
+        let (dir, shown, env_file) = match place {
+            Place::AppDir => (
+                self.dir.clone(),
+                "in service.dir".to_string(),
+                env.env_file.as_ref().map(|f| format!("current/{f}")),
+            ),
+            Place::Release(id) => {
+                ensure_id(id)?;
+                (
+                    format!("{}/releases/{id}", self.dir),
+                    format!("in releases/{id}"),
+                    env.env_file.clone(),
+                )
+            }
+            Place::Current => (
+                format!("{}/current", self.dir),
+                "in current".to_string(),
+                env.env_file.clone(),
+            ),
+        };
+        let mut script = format!("set -e\ncd {}\n", sh_quote(&dir));
+        for (key, value) in &env.service {
+            script.push_str(&format!("export {key}={}\n", sh_quote(value)));
+        }
+        if let Some(file) = env_file {
+            script.push_str(ENV_FILE_READER);
+            script.push_str(&format!("shipdeck_env {}\n", sh_quote(&file)));
+        }
+        for (key, value) in &env.vars {
+            script.push_str(&format!("export {key}={}\n", sh_quote(value)));
+        }
         // The command is shell by design: it comes from deploy.yaml, written
         // by whoever deploys, and runs as the deploy user.
-        let script = format!(
-            "set -e
-cd {release}
-export SHIPDECK_RELEASE={id} SHIPDECK_APP_DIR={app} SHIPDECK_SHARED_DIR={shared}
-{command}",
-            release = sh_quote(&format!("{dir}/releases/{id}")),
-            app = sh_quote(dir),
-            shared = sh_quote(&format!("{dir}/shared")),
-        );
+        script.push_str(command);
+        script.push('\n');
         report.log(
             LogKind::Command,
-            format!(
-                "{} › {}  (in releases/{id})",
-                self.session.label,
-                command.trim()
-            ),
+            format!("{} › {}  ({shown})", self.session.label, command.trim()),
         );
         let out = self
             .session
@@ -218,6 +275,53 @@ export SHIPDECK_RELEASE={id} SHIPDECK_APP_DIR={app} SHIPDECK_SHARED_DIR={shared}
         Ok(out.stdout.lines().map(str::to_string).collect())
     }
 }
+
+/// Where a command from deploy.yaml runs on the server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Place {
+    /// `service.dir`, for preflight; the env file is the live release's.
+    AppDir,
+    /// `releases/<id>`, for setup, while the old release is still live.
+    Release(String),
+    /// `current`, for health and done.
+    Current,
+}
+
+/// What a server command sees besides the deploy user's environment.
+#[derive(Debug, Clone, Default)]
+pub struct CommandEnv {
+    /// `service.env`.
+    pub service: BTreeMap<String, String>,
+    /// `service.env_file`, relative to the release.
+    pub env_file: Option<String>,
+    /// `SHIPDECK_*`.
+    pub vars: Vec<(&'static str, String)>,
+}
+
+/// Exports the `KEY=value` lines of a file the way systemd's
+/// `EnvironmentFile=` reads them: comments and blank lines skipped, an
+/// optional `export`, one pair of surrounding quotes removed, nothing
+/// expanded. A missing file is skipped.
+const ENV_FILE_READER: &str = r#"shipdeck_env() {
+  [ -f "$1" ] || return 0
+  cr=$(printf '\r')
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%"$cr"}
+    line=${line#"${line%%[![:space:]]*}"}
+    case $line in ''|'#'*|';'*) continue ;; esac
+    line=${line#export }
+    key=${line%%=*}
+    [ "$key" = "$line" ] && continue
+    value=${line#*=}
+    case $key in ''|[0-9]*|*[!A-Za-z0-9_]*) continue ;; esac
+    case $value in
+      \"*\") value=${value#\"}; value=${value%\"} ;;
+      \'*\') value=${value#\'}; value=${value%\'} ;;
+    esac
+    export "$key=$value"
+  done < "$1"
+}
+"#;
 
 /// The commands that need root, without `sudo`, for an app in `dir` run as
 /// `service`. The sudoers rule must allow exactly these; changing one breaks

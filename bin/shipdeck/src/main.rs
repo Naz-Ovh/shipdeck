@@ -2,7 +2,9 @@
 
 mod tui;
 
+use std::io::IsTerminal;
 use std::path::PathBuf;
+use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
@@ -23,8 +25,8 @@ use shipdeck_engine::ssh::{Login, Pool};
 )]
 struct Cli {
     /// Folder whose subfolders each hold a deploy.yaml
-    #[arg(value_name = "DEPLOY_ROOT")]
-    root: PathBuf,
+    #[arg(value_name = "DEPLOY_ROOT", required_unless_present = "schema")]
+    root: Option<PathBuf>,
 
     /// Log in with this private key file
     #[arg(long, value_name = "PATH", conflicts_with = "password")]
@@ -33,13 +35,24 @@ struct Cli {
     /// Log in with this password (it lands in your shell history)
     #[arg(long, value_name = "PASSWORD")]
     password: Option<String>,
+
+    /// Print the JSON Schema of deploy.yaml, for editor completion
+    #[arg(long)]
+    schema: bool,
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> Result<ExitCode> {
     let cli = Cli::parse();
-    if !cli.root.is_dir() {
-        bail!("{} is not a folder", cli.root.display());
+    if cli.schema {
+        print!("{}", config::schema::text());
+        return Ok(ExitCode::SUCCESS);
+    }
+    let root = cli
+        .root
+        .expect("clap requires DEPLOY_ROOT without --schema");
+    if !root.is_dir() {
+        bail!("{} is not a folder", root.display());
     }
     let login = match (cli.key, cli.password) {
         (Some(key), _) => {
@@ -52,14 +65,22 @@ async fn main() -> Result<()> {
         (None, Some(password)) => Login::Password(password),
         (None, None) => Login::Auto,
     };
-    let discovery = config::discover(&cli.root)
-        .with_context(|| format!("looking for deployables in {}", cli.root.display()))?;
+    let discovery = config::discover(&root)
+        .with_context(|| format!("looking for deployables in {}", root.display()))?;
+    if !discovery.problems.is_empty() {
+        // Every problem in every file at once, then no TUI: a deploy from a
+        // config shipdeck cannot fully read is never offered.
+        let base = std::env::current_dir().unwrap_or_default();
+        let color = std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+        eprint!("{}", config::render(&discovery.problems, &base, color));
+        return Ok(ExitCode::FAILURE);
+    }
 
     let (questions_tx, questions) = unbounded_channel();
     let (ops_tx, ops) = unbounded_channel();
     let (fetched_tx, fetched) = unbounded_channel();
     let pool = Arc::new(Pool::new(login, questions_tx));
-    let app = tui::App::new(cli.root, discovery, pool, ops_tx, fetched_tx);
+    let app = tui::App::new(root, discovery, pool, ops_tx, fetched_tx);
     tui::run(
         app,
         tui::Inbox {
@@ -68,7 +89,8 @@ async fn main() -> Result<()> {
             fetched,
         },
     )
-    .await
+    .await?;
+    Ok(ExitCode::SUCCESS)
 }
 
 /// `~/.ssh/id_ed25519` → `/home/me/.ssh/id_ed25519`; zsh expands `~` only

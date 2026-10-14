@@ -1,26 +1,26 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
 # A Rust service: compiled here, only the binary and its .env travel.
 name: My API (prod)
+project: ../../../my-api          # your source, relative to this file
 
 ssh:
-  host: prod            # an address, or an alias from ~/.ssh/config
-  user: deploy          # optional when the alias has a User
+  host: prod                      # an address, or an alias from ~/.ssh/config
+  user: deploy                    # optional when the alias has a User
 
-build:
-  cwd: ../../../my-api  # relative to this folder
-  # Build against the server's glibc so the binary runs there:
-  # cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31
-  command: [cargo, build, --release, -p, my-api]
-  binary: target/release/my-api
-  # version_from: ../../../my-api/Cargo.toml   # found in build.cwd when unset
+service:
+  name: my-api                    # my-api.service
+  dir: /opt/my-api                # current/ releases/ backups/ shared/
+  start: ./my-api -E=.env         # default: ./<binary>
 
-remote:
-  dir: /opt/my-api
-  service: my-api
-  args: [-E=.env]       # after the binary in ExecStart=
-
-bundle:
-  - .env                # from this folder; gitignored
-
-health:
-  url: http://127.0.0.1:8080/health
-  timeout_secs: 20
+pipeline:
+  build:
+    run:
+      # Build against the server's glibc so the binary runs there.
+      local: cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31
+  pack:
+    binary: target/x86_64-unknown-linux-gnu/release/my-api
+    files:
+      include:
+        deploy: [.env]            # next to this file; gitignored
+  health:
+    url: http://127.0.0.1:8080/health

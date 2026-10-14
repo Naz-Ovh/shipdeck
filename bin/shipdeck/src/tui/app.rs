@@ -10,11 +10,12 @@ use ratatui::widgets::{ListState, TableState};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 
+use shipdeck_engine::bundle::files::{self, Source};
 use shipdeck_engine::config::{Deployable, Discovery};
+use shipdeck_engine::deploy;
 use shipdeck_engine::deploy::report::{
-    LogKind, OpEvent, OpId, OpUpdate, Outcome, Reporter, StepState, Unit,
+    LogKind, OpEvent, OpId, OpUpdate, Outcome, Reporter, RollbackQuestion, StepState, Unit,
 };
-use shipdeck_engine::deploy::{self, ROLLBACK_STEPS};
 use shipdeck_engine::remote::{Kind, Listing, Server, Status};
 use shipdeck_engine::setup::{self, SetupCommand};
 
@@ -172,7 +173,8 @@ impl Operation {
             .count()
     }
 
-    fn apply(&mut self, event: OpEvent) {
+    /// Applies one event; a rollback question is handed back for a dialog.
+    fn apply(&mut self, event: OpEvent) -> Option<RollbackQuestion> {
         match event {
             OpEvent::Step {
                 step,
@@ -231,8 +233,10 @@ impl Operation {
                 }
             }
             OpEvent::Release(id) => self.release = Some(id),
+            OpEvent::AskRollback(question) => return Some(question),
             OpEvent::Finished(outcome) => self.finished = Some((outcome, Instant::now())),
         }
+        None
     }
 }
 
@@ -252,6 +256,8 @@ pub struct ReleasesView {
 pub enum Modal {
     ConfirmDeploy {
         deployable: usize,
+        /// Why files from the deploy folder cannot be shipped yet, if so.
+        missing: Option<String>,
     },
     ConfirmRollback {
         deployable: usize,
@@ -260,6 +266,14 @@ pub enum Modal {
         current: Option<String>,
     },
     ConfirmQuit,
+    /// A release failed after the switch: roll back, or keep it? With no
+    /// answer by `deadline` the deploy rolls back on its own.
+    AskRollback {
+        op: OpId,
+        deployable: usize,
+        question: RollbackQuestion,
+        deadline: Instant,
+    },
     /// The one-time server setup command for a deployable.
     Setup {
         deployable: usize,
@@ -294,7 +308,6 @@ pub struct Toast {
 pub struct App {
     pub root: PathBuf,
     pub deployables: Vec<Deployable>,
-    pub broken: Vec<(PathBuf, String)>,
     pub live: Vec<Live>,
     pub list: ListState,
     pub screen: Screen,
@@ -328,7 +341,6 @@ impl App {
         Self {
             root,
             deployables: discovery.deployables,
-            broken: discovery.broken,
             live: vec![Live::Unknown; count],
             list,
             screen: Screen::Deployables,
@@ -364,13 +376,14 @@ impl App {
 
     pub fn on_tick(&mut self) {
         self.tick = self.tick.wrapping_add(1);
-        if self
-            .toast
-            .as_ref()
-            .is_some_and(|t| Instant::now() > t.until)
-        {
+        let now = Instant::now();
+        if self.toast.as_ref().is_some_and(|t| now > t.until) {
             self.toast = None;
         }
+        // The deploy has stopped waiting by now and rolls back on its own.
+        self.modals.retain(
+            |modal| !matches!(modal, Modal::AskRollback { deadline, .. } if now >= *deadline),
+        );
     }
 
     // ── background work ────────────────────────────────────────────────
@@ -390,7 +403,7 @@ impl App {
         tokio::spawn(async move {
             let result = async {
                 let session = pool.get(&deployable.endpoint).await?;
-                Server::new(session, &deployable.config.remote)
+                Server::new(session, &deployable.config.service)
                     .status()
                     .await
             }
@@ -423,7 +436,9 @@ impl App {
         tokio::spawn(async move {
             let result = async {
                 let session = pool.get(&deployable.endpoint).await?;
-                Server::new(session, &deployable.config.remote).list().await
+                Server::new(session, &deployable.config.service)
+                    .list()
+                    .await
             }
             .await
             .map_err(|err| format!("{err:#}"));
@@ -463,9 +478,22 @@ impl App {
             return;
         };
         let finished = matches!(update.event, OpEvent::Finished(_));
-        op.apply(update.event);
+        let index = op.deployable;
+        if let Some(question) = op.apply(update.event) {
+            let deadline = Instant::now() + Duration::from_secs(question.seconds);
+            // In front of everything else: the countdown is already running.
+            self.modals.push_front(Modal::AskRollback {
+                op: update.op,
+                deployable: index,
+                question,
+                deadline,
+            });
+            self.screen = Screen::Operation;
+        }
         if finished {
-            let index = op.deployable;
+            let op_id = update.op;
+            self.modals
+                .retain(|modal| !matches!(modal, Modal::AskRollback { op, .. } if *op == op_id));
             self.refresh_status(index);
             if self
                 .releases
@@ -524,13 +552,14 @@ impl App {
         }
         let deployable = self.deployables[index].clone();
         let id = self.next_op_id();
+        let steps = deploy::rollback_step_names(&deployable.config);
         self.op = Some(Operation::new(
             id,
             OpKind::Rollback {
                 target: target.clone(),
             },
             index,
-            &ROLLBACK_STEPS,
+            &steps,
         ));
         self.screen = Screen::Operation;
         let reporter = Reporter::new(id, self.ops.clone());
@@ -651,8 +680,13 @@ impl App {
                     if self.op_running() {
                         self.notify("An operation is already running", Tone::Warn);
                     } else {
-                        self.modals
-                            .push_back(Modal::ConfirmDeploy { deployable: index });
+                        let missing = files::walk_source(&self.deployables[index], Source::Deploy)
+                            .err()
+                            .map(|err| format!("{err:#}"));
+                        self.modals.push_back(Modal::ConfirmDeploy {
+                            deployable: index,
+                            missing,
+                        });
                     }
                 }
             }
@@ -806,7 +840,7 @@ impl App {
                     self.modals.pop_front();
                 }
             }
-            Modal::ConfirmDeploy { deployable } => {
+            Modal::ConfirmDeploy { deployable, .. } => {
                 let index = *deployable;
                 match key.code {
                     KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
@@ -854,6 +888,17 @@ impl App {
                     || ctrl_c
                 {
                     self.modals.pop_front();
+                }
+            }
+            Modal::AskRollback { .. } => {
+                let answer = match key.code {
+                    KeyCode::Char('y') | KeyCode::Char('Y') => true,
+                    KeyCode::Char('n') | KeyCode::Char('N') => false,
+                    _ => return,
+                };
+                if let Some(Modal::AskRollback { question, .. }) = self.modals.pop_front() {
+                    // The deploy may have stopped waiting a moment ago.
+                    let _ = question.reply.send(answer);
                 }
             }
             Modal::ConfirmQuit => match key.code {

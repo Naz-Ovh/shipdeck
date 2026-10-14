@@ -17,8 +17,8 @@ fn deployable(service: &str, identity: Option<PathBuf>) -> Deployable {
     let config: DeployConfig = serde_json::from_value(serde_json::json!({
         "name": "My API (prod)",
         "ssh": { "host": "prod", "user": "deploy" },
-        "build": { "command": ["cargo", "build"], "binary": "target/release/my-api" },
-        "remote": { "dir": "/opt/my-api", "service": service },
+        "service": { "name": service, "dir": "/opt/my-api" },
+        "pipeline": { "pack": { "binary": "target/release/my-api" } },
     }))
     .unwrap();
     let found = HostConfig {

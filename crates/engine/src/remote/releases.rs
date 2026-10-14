@@ -5,7 +5,7 @@
 use anyhow::Result;
 
 use super::{Server, ensure_id};
-use crate::config::Retention;
+use crate::config::Keep;
 use crate::deploy::report::Reporter;
 use crate::release::{Manifest, ReleaseName, is_safe_id};
 
@@ -65,7 +65,7 @@ impl RotationPlan {
 
 /// Keeps `current` plus the newest releases up to `keep.open` unpacked, then
 /// the next `keep.compressed` as tarballs; everything older goes.
-pub fn plan_rotation(listing: &Listing, keep: Retention) -> RotationPlan {
+pub fn plan_rotation(listing: &Listing, keep: Keep) -> RotationPlan {
     let named = |kind: Kind| {
         listing
             .entries

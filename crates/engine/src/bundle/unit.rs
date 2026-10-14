@@ -3,19 +3,18 @@
 
 use anyhow::{Context, Result, bail};
 
-use crate::config::{Deployable, Program, bundle_path};
+use crate::config::{Deployable, Program, release_path};
 use crate::release::ReleaseName;
 
 const DEFAULT_TEMPLATE: &str = include_str!("default.service");
 
 /// The placeholders a template may use.
-pub const PLACEHOLDERS: [&str; 12] = [
-    "name", "tag", "id", "version", "git", "dir", "service", "user", "exec", "binary", "args",
-    "env",
+pub const PLACEHOLDERS: [&str; 11] = [
+    "name", "tag", "id", "version", "git", "dir", "service", "user", "exec", "binary", "env",
 ];
 
 /// Renders the unit. `start_path` is where preflight found the start
-/// program on the server, when `remote.start` names one like `node`.
+/// program on the server, when `service.start` names one like `node`.
 pub fn render_for(
     deployable: &Deployable,
     release: &ReleaseName,
@@ -28,18 +27,18 @@ pub fn render_for(
         DEFAULT_TEMPLATE.to_string()
     };
     let config = &deployable.config;
-    let env_file = config.remote.env_file.as_ref().map(|file| {
+    let service = &config.service;
+    let env_file = service.env_file.as_ref().map(|file| {
         format!(
             "EnvironmentFile={}/current/{}",
-            config.remote.dir,
-            bundle_path(file)
+            service.dir,
+            release_path(file)
         )
     });
     let env = env_file
         .into_iter()
         .chain(
-            config
-                .remote
+            service
                 .env
                 .iter()
                 .map(|(key, value)| format!("Environment=\"{key}={value}\"")),
@@ -52,12 +51,11 @@ pub fn render_for(
         Some(release.id()),
         Some(release.version.clone()),
         Some(release.git.clone()),
-        Some(config.remote.dir.clone()),
-        Some(config.remote.service.clone()),
+        Some(service.dir.clone()),
+        Some(service.name.clone()),
         Some(deployable.run_as().to_string()),
         Some(exec_start(deployable, start_path)),
         deployable.binary_name(),
-        Some(args(&config.remote.args)),
         Some(env),
     ];
     let vars: Vec<(&str, Option<String>)> = PLACEHOLDERS.iter().copied().zip(values).collect();
@@ -70,33 +68,20 @@ pub fn render_for(
     })
 }
 
-/// The `ExecStart=` command: `remote.start` (or the binary) with its
-/// program made absolute, then `remote.args`.
+/// The `ExecStart=` command: `service.start` (or the binary) with its
+/// program made absolute.
 pub fn exec_start(deployable: &Deployable, start_path: Option<&str>) -> String {
     let (program, rest) = deployable.start();
     let program = match program {
         Program::Absolute(path) => path,
-        Program::InRelease(path) => format!("{}/current/{path}", deployable.config.remote.dir),
+        Program::InRelease(path) => format!("{}/current/{path}", deployable.config.service.dir),
         // systemd finds a bare name on its own fixed PATH, which may not be
         // where preflight found it; the found path is the one to use.
         Program::Tool(name) => start_path.map(str::to_string).unwrap_or(name),
     };
-    [program, rest, args(&deployable.config.remote.args)]
+    [program, rest]
         .into_iter()
         .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn args(args: &[String]) -> String {
-    args.iter()
-        .map(|arg| {
-            if arg.contains(' ') {
-                format!("\"{arg}\"")
-            } else {
-                arg.clone()
-            }
-        })
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -116,7 +101,7 @@ pub fn render(template: &str, vars: &[(&str, Option<String>)]) -> Result<String>
         match vars.iter().find(|(name, _)| *name == key) {
             Some((_, Some(value))) => out.push_str(value),
             Some((_, None)) => bail!(
-                "{{{{{key}}}}} has no value: this deployable has no build.binary; use {{{{exec}}}}"
+                "{{{{{key}}}}} has no value: this deployable has no pipeline.pack.binary; use {{{{exec}}}}"
             ),
             None => bail!(
                 "unknown placeholder {{{{{key}}}}}; known: {}",

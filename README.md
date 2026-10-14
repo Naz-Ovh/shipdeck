@@ -5,10 +5,9 @@ over SSH, and runs it there as a systemd service. Every deploy is kept as its
 own release, so any of them can go live again from the Releases screen.
 
 It exists for servers too small to build on. Whatever the language (Rust, Go,
-Node.js, Python, ...), the build happens locally, and only its output, the
-`.env` and any extra files travel. What the server still has to do itself,
-such as installing Node dependencies, runs there as a hook inside the new
-release, before it goes live.
+Node.js, Python, ...), the build happens locally and only what you list
+travels. Each step of the pipeline can run your own commands, and
+`deploy.yaml` says plainly which ones run on your PC and which on the server.
 
 ## Run it
 
@@ -19,6 +18,7 @@ cargo run --release -p shipdeck -- <deploy-root> [--key <path> | --password <val
 cargo install --git https://github.com/Naz-Ovh/shipdeck shipdeck
 shipdeck ./scripts/deploy --key ~/.ssh/id_ed25519
 shipdeck ./scripts/deploy                 # asks for the password in the TUI
+shipdeck --schema > deploy.schema.json    # the JSON Schema, for offline editors
 ```
 
 | Flag | Login |
@@ -47,134 +47,307 @@ scripts/deploy/
 ├── api-prod/
 │   ├── deploy.yaml          committed
 │   ├── service.template     optional: replaces the built-in systemd unit
-│   ├── files/               optional: bundled as they are
+│   ├── config.yaml          optional: shipped with pipeline.pack.files.include.deploy
 │   └── .env                 gitignored
 └── web-prod/
 ```
 
-Coming from shipdeck 0.1? It read `deploy.json`; a folder with only that file
-is listed under Problems. JSON is valid YAML, so renaming it to `deploy.yaml`
-is enough; then add whatever new fields you want.
+shipdeck reads every `deploy.yaml` before it starts. If any of them has a
+mistake, it does not start, and prints every problem in every file at once
+(see [Mistakes](#mistakes-are-caught-before-anything-runs)).
 
-### deploy.yaml
-
-A Rust service:
+## deploy.yaml
 
 ```yaml
-name: My API (prod)
-
-ssh:
-  host: prod                    # an address, or an alias from ~/.ssh/config
-  user: deploy                  # optional when the alias has a User
-
-build:
-  cwd: ../../../my-api          # relative to this folder
-  command: [cargo, build, --release, -p, my-api]
-  binary: target/release/my-api
-
-remote:
-  dir: /opt/my-api
-  service: my-api
-  args: [-E=.env]
-
-bundle: [.env]
-
-health:
-  url: http://127.0.0.1:8080/health
-```
-
-A Node.js app, built here, with its production dependencies installed on the
-server:
-
-```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
 name: Web (prod)
-
+project: ../../../web                       # your source; local commands run here
 ssh:
-  host: prod
-
-hooks:
-  before: [npm test]            # this machine, before anything else
-  server: [npm ci --omit=dev]   # the server, inside the new release, before it goes live
-  after: [./notify.sh]          # this machine, once it is live
-
-build:
-  cwd: ../../../web
-  command: npm ci && npm run build
-  files: [dist, package.json, package-lock.json]
-
-remote:
-  dir: /opt/web
-  service: web
-  start: node dist/main.js
-  requires: [npm]
-  env_file: .env
-
-bundle: [.env]
+  host: prod                                # address or ~/.ssh/config alias
+  user: deploy
+service:
+  name: web                                 # web.service
+  dir: /opt/web                             # current/ releases/ backups/ shared/
+  start: node dist/main.js                  # default: ./<binary>
+  env_file: .env                            # also loaded for server commands
+  env: { NODE_ENV: production }
+  shared: [uploads]                         # kept across releases
+  keep: { open: 5, compressed: 15 }
+pipeline:
+  preflight:
+    requires: [node, npm]
+    run:
+      server: pg_isready -q
+      local: npm test
+  build:
+    version_from: package.json
+    run:
+      local: [npm ci, npm run build]
+  pack:
+    files:
+      include:
+        project: [dist, package.json, package-lock.json]
+        deploy: [.env]                      # next to this deploy.yaml
+      exclude:
+        project: ["**/*.map"]
+  # upload, unpack                          shipdeck
+  setup:                                    # in releases/<id>, old release still live
+    run:
+      server:
+        - npm ci --omit=dev
+        - npm run migrate
+    check:
+      server: node --check dist/main.js     # fails → release removed
+  # switch, restart                         shipdeck
+  health:
+    url: http://127.0.0.1:3000/health       # fetched on the server
+    check:
+      server: ./bin/smoke-test
+      local: curl -fsS https://web.example.com/health
+    timeout_secs: 20
+    rollback: ask                           # default; or auto
+  done:                                     # new release is live
+    run:
+      server: ./bin/warm-cache
+      local: ./notify.sh "web $SHIPDECK_VERSION is live"
+  failed:
+    run:
+      local: ./notify.sh "failed at $SHIPDECK_STEP"
 ```
 
-[`examples/`](examples) has complete, commented files for
-[Rust](examples/rust/deploy.yaml), [Go](examples/go/deploy.yaml),
-[Node.js](examples/node/deploy.yaml) and
+[`examples/`](examples) has complete files for [Rust](examples/rust/deploy.yaml),
+[Go](examples/go/deploy.yaml), [Node.js](examples/node/deploy.yaml) and
 [Python](examples/python/deploy.yaml); a test keeps them valid.
+
+### The steps
+
+| # | Step | shipdeck does | your commands |
+| --- | --- | --- | --- |
+| 1 | preflight | checks your PC and the server | `run.server` → `run.local` |
+| 2 | build | names the release | `run.local` |
+| 3 | pack | packs the binary and files | — |
+| 4 | upload | sends the archive to the server | — |
+| 5 | unpack | unpacks it into `releases/<id>`, links `service.shared` | — |
+| 6 | setup | nothing: the old release is still live | `run.server` → `check.server` |
+| 7 | switch | points `current` at `releases/<id>`, installs its unit | — |
+| 8 | restart | restarts the service | — |
+| 9 | health | waits until the service is active and `url` answers | `check.server` → `check.local` |
+| 10 | done | tidies old releases (`service.keep`) | `run.server` → `run.local` |
+| ✱ | failed | a step failed | `run.local` |
+
+`run` commands run once, in order, and stop at the first failure. `check`
+commands must pass; health retries them until `timeout_secs`. A step takes
+commands only where it can run them:
+
+| Step | local | server | Server commands run in | Settings | If it fails |
+| --- | --- | --- | --- | --- | --- |
+| preflight | `run` | `run` | `service.dir` | `requires` | stops; nothing touched |
+| build | `run` | ✘ | — | `version_from` | stops |
+| pack | ✘ | ✘ | — | `binary`, `files` | stops |
+| upload, unpack | ✘ | ✘ | — | — | the release is removed |
+| setup | ✘ | `run`, `check` | `releases/<id>` | — | the release is removed; the old one keeps serving |
+| switch, restart | ✘ | ✘ | — | — | asks, then rolls back |
+| health | `check` | `check` | `current` | `url`, `timeout_secs`, `rollback` | asks, then rolls back |
+| done | `run` | `run` | `current` | — | a warning only |
+| failed | `run` | ✘ | — | — | logged |
+
+Local commands run in `project`. Every command is one shell line (`sh -c`),
+so `&&`, pipes and `$VARS` work; give one, or a list.
+
+### Fields
 
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `name` | | Shown in the TUI and in the unit's `Description=` |
+| `project` | this folder | Your source folder, relative to this `deploy.yaml` |
 | `ssh.host` | | An address or a `~/.ssh/config` alias |
-| `ssh.user` | alias `User` | Who to log in as. Required if the alias has no `User`. |
+| `ssh.user` | alias `User` | Who to log in and deploy as. Required if the alias has no `User`. |
 | `ssh.port` | alias `Port`, else `22` | |
-| `hooks.before` | `[]` | Shell commands run on this machine in `build.cwd`, before anything else. A failure stops the deploy before the server is touched. They may create files the bundle needs, such as `.env`. |
-| `hooks.server` | `[]` | Shell commands run on the server inside the new release folder, after it is unpacked and before it goes live: `npm ci --omit=dev`, a virtualenv, migrations. A failure removes the release; the live one keeps running. |
-| `hooks.after` | `[]` | Shell commands run on this machine in `build.cwd` once the new release is live. A failure is only a warning. |
-| `build.cwd` | `.` | Where the build and the local hooks run, relative to the deployable folder |
-| `build.command` | none | A shell line (`npm ci && npm run build`, runs with `sh -c`) or a list (`[cargo, build]`, runs as given). Leave it out when the files ship as they are. Cargo's progress bar becomes the step's progress. |
-| `build.binary` | none | A compiled program, relative to `build.cwd`. It lands at the release root under its file name, and its CPU architecture and glibc floor are checked against the server. |
-| `build.files` | `[]` | Build output to ship (`dist`, `package.json`), relative to `build.cwd`. Each keeps its path in the release; links inside folders stay links. At least one of `binary` and `files` is needed. |
-| `build.version_from` | found | The file whose version names the release, relative to the deployable folder: `Cargo.toml` (`version.workspace = true` is followed), `package.json`, `pyproject.toml`, or any file whose first line is the version. Unset, the first of those found in `build.cwd` (with `VERSION` for the last), else the latest git tag, else `0.0.0`. |
-| `remote.dir` | | The app's folder on the server, e.g. `/opt/my-app` |
-| `remote.service` | | systemd service name, without `.service` |
-| `remote.start` | the binary | What the service runs, from the release folder: `node dist/main.js`, `./worker --port 8080`, `.venv/bin/python -m app`. A bare program name is looked up on the server at preflight and written into the unit with its full path. |
-| `remote.args` | `[]` | Arguments after the start command in `ExecStart=` |
-| `remote.requires` | `[]` | Programs the server must have, such as `npm`; checked at preflight. The program `remote.start` names is checked anyway. |
-| `remote.env_file` | none | A file in the release, such as `.env`, whose `KEY=value` lines become the service's environment (`EnvironmentFile=`) |
-| `remote.env` | `{}` | Extra `Environment=` lines for the unit |
-| `remote.run_as` | `ssh.user` | The user the service runs as. It must be able to read the release files. |
-| `releases.open` | `5` | Releases kept unpacked, ready for instant rollback |
-| `releases.compressed` | `15` | Older releases kept as `.tar.gz` after that |
-| `bundle` | `[]` | Files and folders from the deployable folder to ship. `.env*` files always get mode `0600`. |
-| `health.url` | none | If set, must answer 2xx (checked from the server with curl or wget) |
-| `health.timeout_secs` | `20` | How long the new release has to become healthy |
+| `service.name` | | The systemd unit, without `.service` |
+| `service.dir` | | The app's folder on the server, such as `/opt/my-app` |
+| `service.start` | `./<binary>` | What the service runs, from the release folder: `./my-api -E=.env`, `node dist/main.js`, `.venv/bin/python -m app`. A bare program name is looked up on the server at preflight and written into the unit with its full path. |
+| `service.run_as` | `ssh.user` | The user the service runs as. It must be able to read the release. |
+| `service.env_file` | none | A `KEY=value` file in the release, such as `.env`: the service's environment (`EnvironmentFile=`), and loaded for every server command too |
+| `service.env` | `{}` | Variables for the service (`Environment=`) and for server commands |
+| `service.shared` | `[]` | Folders kept across releases, such as `uploads`. Each lives in `shared/` and is linked into every release at unpack. |
+| `service.keep.open` | `5` | Releases kept unpacked, counting the live one, ready for instant rollback |
+| `service.keep.compressed` | `15` | Older releases kept as `.tar.gz` after that |
+| `pipeline.preflight.requires` | `[]` | Programs the server must have, such as `npm`. The program `service.start` names is checked anyway. |
+| `pipeline.build.version_from` | found | The file whose version names the release, relative to `project`: `Cargo.toml` (`version.workspace = true` is followed), `package.json`, `pyproject.toml`, or any file whose first line is the version. Unset, the first of those in `project` (`VERSION` for the last), else the latest git tag, else `0.0.0`. |
+| `pipeline.pack.binary` | none | A compiled program, relative to `project`. It lands at the release root, and its CPU and glibc floor are checked against the server. |
+| `pipeline.pack.files` | none | What else ships; see [Files](#files) |
+| `pipeline.health.url` | none | Must answer 2xx, fetched on the server with curl or wget |
+| `pipeline.health.timeout_secs` | `20` | How long the release has to become healthy, checks included |
+| `pipeline.health.rollback` | `ask` | `ask` or `auto`; see [When it fails](#when-it-fails-after-the-switch) |
 
-Unknown fields are an error that names the line, so a typo never passes
-silently. `build.files`, `bundle`, the binary, `release.json` and the unit
-all land at the release root, so two of them may not claim the same path.
+### Files
 
-### Hooks
+```yaml
+pack:
+  binary: target/release/my-api       # optional: a compiled program → release root
+  files:
+    include:
+      project: [dist, package.json]   # paths or globs, from project:
+      deploy: [.env, config.yaml]     # paths or globs, next to deploy.yaml
+    exclude:
+      project: ["**/*.map", "dist/**/*.test.js"]
+```
 
-Each hook is one shell command (`sh -c`), run in order; its output streams
-into the log. They see these variables:
+Every path keeps its place inside the release. Patterns are matched by
+[fast-glob](https://github.com/oxc-project/fast-glob), the syntax of
+fast-glob and Tailwind:
 
-| Variable | `before` | `server` | `after` |
-| --- | --- | --- | --- |
-| `SHIPDECK_NAME`, `SHIPDECK_HOST`, `SHIPDECK_FOLDER` (the deployable folder) | ✔ | | ✔ |
-| `SHIPDECK_APP_DIR` (`remote.dir`) | ✔ | ✔ | ✔ |
-| `SHIPDECK_RELEASE` (the release id) | | ✔ | ✔ |
-| `SHIPDECK_SHARED_DIR` (`<dir>/shared`) | | ✔ | |
+| Pattern | Matches |
+| --- | --- |
+| `dist` | the folder and everything in it |
+| `*.js`, `?` | names inside one folder |
+| `**/*.map` | at any depth, the top included |
+| `src/*.{js,ts}`, `{lib,bin}/**` | one of several (braces nest) |
+| `file[0-9].txt`, `[!_]*` | one character from a set, or not |
+| `"!src/**/*.test.js"` | in `include`: leave these out. In `exclude`: keep these. |
+| `dist/` | folders only |
+| `.` | the whole source |
+| `\*` | a literal `*` |
 
-Server hooks run as the deploy user over SSH, not under systemd, so they do
-not get `remote.env_file`. A migration that needs the `.env` loads it first:
-`set -a && . ./.env && set +a && npm run migrate`. Each release installs its
-own dependencies, so a rollback finds them already in place.
+- Names starting with a dot match like any other; `.git` is never shipped.
+- In `deploy`, `deploy.yaml` and `service.template` are never shipped.
+- A file from `deploy` replaces a project file at the same path (the log says so).
+- Quote a pattern that starts with `!` or `*`: YAML reads those as a tag or an alias.
+- Every `include` pattern must find something after the build, or the deploy stops at Build (Preflight for `deploy`).
+- `.env*` files always get mode `0600`; links inside folders stay links.
 
-### Tools on the server
+### Variables
+
+Every command sees these, besides its own environment:
+
+| Variable | Value |
+| --- | --- |
+| `SHIPDECK_ACTION` | `deploy`, or `rollback` for a manual rollback |
+| `SHIPDECK_STEP` | the step: `preflight`, `build`, ... In `failed`, the step that failed. |
+| `SHIPDECK_ERROR` | in `failed`: the first line of the error |
+| `SHIPDECK_RELEASE`, `SHIPDECK_VERSION` | the release going live, from build on (`v1.4.0-ab12cd3-…`, `1.4.0`) |
+| `SHIPDECK_PREVIOUS` | the release that was live before, if any |
+| `SHIPDECK_NAME`, `SHIPDECK_SERVICE`, `SHIPDECK_HOST` | `name`, `service.name`, `ssh.host` |
+| `SHIPDECK_APP_DIR`, `SHIPDECK_SHARED_DIR` | `service.dir` and its `shared/` |
+| `SHIPDECK_FOLDER`, `SHIPDECK_PROJECT` | local commands only: this deploy folder and `project`, absolute |
+
+Server commands also get `service.env`, then `service.env_file` read the way
+systemd reads it: `KEY=value` lines, `#` comments, one pair of quotes
+removed, nothing expanded. Preflight reads it from the live release.
+
+### When it fails after the switch
+
+Once `current` points at the new release, a failing switch, restart or
+health check puts the previous release back. With `rollback: ask` (the
+default) shipdeck asks first:
+
+```
+╭ web · health failed ─────────────────────────────────────╮
+│                                                          │
+│  v1.4.0 failed at Health: http 502 for 20s               │
+│  v1.3.9 was live before it.                              │
+│                                                          │
+│  Roll back to v1.3.9?           rolling back in 27s      │
+│                                                          │
+│   y  roll back now        n  keep v1.4.0 live            │
+╰──────────────────────────────────────────────────────────╯
+```
+
+No answer in 30 seconds rolls back. `n` keeps the new release live as it is,
+to look at it; roll back later from the Releases screen. `rollback: auto`
+rolls back at once without asking. Either way `failed` runs afterwards.
+
+A manual rollback from the Releases screen goes switch → restart → health →
+done, with `SHIPDECK_ACTION=rollback`, so `done` can tell everyone.
+
+### Mistakes are caught before anything runs
+
+```
+✘ shipdeck did not start: 2 deploy.yaml files have 3 problems
+
+web-prod/deploy.yaml
+  error: unpack does not take commands
+    ┌─ scripts/deploy/web-prod/deploy.yaml:36:3
+    │
+ 36 │   unpack:
+    │   ^^^^^^ unpack is done by shipdeck
+    │
+    = help: commands for the unpacked release go in pipeline.setup.run.server
+
+  error: build cannot run commands on the server
+    ┌─ scripts/deploy/web-prod/deploy.yaml:26:7
+    │
+ 25 │     run:
+ 26 │       server: npm run build
+    │       ^^^^^^ build runs on your PC only
+    │
+    = help: the server sets up the release in pipeline.setup.run.server
+
+api-prod/deploy.yaml
+  error: unknown key pipeline.pack.files.include.src
+    ┌─ scripts/deploy/api-prod/deploy.yaml:21:9
+    │
+ 21 │         src: [dist]
+    │         ^^^ not a source
+    │
+    = help: sources are project and deploy
+```
+
+On a terminal it is in colour. Unknown keys get a "did you mean", a 0.2 key
+says where it moved, and values that would be unsafe in a shell or a unit
+(paths with `..`, odd service names, a relative `service.dir`) are refused.
+
+### Editor completion
+
+[`deploy.schema.json`](deploy.schema.json) describes every field, with the
+same descriptions as above, for any editor using the YAML language server
+(VS Code with the YAML extension, Neovim, Zed, JetBrains). Either start each
+`deploy.yaml` with:
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
+```
+
+or map it once for the whole repository in `.vscode/settings.json`:
+
+```json
+{ "yaml.schemas": { "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json": "**/deploy.yaml" } }
+```
+
+### From 0.2
+
+shipdeck 0.3 refuses a 0.2 file and says where each key went:
+
+| 0.2 | 0.3 |
+| --- | --- |
+| `build.cwd` | `project` |
+| `build.command` | `pipeline.build.run.local` (a list is now several commands; write `[cargo, build]` as one line) |
+| `build.binary` | `pipeline.pack.binary` |
+| `build.files` | `pipeline.pack.files.include.project` |
+| `build.version_from` | `pipeline.build.version_from`, now relative to `project` |
+| `bundle` | `pipeline.pack.files.include.deploy` |
+| `remote.dir`, `remote.service` | `service.dir`, `service.name` |
+| `remote.start` + `remote.args` | `service.start`, arguments included |
+| `remote.env`, `remote.env_file`, `remote.run_as` | `service.env`, `service.env_file`, `service.run_as` |
+| `remote.requires` | `pipeline.preflight.requires` |
+| `releases` | `service.keep` |
+| `health` | `pipeline.health` |
+| `hooks.before` | `pipeline.preflight.run.local` |
+| `hooks.server` | `pipeline.setup.run.server` |
+| `hooks.after` | `pipeline.done.run.local` |
+
+A `deploy.json` from 0.1 is refused too; JSON is YAML, so rename it and move
+the keys the same way.
+
+## Tools on the server
 
 The built-in unit is hardened (`ProtectHome=true` among others), so the
 service cannot see `/home`. A runtime installed per user, such as Node from
 `nvm`, is therefore refused at preflight with a hint: install it system-wide
 (`apt`, NodeSource, `/usr/local/bin`), or use a `service.template` without
-`ProtectHome`. Hooks are not affected, since they run over SSH.
+`ProtectHome`. Server commands are not affected, since they run over SSH.
 
-### service.template
+## service.template
 
 Without one, shipdeck uses a hardened unit: `Restart=always`, read-only
 system, writes allowed only to `<dir>/shared`. To change it, copy that unit
@@ -182,11 +355,11 @@ from `crates/engine/src/bundle/default.service` into `service.template` and
 edit it. Placeholders:
 
 `{{name}}` `{{tag}}` `{{id}}` `{{version}}` `{{git}}` `{{dir}}` `{{service}}`
-`{{user}}` `{{exec}}` (the whole `ExecStart=` command) `{{binary}}` `{{args}}`
+`{{user}}` `{{exec}}` (the whole `ExecStart=` command) `{{binary}}`
 `{{env}}` (the `EnvironmentFile=` and `Environment=` lines)
 
 An unknown placeholder stops the deploy at Preflight; `{{binary}}` does too
-when there is no `build.binary`.
+when there is no `pipeline.pack.binary`.
 
 ## One-time server setup
 
@@ -195,7 +368,7 @@ can create it. Press `u` on a deployable and shipdeck shows the one command
 to run on the server as root, with that deployable's values filled in:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.2.0/server-setup.sh \
+curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/server-setup.sh \
   | bash -s -- --user deploy --dir /opt/my-api --service my-api --key 'ssh-ed25519 AAAA... me@pc'
 ```
 
@@ -228,40 +401,21 @@ as the service user. Give it to nobody you would not give that power.
 Preflight checks all of this on every deploy and points at `u` when
 something is missing.
 
-## What a deploy does
-
-| # | Step | If it fails |
-| --- | --- | --- |
-| | **Before**: `hooks.before` on this machine (only with hooks) | Stops; nothing touched |
-| 1 | **Preflight**: bundle files, architecture, glibc, free disk, sudo rights, the programs in `remote.start` and `remote.requires`, service state | Stops; nothing touched |
-| 2 | **Build**: runs `build.command`, checks `build.files` are there and the binary's architecture and glibc floor against the server | Stops |
-| 3 | **Pack**: binary + `build.files` + `bundle` + `release.json` + unit into one `.tar.gz` in memory | Stops |
-| 4 | **Upload** over SFTP (falls back to `cat` if SFTP is off), unpack into `releases/<id>/` | Removes `<id>`; nothing changed |
-| | **Prepare**: `hooks.server` inside `releases/<id>/` (only with hooks) | Removes `<id>`; nothing changed |
-| 5 | **Switch**: `current` → `<id>` in one rename, install its unit, `daemon-reload` | Puts `current` and the unit back |
-| 6 | **Restart** the service | Rolls back |
-| 7 | **Health**: `systemctl is-active` (and `health.url`) for 3 seconds in a row; a crash loop fails at once | Rolls back, shows the last 30 journal lines |
-| 8 | **Rotate**: compress releases beyond `open`, delete beyond `compressed` | Warning only |
-| | **After**: `hooks.after` on this machine (only with hooks) | Warning only |
-
-A rollback points `current` at the previous release, reinstalls that release's
-unit, restarts it and checks it is active again. The failed release is
-removed.
-
 ## On the server
 
 ```
 /opt/my-app/
 ├── current -> releases/v0.3.1-ab12cd3-20261014.153012
-├── releases/        newest `open` releases, unpacked
-├── backups/         next `compressed` releases, as .tar.gz
+├── releases/        newest `keep.open` releases, unpacked
+├── backups/         next `keep.compressed` releases, as .tar.gz
 └── shared/          kept across deploys; the only folder the default unit may write to
 ```
 
 A release id is `v<version>-<git sha>[-dirty]-<UTC yyyymmdd.hhmmss>`. Each
 release carries `release.json` (who deployed what, from which commit) and its
 own unit, whose `Description=` holds the version, so `systemctl status`
-shows what is live.
+shows what is live. Each release also installs its own dependencies in
+setup, so a rollback finds them already in place.
 
 ## Screens
 
@@ -276,6 +430,9 @@ shows what is live.
 | `esc` | | back | back |
 | `tab`, `1` `2` `3` | switch screens | | |
 | `q` | quit (asks while something runs) | | |
+
+When a release fails after the switch, the rollback question takes `y` (roll
+back now) or `n` (keep it live).
 
 ## Development
 
@@ -294,15 +451,27 @@ cargo test --workspace
 SHIPDECK_DUMP=/tmp/frames cargo test -p shipdeck   # writes every screen as text
 ```
 
-### Releasing
-
-The setup command fetches `server-setup.sh` at the tag `v<version>`, so every
-release needs its tag pushed before its setup command works:
+The config types in `crates/engine/src/config/mod.rs` are the schema: their
+doc comments become the editor descriptions, and the launch check walks the
+same schema. After changing them, regenerate the file (a test fails until
+you do):
 
 ```sh
-# bump [workspace.package] version in Cargo.toml, commit, then
-git tag v0.2.0 && git push origin main v0.2.0
+cargo run -q -p shipdeck -- --schema > deploy.schema.json
+```
+
+### Releasing
+
+The setup command fetches `server-setup.sh`, and editors fetch
+`deploy.schema.json`, at the tag `v<version>`, so every release needs its tag
+pushed:
+
+```sh
+# bump [workspace.package] version in Cargo.toml, update the schema line in
+# examples/ and this README, regenerate deploy.schema.json, commit, then
+git tag v0.3.0 && git push origin main v0.3.0
 ```
 
 `setup_test.rs` fails if `server-setup.sh` and `remote::sudo_commands` ever
-disagree, so the script and the preflight check cannot drift apart.
+disagree, and `config_test.rs` fails if the examples point at another
+version's schema.

@@ -6,9 +6,11 @@ as a separate release, so you can roll back to an earlier version at any time.
 
 It exists because the production server is too small to compile Rust, and
 grew to deploy any app built locally: Rust, Go, Node.js, Python. The build
-happens on your PC, and only its output, the `.env` and any extra files go to
-the server. What must still happen there, such as `npm ci --omit=dev`, runs
-as a hook inside the new release before it goes live.
+happens on your PC, and only what `pipeline.pack` lists goes to the server.
+Each step of the pipeline can run your own commands, and `deploy.yaml` says
+plainly which run on your PC and which on the server; `npm ci --omit=dev`, for
+instance, runs on the server in setup, inside the new release, before it goes
+live.
 
 ## Decisions
 
@@ -16,22 +18,27 @@ as a hook inside the new release before it goes live.
 | --- | --- |
 | Name | `shipdeck` |
 | Repository | `Naz-Ovh/shipdeck`, public, so servers can fetch `server-setup.sh` from it; projects add it as a git submodule |
-| Language and libraries | Rust: `ratatui` + `crossterm` for the TUI, `russh` + `russh-sftp` for SSH, `tar` + `flate2` for bundles, `clap` for flags, `serde-saphyr` for the YAML config (pure Rust, maintained, errors name the line; `serde_yaml` is deprecated) |
+| Language and libraries | Rust: `ratatui` + `crossterm` for the TUI, `russh` + `russh-sftp` for SSH, `tar` + `flate2` for bundles, `clap` for flags, `granit-parser` for YAML (events with line and column), `schemars` for the JSON Schema, `fast-glob` for file patterns |
 | Code layout | A Cargo workspace: `crates/engine` does the work, `bin/shipdeck` is the TUI, so screen changes recompile only the small crate |
 | SSH session | One session per deployable, opened once and reused for every command and upload |
 | SSH login | `--key <path>` or `--password <value>`; with neither flag, the alias's `IdentityFile` from `~/.ssh/config`, then a password asked in the TUI |
 | SSH host | `ssh.host` may be a `~/.ssh/config` alias (`host: prod`); its `HostName`, `Port`, `User` and `IdentityFile` apply, and `deploy.yaml` wins |
 | Server setup | `server-setup.sh` in the repo, fetched with `curl ... \| bash -s -- <values>` and run once as root; pinned to the release tag. `u` shows the command with the deployable's values |
-| Configuration | One folder per deployable under a root folder passed on the command line, each with a `deploy.yaml` (0.1 used `deploy.json`; JSON is YAML, so a rename carries it over) |
+| Configuration | One folder per deployable under a root folder passed on the command line, each with a `deploy.yaml` (0.1 used `deploy.json`; 0.2 a flat format; both are refused with where each key went) |
+| Config check | Every `deploy.yaml` is read before the TUI starts. Any mistake, in any file, stops shipdeck with every problem printed at once, compiler style, in colour: file, line, caret, hint |
+| Editor completion | The config types generate `deploy.schema.json` (draft-07), published at each release tag; examples start with the `yaml-language-server` line. The launch check walks the same schema, and a test keeps the file current |
 | What is committed | `deploy.yaml` and extra files are committed; `.env` and other secrets are gitignored |
-| Any app | The build ships a `binary` (checked against the server's CPU and glibc), `files` (build output such as `dist`), or both. `remote.start` says what the service runs (`node dist/main.js`); a bare program name is found on the server at preflight and written into the unit with its full path |
-| Hooks | `hooks.before` (this machine, first of all), `hooks.server` (the server, inside the new release, before it goes live) and `hooks.after` (this machine, once live). Each hook step appears only when it has commands |
-| Service environment | `remote.env_file: .env` becomes `EnvironmentFile=`; `remote.env` adds single variables |
+| Any app | `pipeline.pack` ships a `binary` (checked against the server's CPU and glibc), `files`, or both. `service.start` says what the service runs (`node dist/main.js`); a bare program name is found on the server at preflight and written into the unit with its full path |
+| Pipeline | Ten steps under `pipeline:`: preflight, build, pack, upload, unpack, setup, switch, restart, health, done, plus failed. Each step that can run commands has `run` (and `check` where something must pass) with `local` and `server` sides; a step accepts only the sides it can run (build is local only, setup server only, upload/unpack/switch/restart none) |
+| Files | `pipeline.pack.files.include` and `exclude`, each split into `project` (the source) and `deploy` (next to deploy.yaml). fast-glob/Tailwind patterns; a leading `!` leaves out (include) or keeps (exclude). `.git` never ships; a deploy file replaces a project file at the same path |
+| Service environment | `service.env_file: .env` becomes `EnvironmentFile=` and is loaded for server commands too (read like systemd: no expansion); `service.env` adds single variables |
+| Shared folders | `service.shared: [uploads]` lives in `shared/` and is linked into every release at unpack |
 | Server location | `/opt/<app>` |
 | Release layout | `releases/<id>/` folders plus a `current` symlink; systemd only uses `current/...` |
 | Retention | Set per deployable: `open` releases unpacked, then `compressed` releases as `.tar.gz`. The default is 5 + 15, so 20 versions in total |
 | Version visibility | Each release carries `release.json` and its own systemd unit, with the version in `Description=`, so `systemctl status` shows it |
-| Failure handling | A failed health check rolls back automatically to the previous release |
+| Failure handling | A failed switch, restart or health check asks whether to roll back (`rollback: ask`, the default) and rolls back after 30 s with no answer; `rollback: auto` never asks. `n` keeps the new release live. `failed` runs after any failure |
+| Manual rollback | Runs health and then `done` with `SHIPDECK_ACTION=rollback` |
 
 ## Running it
 
@@ -67,51 +74,41 @@ back in.
 ### deploy.yaml
 
 ```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
 name: My API (prod)
+project: ../../../my-api
 ssh: { host: prod, user: deploy }
-hooks:
-  before: [cargo test]
-build:
-  cwd: ../../../my-api
-  command: [cargo, zigbuild, --release, --target, x86_64-unknown-linux-gnu.2.31, -p, my-api]
-  binary: target/x86_64-unknown-linux-gnu/release/my-api
-remote: { dir: /opt/my-api, service: my-api, args: [-E=.env] }
-releases: { open: 5, compressed: 15 }
-bundle: [.env, files/]
-health: { url: "http://127.0.0.1:8080/health", timeout_secs: 20 }
+service:
+  name: my-api
+  dir: /opt/my-api
+  start: ./my-api -E=.env
+pipeline:
+  preflight:
+    run:
+      local: cargo test
+  build:
+    run:
+      local: cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31 -p my-api
+  pack:
+    binary: target/x86_64-unknown-linux-gnu/release/my-api
+    files:
+      include:
+        deploy: [.env, files/]
+  health:
+    url: http://127.0.0.1:8080/health
 ```
 
-| Field | Meaning |
-| --- | --- |
-| `ssh` | Where to connect. The login method comes from the command-line flags or `~/.ssh/config`, never from this file |
-| `hooks` | Optional. `before`, `server` and `after` shell commands; see the deploy steps below |
-| `build.cwd` | Folder the build and local hooks run in, relative to this deployable folder |
-| `build.command` | Optional. A shell line or an argument list. For a compiled binary, the glibc in the target sets the oldest server it runs on |
-| `build.binary` | Optional. A compiled program, relative to `build.cwd` |
-| `build.files` | Optional. Build output to ship, relative to `build.cwd` (at least one of `binary` and `files`) |
-| `build.version_from` | Optional. The file whose version names the release; found in `build.cwd` (Cargo.toml, package.json, pyproject.toml, VERSION), else the latest git tag |
-| `remote.dir` | The app's folder on the server |
-| `remote.service` | The systemd service name |
-| `remote.start` | Optional. What the service runs, from the release; defaults to the binary |
-| `remote.args` | Optional. Arguments after the start command in `ExecStart=` |
-| `remote.requires` | Optional. Programs preflight must find on the server |
-| `remote.env_file` | Optional. A file in the release loaded as the service's environment |
-| `remote.run_as` | Optional. The user the service runs as; defaults to `ssh.user` |
-| `remote.env` | Optional. Extra `Environment=` lines for the unit |
-| `releases.open` | How many releases stay unpacked and ready for instant rollback |
-| `releases.compressed` | How many older releases are kept as `.tar.gz` after that |
-| `bundle` | Files and folders from this deployable folder to ship |
-| `health` | Optional. `systemctl is-active` is always checked; `url`, if set, must answer 2xx within `timeout_secs` |
-
-The README has every default, and `examples/` has a commented file for Rust,
-Go, Node.js and Python.
+The login method comes from the command-line flags or `~/.ssh/config`, never
+from this file. The README has every field, default and variable, the step
+table, and the glob syntax; `examples/` has a file for Rust, Go, Node.js and
+Python.
 
 ## Layout on the server
 
 ```
 /opt/my-api/
 ├── current -> releases/v0.3.1-ab12cd3-20261014.153012
-├── releases/                 newest `open` releases, unpacked
+├── releases/                 newest `keep.open` releases, unpacked
 │   ├── v0.3.1-ab12cd3-20261014.153012/
 │   │   ├── my-api
 │   │   ├── .env
@@ -119,9 +116,9 @@ Go, Node.js and Python.
 │   │   ├── release.json
 │   │   └── ...extra files
 │   └── v0.3.0-9f8e7d6-20261012.091000/
-├── backups/                  next `compressed` releases, as .tar.gz
+├── backups/                  next `keep.compressed` releases, as .tar.gz
 │   └── v0.2.9-1a2b3c4-20261001.120000.tar.gz
-└── shared/                   kept across every deploy (logs, cache)
+└── shared/                   kept across every deploy; `service.shared` folders are linked from each release
 ```
 
 `current` is a symlink: it looks and behaves like a folder, but it only
@@ -161,43 +158,46 @@ and releases are ordered by it, never by the version text.
 
 ## The deploy, step by step
 
-| # | Step | What happens | If it fails |
-| --- | --- | --- | --- |
-| | Before | Only with `hooks.before`: runs them on this machine in `build.cwd`. They may create files the bundle needs | Stops. Nothing has been touched |
-| 1 | Preflight | Checks the bundle files, then over the SSH session: CPU architecture, glibc, free disk space, `sudo -n` rights, the programs `remote.start` and `remote.requires` name, and service state | Stops. Nothing has been touched |
-| 2 | Build | Runs `build.command`; its output streams into the TUI. Then checks `build.files` exist and the binary's architecture and glibc against the server | Stops |
-| 3 | Pack | Binary + `build.files` + `bundle` + `release.json` + rendered unit, into one `.tar.gz` in memory | Stops |
-| 4 | Upload and unpack | Uploads over SFTP and unpacks into `releases/<id>/`. The live version keeps running | Removes `<id>`. Nothing changed |
-| | Prepare | Only with `hooks.server`: runs them on the server inside `releases/<id>/` (`npm ci --omit=dev`, migrations). The live version keeps running | Removes `<id>`. Nothing changed |
-| 5 | Switch | Points `current` at `<id>` in one rename, installs the unit from `current/` into `/etc/systemd/system/`, runs `daemon-reload` and `enable`. The old process keeps serving | Points `current` back, reinstalls the previous unit, removes `<id>` |
-| 6 | Restart | Restarts the service (about 1–2 seconds of downtime) | Automatic rollback |
-| 7 | Health | `systemctl is-active` and, if set, the health URL must pass 3 times in a row, one second apart. A rising systemd restart count (crash loop) fails at once | Automatic rollback, and the last 30 journal lines are shown |
-| 8 | Rotate | Compresses releases beyond `open` into `backups/`, deletes tarballs beyond `compressed` | Warning only. The deploy has already succeeded |
-| | After | Only with `hooks.after`: runs them on this machine | Warning only. The release stays live |
+| # | Step | shipdeck does | Your commands | If it fails |
+| --- | --- | --- | --- | --- |
+| 1 | Preflight | Over the SSH session: CPU architecture, glibc, free disk space, `sudo -n` rights, the programs `service.start` and `preflight.requires` name, service state. Then the deploy-folder files | `run.server` in `service.dir`, then `run.local` | Stops. Nothing has been touched |
+| 2 | Build | Names the release; afterwards checks every project pattern found something and the binary's architecture and glibc against the server | `run.local` in `project`; output streams into the TUI | Stops |
+| 3 | Pack | Binary + files + `release.json` + rendered unit, into one `.tar.gz` in memory | — | Stops |
+| 4 | Upload | Uploads over SFTP into `releases/.<id>.tar.gz` | — | Removes `<id>`. Nothing changed |
+| 5 | Unpack | Unpacks into `releases/<id>/` through a hidden folder; links `service.shared` | — | Removes `<id>`. Nothing changed |
+| 6 | Setup | Nothing: the live version keeps running | `run.server` then `check.server` in `releases/<id>/` (`npm ci --omit=dev`, migrations) | Removes `<id>`. Nothing changed |
+| 7 | Switch | Points `current` at `<id>` in one rename, installs the unit from `current/`, `daemon-reload`, `enable`. The old process keeps serving | — | Asks, then rolls back |
+| 8 | Restart | Restarts the service (about 1–2 seconds of downtime) | — | Asks, then rolls back |
+| 9 | Health | `systemctl is-active` and, if set, the URL must pass 3 times in a row, one second apart; a rising restart count fails at once | `check.server` in `current/`, then `check.local`, retried until `timeout_secs` | Asks, then rolls back; the last 30 journal lines are shown |
+| 10 | Done | Compresses releases beyond `keep.open` into `backups/`, deletes tarballs beyond `keep.compressed` | `run.server` in `current/`, then `run.local` | Warning only. The release stays live |
+| ✱ | Failed | Runs when any step failed, after the rollback | `run.local`, with `SHIPDECK_STEP` naming the failed step | Logged |
 
 The unit is always installed from `current/`, so the sudo rule names one
 fixed path and a rollback restores the unit that belongs to that release.
 
-**Automatic rollback** points `current` back at the previous release,
-reinstalls that release's unit, restarts it, checks it is active, removes the
-failed release, and reports what went wrong. On a first deploy there is no
-previous release, so the failed one stays in place for inspection.
+**Rollback after a failure** asks first with `rollback: ask`: a dialog shows
+both releases and a countdown, and with no answer in 30 seconds shipdeck
+rolls back. Rolling back points `current` at the previous release, reinstalls
+that release's unit, restarts it, checks it is active, and removes the failed
+release. `n` keeps the new release live as it is. On a first deploy there is
+no previous release, so the failed one stays in place for inspection.
 
-**Manual rollback** from the Releases screen does the same thing for any
-release you pick. If the release is compressed, it is first unpacked back
-into `releases/`.
+**Manual rollback** from the Releases screen does the same for any release
+you pick, then runs health and `done` with `SHIPDECK_ACTION=rollback`. If the
+release is compressed, it is first unpacked back into `releases/`.
 
 ## The screens
 
 **Deployables.** The folders found under the root. For each: its name, host,
 the version live on the server and whether the service is running.
 
-**Deploy.** The steps as a checklist with live status (eight, plus one for
-each kind of hook the deployable has), scrolled to keep the running one in view; a progress
+**Deploy.** The steps as a checklist with live status (ten, plus Failed
+when the deployable has `failed` commands), scrolled to keep the running one in view; a progress
 panel with a real bar for the running step (crates compiled, bytes packed,
 bytes uploaded with speed, health seconds, releases rotated) and an overall
 bar; a timeline of how long each step took; and a log pane that shows cargo
-output and remote command output as it happens.
+output and remote command output as it happens. A failure after the switch
+opens the rollback question on top, with its countdown.
 
 **Releases.** Every unpacked and compressed release on the server, with the
 current one marked. Select one to roll back to it.
@@ -242,19 +242,20 @@ bin/shipdeck/src/
 ├── main.rs        flags, start the TUI
 └── tui/           app state, the three screens, dialogs, theme
 crates/engine/src/
-├── config/        deploy.yaml schema, finding the deployables
-├── build/         release name, running the build and local hooks, ELF arch and glibc checks
-├── bundle/        tar.gz, rendering the systemd unit
+├── config/        the deploy.yaml types (= the JSON Schema), the YAML tree with line numbers,
+│                  the schema walk and value rules, the problem report, globs, discovery
+├── build/         release name, running local commands, ELF arch and glibc checks
+├── bundle/        picking the files, tar.gz, rendering the systemd unit
 ├── release.rs     release ids and release.json
 ├── ssh/           the russh session, ~/.ssh/config aliases, login, host keys, commands, SFTP upload
-├── remote/        preflight, unpack, switch, unit, health, rotate, listing releases
+├── remote/        preflight, unpack, shared links, server commands, switch, unit, health, rotate
 ├── setup.rs       the server setup command (the script is server-setup.sh at the root)
 └── deploy/        the deploy and rollback flows, and the progress reports
 ```
 
 ## Milestones
 
-All five are done.
+All seven are done.
 
 1. **Config and discovery.** The Cargo project, the config schema,
    finding deployables, and the Deployables screen.
@@ -267,6 +268,10 @@ All five are done.
 6. **Any app (0.2).** `deploy.yaml`, hooks, `build.files`, `remote.start`,
    `remote.requires`, `remote.env_file`, and versions from package.json,
    pyproject.toml, VERSION or a git tag.
+7. **The pipeline (0.3).** `pipeline:` with local and server commands per
+   step, `pack.files` with globs, `service.shared`, the rollback question,
+   `done` and `failed`, every config problem reported at launch, and
+   `deploy.schema.json` for editors.
 
 Tested end to end against an Ubuntu 24.04 server with systemd and sshd in a
 container: first deploy, five deploys with rotation (2 open + 2 compressed),
@@ -274,7 +279,13 @@ a crashing release rolled back automatically, a manual rollback to a
 compressed release, and the missing-sudo preflight. For 0.2: a Go binary with
 `build.files` and local hooks, a Node.js app whose `.env` a before hook writes
 and whose `npm ci --omit=dev` runs on the server, and a failing server hook
-that leaves the live release untouched.
+that leaves the live release untouched. For 0.3: a Node.js app through every
+step (env file and `service.env` seen by server commands, a shared folder, a
+`.map` excluded, health checks on both sides, `done` on both sides); a health
+check failing on purpose, answered with `y`, left unanswered for 30 s, and
+answered with `n`; a manual rollback that runs `done` with
+`SHIPDECK_ACTION=rollback`; a failing setup that removes the release; and a Go
+worker shipping `.` minus `!cmd`, `dist` and `go.mod`, with `.git` left out.
 
 ## Still open
 

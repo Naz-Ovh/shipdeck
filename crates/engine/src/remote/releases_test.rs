@@ -19,8 +19,8 @@ fn listing(open: &[u32], compressed: &[u32], current: Option<u32>) -> Listing {
     parse_listing(&text)
 }
 
-fn keep(open: usize, compressed: usize) -> Retention {
-    Retention { open, compressed }
+fn keep(open: usize, compressed: usize) -> Keep {
+    Keep { open, compressed }
 }
 
 #[test]

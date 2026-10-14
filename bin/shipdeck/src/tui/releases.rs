@@ -26,7 +26,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     let config = &deployable.config;
     let block = theme::panel(format!("Releases · {}", config.name), true).title(
         Line::from(Span::styled(
-            format!(" {}:{} ", deployable.endpoint.label(), config.remote.dir),
+            format!(" {}:{} ", deployable.endpoint.label(), config.service.dir),
             theme::muted(),
         ))
         .right_aligned(),
@@ -109,7 +109,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     }
 
     let selected = view.table.selected().and_then(|i| listing.entries.get(i));
-    detail(frame, detail_area, listing, selected, config.releases);
+    detail(frame, detail_area, listing, selected, config.service.keep);
 }
 
 fn row(entry: &ReleaseEntry) -> Row<'static> {
@@ -168,7 +168,7 @@ fn detail(
     area: Rect,
     listing: &Listing,
     selected: Option<&ReleaseEntry>,
-    keep: shipdeck_engine::config::Retention,
+    keep: shipdeck_engine::config::Keep,
 ) {
     let open = listing
         .entries
