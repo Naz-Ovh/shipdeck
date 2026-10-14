@@ -17,11 +17,12 @@ use shipdeck_engine::ssh::{Login, Pool};
     name = "shipdeck",
     version,
     about = "Build locally, deploy over SSH as a systemd service, roll back any release.",
-    after_help = "Each folder under DEPLOY_ROOT with a deploy.json is one deployable.\n\
-                  With neither --key nor --password, the password is asked in the TUI."
+    after_help = "Each folder under DEPLOY_ROOT with a deploy.yaml is one deployable.\n\
+                  With neither --key nor --password, the host's ~/.ssh/config key is tried,\n\
+                  then the TUI asks for the password."
 )]
 struct Cli {
-    /// Folder whose subfolders each hold a deploy.json
+    /// Folder whose subfolders each hold a deploy.yaml
     #[arg(value_name = "DEPLOY_ROOT")]
     root: PathBuf,
 

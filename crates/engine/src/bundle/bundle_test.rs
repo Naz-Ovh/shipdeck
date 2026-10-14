@@ -16,14 +16,21 @@ fn scratch(name: &str) -> PathBuf {
 }
 
 fn deployable(folder: &Path, bundle: &[&str]) -> Deployable {
-    let config: DeployConfig = serde_json::from_value(serde_json::json!({
-        "name": "Demo",
-        "ssh": { "host": "example.com", "user": "deploy" },
-        "build": { "command": ["true"], "binary": "out/demo" },
-        "remote": { "dir": "/opt/demo", "service": "demo", "args": ["-E=.env"] },
-        "bundle": bundle,
-    }))
-    .unwrap();
+    let yaml = format!(
+        "
+name: Demo
+ssh: {{ host: example.com, user: deploy }}
+build: {{ command: [\"true\"], binary: out/demo }}
+remote: {{ dir: /opt/demo, service: demo, args: [-E=.env] }}
+bundle: [{}]
+",
+        bundle.join(", ")
+    );
+    deployable_from(folder, &yaml)
+}
+
+fn deployable_from(folder: &Path, yaml: &str) -> Deployable {
+    let config: DeployConfig = crate::config::parse(yaml).unwrap();
     let endpoint = crate::ssh::Endpoint::from_config(
         &config.ssh,
         crate::ssh::ssh_config::HostConfig::default(),
@@ -36,6 +43,17 @@ fn deployable(folder: &Path, bundle: &[&str]) -> Deployable {
         endpoint,
     }
 }
+
+const NODE: &str = "
+name: Web
+ssh: { host: example.com, user: deploy }
+build:
+  cwd: app
+  command: npm run build
+  files: [dist, package.json, node_modules]
+remote: { dir: /opt/web, service: web, start: node dist/main.js }
+bundle: [.env]
+";
 
 fn release() -> ReleaseName {
     ReleaseName::new(
@@ -69,7 +87,7 @@ fn packs_binary_bundle_manifest_and_unit_with_modes() {
     std::fs::create_dir_all(dir.join("files/sub")).unwrap();
     std::fs::write(dir.join("files/sub/a.txt"), b"a").unwrap();
 
-    let deployable = deployable(&dir, &[".env", "./files/"]);
+    let deployable = deployable(&dir, &["\".env\"", "./files/"]);
     let manifest = Manifest::new(&release(), "tester");
     let mut last = (0, 0);
     let bundle = pack(&deployable, &manifest, "[Unit]\n", |done, total| {
@@ -97,7 +115,7 @@ fn missing_bundle_entry_is_an_error() {
     let dir = scratch("missing");
     std::fs::create_dir_all(dir.join("out")).unwrap();
     std::fs::write(dir.join("out/demo"), b"bin").unwrap();
-    let deployable = deployable(&dir, &[".env"]);
+    let deployable = deployable(&dir, &["\".env\""]);
     let err = pack(&deployable, &Manifest::new(&release(), "t"), "", |_, _| {}).unwrap_err();
     assert!(format!("{err:#}").contains(".env: missing"));
     std::fs::remove_dir_all(dir).unwrap();
@@ -107,7 +125,7 @@ fn missing_bundle_entry_is_an_error() {
 fn renders_the_default_unit() {
     let dir = scratch("unit");
     let deployable = deployable(&dir, &[]);
-    let unit = unit::render_for(&deployable, &release()).unwrap();
+    let unit = unit::render_for(&deployable, &release(), None).unwrap();
     assert!(unit.contains("Description=Demo v0.3.1 (ab12cd3)"));
     assert!(unit.contains("ExecStart=/opt/demo/current/demo -E=.env"));
     assert!(unit.contains("WorkingDirectory=/opt/demo/current"));
@@ -119,10 +137,103 @@ fn renders_the_default_unit() {
 
 #[test]
 fn unknown_placeholder_is_an_error() {
-    let err = unit::render("Hello {{nope}}", &[("name", "x".into())]).unwrap_err();
+    let err = unit::render("Hello {{nope}}", &[("name", Some("x".into()))]).unwrap_err();
     assert!(err.to_string().contains("nope"));
     assert_eq!(
-        unit::render("A={{ name }}!", &[("name", "x".into())]).unwrap(),
+        unit::render("A={{ name }}!", &[("name", Some("x".into()))]).unwrap(),
         "A=x!"
     );
+    let err = unit::render("{{binary}}", &[("binary", None)]).unwrap_err();
+    assert!(err.to_string().contains("no build.binary"), "{err}");
+}
+
+#[test]
+fn packs_build_files_from_the_build_folder_and_keeps_inner_links() {
+    let dir = scratch("node");
+    std::fs::create_dir_all(dir.join("app/out")).unwrap();
+    std::fs::write(dir.join("app/out/main.js"), b"console.log(1)").unwrap();
+    // `dist` itself is a link: it is followed.
+    std::os::unix::fs::symlink("out", dir.join("app/dist")).unwrap();
+    std::fs::write(dir.join("app/package.json"), b"{}").unwrap();
+    std::fs::create_dir_all(dir.join("app/node_modules/.bin")).unwrap();
+    std::fs::create_dir_all(dir.join("app/node_modules/tool")).unwrap();
+    std::fs::write(dir.join("app/node_modules/tool/cli.js"), b"#!").unwrap();
+    // A link inside a shipped folder stays a link.
+    std::os::unix::fs::symlink("../tool/cli.js", dir.join("app/node_modules/.bin/tool")).unwrap();
+    std::fs::write(dir.join(".env"), b"A=1").unwrap();
+
+    let deployable = deployable_from(&dir, NODE);
+    let bundle = pack(&deployable, &Manifest::new(&release(), "t"), "", |_, _| {}).unwrap();
+
+    let mut archive = tar::Archive::new(GzDecoder::new(bundle.data.as_slice()));
+    let mut links = BTreeMap::new();
+    let mut paths = Vec::new();
+    for entry in archive.entries().unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path().unwrap().to_string_lossy().into_owned();
+        if entry.header().entry_type().is_symlink() {
+            let target = entry.link_name().unwrap().unwrap();
+            links.insert(path.clone(), target.to_string_lossy().into_owned());
+        }
+        paths.push(path);
+    }
+    assert!(paths.contains(&"dist/main.js".to_string()), "{paths:?}");
+    assert!(paths.contains(&"package.json".to_string()));
+    assert!(paths.contains(&".env".to_string()));
+    assert!(!paths.iter().any(|p| p == "demo" || p.starts_with("out")));
+    assert_eq!(links["node_modules/.bin/tool"], "../tool/cli.js");
+    assert!(!links.contains_key("dist"));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn missing_build_files_are_named() {
+    let dir = scratch("node-missing");
+    std::fs::create_dir_all(dir.join("app")).unwrap();
+    std::fs::write(dir.join(".env"), b"A=1").unwrap();
+    let deployable = deployable_from(&dir, NODE);
+    let err = pack(&deployable, &Manifest::new(&release(), "t"), "", |_, _| {}).unwrap_err();
+    let err = format!("{err:#}");
+    assert!(err.contains("3 of 3 build.files entries"), "{err}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn exec_start_uses_where_the_server_has_the_program() {
+    let dir = scratch("exec");
+    let node = deployable_from(&dir, NODE);
+    assert_eq!(
+        unit::exec_start(&node, Some("/usr/bin/node")),
+        "/usr/bin/node dist/main.js"
+    );
+    // Before preflight the name is all there is.
+    assert_eq!(unit::exec_start(&node, None), "node dist/main.js");
+    let unit = unit::render_for(&node, &release(), Some("/usr/local/bin/node")).unwrap();
+    assert!(!unit.contains("EnvironmentFile"));
+    let with_file = deployable_from(
+        &dir,
+        &NODE.replace(
+            "start: node dist/main.js",
+            "start: node dist/main.js, env_file: ./.env",
+        ),
+    );
+    let with_file = unit::render_for(&with_file, &release(), None).unwrap();
+    assert!(
+        with_file.contains("EnvironmentFile=/opt/web/current/.env\n"),
+        "{with_file}"
+    );
+    assert!(
+        unit.contains("ExecStart=/usr/local/bin/node dist/main.js\n"),
+        "{unit}"
+    );
+
+    let python = deployable_from(
+        &dir,
+        &NODE.replace("node dist/main.js", ".venv/bin/python -m app"),
+    );
+    assert_eq!(
+        unit::exec_start(&python, None),
+        "/opt/web/current/.venv/bin/python -m app"
+    );
+    std::fs::remove_dir_all(dir).unwrap();
 }

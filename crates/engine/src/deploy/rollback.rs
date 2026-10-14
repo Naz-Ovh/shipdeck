@@ -46,7 +46,7 @@ async fn run(deployable: &Deployable, target: &str, pool: &Pool, report: &Report
     if let Err(err) = restore(&server, target, report).await {
         report.fail(SWITCH, short(&err));
         report.log(LogKind::Error, format!("{err:#}"));
-        skip_rest(report, SWITCH, &ROLLBACK_STEPS, "stopped");
+        skip_rest(report, SWITCH, ROLLBACK_STEPS.len(), "stopped");
         if let Some(previous) = &previous
             && let Err(restore_err) = restore(&server, previous, report).await
         {
@@ -70,7 +70,7 @@ async fn run(deployable: &Deployable, target: &str, pool: &Pool, report: &Report
             err,
             previous.as_deref(),
             None,
-            &ROLLBACK_STEPS,
+            ROLLBACK_STEPS.len(),
         )
         .await;
     }
@@ -87,7 +87,7 @@ async fn run(deployable: &Deployable, target: &str, pool: &Pool, report: &Report
                 err,
                 previous.as_deref(),
                 None,
-                &ROLLBACK_STEPS,
+                ROLLBACK_STEPS.len(),
             )
             .await;
         }
@@ -111,7 +111,7 @@ async fn connect(
     report.log(LogKind::Command, format!("connect {}", endpoint.label()));
     let session = pool.get(endpoint).await?;
     let server = Server::new(session, &config.remote);
-    let facts = server.facts(&endpoint.user).await?;
+    let facts = server.facts(&endpoint.user, &[]).await?;
     if !facts.sudo_missing.is_empty() {
         super::setup_hint(
             deployable,
@@ -138,7 +138,7 @@ async fn connect(
 fn stop(report: &Reporter, step: usize, err: anyhow::Error) -> Outcome {
     report.fail(step, short(&err));
     report.log(LogKind::Error, format!("{err:#}"));
-    skip_rest(report, step, &ROLLBACK_STEPS, "stopped");
+    skip_rest(report, step, ROLLBACK_STEPS.len(), "stopped");
     Outcome::Failed {
         error: format!("{err:#}"),
     }

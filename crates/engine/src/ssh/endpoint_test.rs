@@ -19,7 +19,7 @@ fn prod() -> HostConfig {
 }
 
 #[test]
-fn alias_fills_in_what_deploy_json_leaves_out() {
+fn alias_fills_in_what_deploy_yaml_leaves_out() {
     let endpoint = Endpoint::from_config(&target("prod", None, None), prod()).unwrap();
     assert_eq!(endpoint.host, "203.0.113.10");
     assert_eq!(endpoint.port, 22);
@@ -34,7 +34,7 @@ fn alias_fills_in_what_deploy_json_leaves_out() {
 }
 
 #[test]
-fn deploy_json_wins_over_the_alias() {
+fn deploy_yaml_wins_over_the_alias() {
     let endpoint =
         Endpoint::from_config(&target("prod", Some(2222), Some("deploy")), prod()).unwrap();
     assert_eq!(endpoint.user, "deploy");

@@ -6,6 +6,7 @@ mod rollback;
 
 pub use rollback::{ROLLBACK_STEPS, rollback};
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -13,7 +14,7 @@ use anyhow::{Result, anyhow, bail};
 
 use crate::build;
 use crate::bundle::{self, unit};
-use crate::config::{Deployable, HealthConfig};
+use crate::config::{CommandLine, DeployConfig, Deployable, HealthConfig, Program};
 use crate::human;
 use crate::release::Manifest;
 use crate::remote::{Facts, HttpCheck, Server, plan_rotation};
@@ -21,24 +22,82 @@ use crate::setup;
 use crate::ssh::{Login, Pool};
 use report::{LogKind, Outcome, Reporter, Unit};
 
-pub const DEPLOY_STEPS: [&str; 8] = [
-    "Preflight",
-    "Build",
-    "Pack",
-    "Upload",
-    "Switch",
-    "Restart",
-    "Health",
-    "Rotate",
-];
-const PREFLIGHT: usize = 0;
-const BUILD: usize = 1;
-const PACK: usize = 2;
-const UPLOAD: usize = 3;
-const SWITCH: usize = 4;
-const RESTART: usize = 5;
-const HEALTH: usize = 6;
-const ROTATE: usize = 7;
+/// Every step a deploy can have, in order. Hook steps appear only when
+/// `deploy.yaml` has hooks for them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    Before,
+    Preflight,
+    Build,
+    Pack,
+    Upload,
+    Prepare,
+    Switch,
+    Restart,
+    Health,
+    Rotate,
+    After,
+}
+
+impl Step {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Before => "Before",
+            Self::Preflight => "Preflight",
+            Self::Build => "Build",
+            Self::Pack => "Pack",
+            Self::Upload => "Upload",
+            Self::Prepare => "Prepare",
+            Self::Switch => "Switch",
+            Self::Restart => "Restart",
+            Self::Health => "Health",
+            Self::Rotate => "Rotate",
+            Self::After => "After",
+        }
+    }
+}
+
+/// The steps a deploy of `config` goes through.
+pub fn deploy_steps(config: &DeployConfig) -> Vec<Step> {
+    let hooks = &config.hooks;
+    [
+        (Step::Before, !hooks.before.is_empty()),
+        (Step::Preflight, true),
+        (Step::Build, true),
+        (Step::Pack, true),
+        (Step::Upload, true),
+        (Step::Prepare, !hooks.server.is_empty()),
+        (Step::Switch, true),
+        (Step::Restart, true),
+        (Step::Health, true),
+        (Step::Rotate, true),
+        (Step::After, !hooks.after.is_empty()),
+    ]
+    .into_iter()
+    .filter_map(|(step, used)| used.then_some(step))
+    .collect()
+}
+
+/// The names of [`deploy_steps`], for the screen.
+pub fn deploy_step_names(config: &DeployConfig) -> Vec<&'static str> {
+    deploy_steps(config).into_iter().map(Step::name).collect()
+}
+
+/// Step indices for one deploy, as the reporter counts them.
+struct Plan(Vec<Step>);
+
+impl Plan {
+    fn at(&self, step: Step) -> usize {
+        self.0
+            .iter()
+            .position(|s| *s == step)
+            .expect("the plan has every step the deploy reports")
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+}
 
 /// Below this much free space on the server, preflight stops.
 const MIN_FREE: u64 = 100 * 1024 * 1024;
@@ -52,23 +111,49 @@ pub async fn deploy(deployable: Deployable, pool: Arc<Pool>, report: Reporter) {
 
 async fn run(deployable: &Deployable, pool: &Pool, report: &Reporter) -> Outcome {
     let config = &deployable.config;
+    let plan = Plan(deploy_steps(config));
+    let total = plan.len();
+    let stop = |step: Step, err: anyhow::Error| stop(report, plan.at(step), total, err);
 
-    // 1. Preflight
-    report.start(PREFLIGHT, "Preflight: checking the server");
-    let (server, facts) = match preflight(deployable, pool, report).await {
+    // Before: the local hooks, ahead of everything else.
+    if !config.hooks.before.is_empty() {
+        let step = plan.at(Step::Before);
+        report.start(step, "Before: running hooks.before on this machine");
+        let started = Instant::now();
+        if let Err(err) = local_hooks(deployable, &config.hooks.before, None, report, step).await {
+            return stop(Step::Before, err);
+        }
+        report.finish(
+            step,
+            format!(
+                "{} · {}",
+                count(config.hooks.before.len(), "command"),
+                human::duration(started.elapsed())
+            ),
+        );
+    }
+
+    // Preflight
+    let step = plan.at(Step::Preflight);
+    report.start(step, "Preflight: checking the server");
+    let (server, facts) = match preflight(deployable, pool, report, step).await {
         Ok(found) => found,
-        Err(err) => return stop(report, PREFLIGHT, err),
+        Err(err) => return stop(Step::Preflight, err),
     };
 
-    // 2. Build
-    report.start(BUILD, "Build: compiling on this machine");
-    let name = match build::release_name(deployable).await {
-        Ok(name) => name,
-        Err(err) => return stop(report, BUILD, err),
+    // Build
+    let step = plan.at(Step::Build);
+    report.start(step, "Build: building on this machine");
+    let (name, source) = match build::release_name(deployable).await {
+        Ok(found) => found,
+        Err(err) => return stop(Step::Build, err),
     };
     let id = name.id();
     report.release(&id);
-    report.log(LogKind::Info, format!("release {id}"));
+    report.log(
+        LogKind::Info,
+        format!("release {id} (version from {source})"),
+    );
     if name.dirty {
         report.log(
             LogKind::Warn,
@@ -76,30 +161,39 @@ async fn run(deployable: &Deployable, pool: &Pool, report: &Reporter) -> Outcome
         );
     }
     let started = Instant::now();
-    if let Err(err) = build::run(deployable, report, BUILD).await {
-        return stop(report, BUILD, err);
+    if let Err(err) = build::run(deployable, report, step).await {
+        return stop(Step::Build, err);
     }
-    let binary = match check_binary(deployable, &facts, report) {
+    let built = match check_build(deployable, &facts, report) {
         Ok(summary) => summary,
-        Err(err) => return stop(report, BUILD, err),
+        Err(err) => return stop(Step::Build, err),
     };
     report.finish(
-        BUILD,
-        format!("{binary} · {}", human::duration(started.elapsed())),
+        step,
+        format!("{built} · {}", human::duration(started.elapsed())),
     );
 
-    // 3. Pack
-    report.start(PACK, "Pack: bundling the release");
+    // Pack
+    let step = plan.at(Step::Pack);
+    report.start(step, "Pack: bundling the release");
     let deployer = build::deployer(&deployable.build_dir()).await;
     let manifest = Manifest::new(&name, &deployer);
     let packed = async {
-        let unit = unit::render_for(deployable, &name)?;
+        let start_path = start_path(deployable, &facts);
+        let unit = unit::render_for(deployable, &name, start_path.as_deref())?;
+        report.log(
+            LogKind::Info,
+            format!(
+                "ExecStart={}",
+                unit::exec_start(deployable, start_path.as_deref())
+            ),
+        );
         let (owned, reporter) = (deployable.clone(), report.clone());
         let mut throttle = Throttle::default();
         let bundle = tokio::task::spawn_blocking(move || {
             bundle::pack(&owned, &manifest, &unit, |done, total| {
                 if throttle.ready(done, total) {
-                    reporter.progress(PACK, done, total, Unit::Bytes, "compressing");
+                    reporter.progress(step, done, total, Unit::Bytes, "compressing");
                 }
             })
         })
@@ -120,10 +214,10 @@ async fn run(deployable: &Deployable, pool: &Pool, report: &Reporter) -> Outcome
     .await;
     let bundle = match packed {
         Ok(bundle) => bundle,
-        Err(err) => return stop(report, PACK, err),
+        Err(err) => return stop(Step::Pack, err),
     };
     report.finish(
-        PACK,
+        step,
         format!(
             "{} files · {} → {}",
             bundle.files,
@@ -132,8 +226,9 @@ async fn run(deployable: &Deployable, pool: &Pool, report: &Reporter) -> Outcome
         ),
     );
 
-    // 4. Upload and unpack
-    report.start(UPLOAD, "Upload: sending the release");
+    // Upload and unpack
+    let step = plan.at(Step::Upload);
+    report.start(step, "Upload: sending the release");
     let started = Instant::now();
     let uploaded = async {
         server.prepare(report).await?;
@@ -153,7 +248,7 @@ async fn run(deployable: &Deployable, pool: &Pool, report: &Reporter) -> Outcome
                 if throttle.ready(sent, total) {
                     let speed = sent as f64 / started.elapsed().as_secs_f64().max(0.001);
                     report.progress(
-                        UPLOAD,
+                        step,
                         sent,
                         total,
                         Unit::Bytes,
@@ -167,10 +262,10 @@ async fn run(deployable: &Deployable, pool: &Pool, report: &Reporter) -> Outcome
     .await;
     if let Err(err) = uploaded {
         let _ = server.discard(&id, report).await;
-        return stop(report, UPLOAD, err);
+        return stop(Step::Upload, err);
     }
     report.finish(
-        UPLOAD,
+        step,
         format!(
             "{} in {}",
             human::bytes(bundle.data.len() as u64),
@@ -178,8 +273,47 @@ async fn run(deployable: &Deployable, pool: &Pool, report: &Reporter) -> Outcome
         ),
     );
 
-    // 5. Switch
-    report.start(SWITCH, "Switch: making it the current release");
+    // Prepare: the server hooks, inside the new release, before it goes live.
+    if !config.hooks.server.is_empty() {
+        let step = plan.at(Step::Prepare);
+        report.start(
+            step,
+            &format!("Prepare: running hooks.server in releases/{id}"),
+        );
+        let started = Instant::now();
+        let hooks = &config.hooks.server;
+        let mut prepared = Ok(());
+        for (done, hook) in hooks.iter().enumerate() {
+            report.progress(
+                step,
+                done as u64,
+                hooks.len() as u64,
+                Unit::Items,
+                hook.trim(),
+            );
+            prepared = server.hook(&id, hook, report).await;
+            if prepared.is_err() {
+                break;
+            }
+        }
+        if let Err(err) = prepared {
+            // Nothing live has changed yet.
+            let _ = server.discard(&id, report).await;
+            return stop(Step::Prepare, err);
+        }
+        report.finish(
+            step,
+            format!(
+                "{} · {}",
+                count(hooks.len(), "command"),
+                human::duration(started.elapsed())
+            ),
+        );
+    }
+
+    // Switch
+    let step = plan.at(Step::Switch);
+    report.start(step, "Switch: making it the current release");
     let previous = facts.current.clone();
     let switched = async {
         server.switch(&id, report).await?;
@@ -187,14 +321,14 @@ async fn run(deployable: &Deployable, pool: &Pool, report: &Reporter) -> Outcome
     }
     .await;
     if let Err(err) = switched {
-        report.fail(SWITCH, short(&err));
+        report.fail(step, short(&err));
         report.log(LogKind::Error, format!("{err:#}"));
         // Nothing was restarted, so the old process is still serving.
         return match &previous {
             Some(previous) => match restore(&server, previous, report).await {
                 Ok(()) => {
                     let _ = server.discard(&id, report).await;
-                    skip_rest(report, SWITCH, &DEPLOY_STEPS, "stopped");
+                    skip_rest(report, step, total, "stopped");
                     Outcome::Failed {
                         error: format!("{err:#}"),
                     }
@@ -205,67 +339,121 @@ async fn run(deployable: &Deployable, pool: &Pool, report: &Reporter) -> Outcome
                 },
             },
             None => {
-                skip_rest(report, SWITCH, &DEPLOY_STEPS, "stopped");
+                skip_rest(report, step, total, "stopped");
                 Outcome::Failed {
                     error: format!("{err:#}"),
                 }
             }
         };
     }
-    report.finish(SWITCH, format!("current → {id}"));
+    report.finish(step, format!("current → {id}"));
 
-    // 6. Restart
-    report.start(RESTART, &format!("Restart: {}", config.remote.service));
+    // Restart
+    let step = plan.at(Step::Restart);
+    report.start(step, &format!("Restart: {}", config.remote.service));
     if let Err(err) = server.restart(report).await {
         return recover(
             &server,
             report,
-            RESTART,
+            step,
             err,
             previous.as_deref(),
             Some(&id),
-            &DEPLOY_STEPS,
+            total,
         )
         .await;
     }
-    report.finish(RESTART, "");
+    report.finish(step, "");
 
-    // 7. Health
-    report.start(HEALTH, "Health: waiting for the new release to settle");
-    match wait_healthy(&server, &config.health, report, HEALTH).await {
-        Ok(summary) => report.finish(HEALTH, summary),
+    // Health
+    let step = plan.at(Step::Health);
+    report.start(step, "Health: waiting for the new release to settle");
+    match wait_healthy(&server, &config.health, report, step).await {
+        Ok(summary) => report.finish(step, summary),
         Err(err) => {
             return recover(
                 &server,
                 report,
-                HEALTH,
+                step,
                 err,
                 previous.as_deref(),
                 Some(&id),
-                &DEPLOY_STEPS,
+                total,
             )
             .await;
         }
     }
 
-    // 8. Rotate
-    report.start(ROTATE, "Rotate: tidying old releases");
-    match rotate(&server, deployable, report).await {
-        Ok(summary) => report.finish(ROTATE, summary),
+    // Rotate
+    let step = plan.at(Step::Rotate);
+    report.start(step, "Rotate: tidying old releases");
+    match rotate(&server, deployable, report, step).await {
+        Ok(summary) => report.finish(step, summary),
         Err(err) => {
             report.log(LogKind::Warn, format!("rotation: {err:#}"));
-            report.warn(ROTATE, short(&err));
+            report.warn(step, short(&err));
+        }
+    }
+    report.log(LogKind::Success, format!("{id} is live"));
+
+    // After: the local hooks, once it is live. A failure changes nothing.
+    if !config.hooks.after.is_empty() {
+        let step = plan.at(Step::After);
+        report.start(step, "After: running hooks.after on this machine");
+        let started = Instant::now();
+        match local_hooks(deployable, &config.hooks.after, Some(&id), report, step).await {
+            Ok(()) => report.finish(
+                step,
+                format!(
+                    "{} · {}",
+                    count(config.hooks.after.len(), "command"),
+                    human::duration(started.elapsed())
+                ),
+            ),
+            Err(err) => {
+                report.log(
+                    LogKind::Warn,
+                    format!("hooks.after: {err:#}; {id} stays live"),
+                );
+                report.warn(step, short(&err));
+            }
         }
     }
 
-    report.log(LogKind::Success, format!("{id} is live"));
     Outcome::Succeeded { release: id }
+}
+
+/// Runs `hooks` one after another on this machine, in `build.cwd`.
+async fn local_hooks(
+    deployable: &Deployable,
+    hooks: &[String],
+    release: Option<&str>,
+    report: &Reporter,
+    step: usize,
+) -> Result<()> {
+    let dir = deployable.build_dir();
+    if !dir.is_dir() {
+        bail!("build.cwd {} does not exist", dir.display());
+    }
+    let env = build::local_env(deployable, release);
+    for (done, hook) in hooks.iter().enumerate() {
+        report.progress(
+            step,
+            done as u64,
+            hooks.len() as u64,
+            Unit::Items,
+            hook.trim(),
+        );
+        build::run_local(&CommandLine::Shell(hook.clone()), &dir, &env, report, step).await?;
+    }
+    Ok(())
 }
 
 async fn preflight(
     deployable: &Deployable,
     pool: &Pool,
     report: &Reporter,
+    step: usize,
 ) -> Result<(Server, Facts)> {
     let config = &deployable.config;
     check_local(deployable, report)?;
@@ -296,7 +484,8 @@ async fn preflight(
         }
     };
     let server = Server::new(session, &config.remote);
-    let facts = server.facts(&endpoint.user).await?;
+    let tools = deployable.required_tools();
+    let facts = server.facts(&endpoint.user, &tools).await?;
 
     let glibc = facts
         .glibc
@@ -361,14 +550,55 @@ async fn preflight(
             facts.sudo_missing.len()
         );
     }
+    check_tools(deployable, &facts, report)?;
     if let Some(free) = facts.free_bytes
         && free < MIN_FREE
     {
         bail!("only {} free on the server", human::bytes(free));
     }
 
-    report.finish(PREFLIGHT, format!("{} · {glibc} · {free} free", facts.arch));
+    report.finish(step, format!("{} · {glibc} · {free} free", facts.arch));
     Ok((server, facts))
+}
+
+/// Every program the deploy needs is on the server, and the one the
+/// service starts is somewhere the service can reach.
+fn check_tools(deployable: &Deployable, facts: &Facts, report: &Reporter) -> Result<()> {
+    let mut missing = Vec::new();
+    for (tool, path) in &facts.tools {
+        match path {
+            Some(path) => report.log(LogKind::Success, format!("{tool}: {path}")),
+            None => missing.push(tool.as_str()),
+        }
+    }
+    if !missing.is_empty() {
+        bail!(
+            "{} cannot find {} on the server; install {} or fix remote.start and remote.requires",
+            deployable.endpoint.user,
+            missing.join(", "),
+            if missing.len() == 1 { "it" } else { "them" }
+        );
+    }
+    if let (Program::Tool(tool), _) = deployable.start()
+        && let Some(path) = facts.tool_path(&tool)
+        && !deployable.unit_template_path().is_file()
+        && (path.starts_with("/home/") || path.starts_with("/root/"))
+    {
+        bail!(
+            "{tool} is at {path}, but the built-in unit hides home folders from the service \
+             (ProtectHome=true). Install {tool} system-wide (e.g. /usr/bin or /usr/local/bin), \
+             or add a service.template without ProtectHome"
+        );
+    }
+    Ok(())
+}
+
+/// Where preflight found the start program, when it is looked up by name.
+fn start_path(deployable: &Deployable, facts: &Facts) -> Option<String> {
+    match deployable.start() {
+        (Program::Tool(tool), _) => facts.tool_path(&tool).map(str::to_string),
+        _ => None,
+    }
 }
 
 /// Shows the one-time setup command; `u` on the Deployables screen shows it too.
@@ -402,13 +632,32 @@ fn check_local(deployable: &Deployable, report: &Reporter) -> Result<()> {
         bail!("build.cwd {} does not exist", build_dir.display());
     }
     let sample = crate::release::ReleaseName::new("0.0.0", "check", false, chrono::Utc::now());
-    unit::render_for(deployable, &sample)?;
+    unit::render_for(deployable, &sample, None)?;
     Ok(())
 }
 
+/// Checks what the build produced: every `build.files` entry exists, and the
+/// binary can run on the server. Returns a short summary.
+fn check_build(deployable: &Deployable, facts: &Facts, report: &Reporter) -> Result<String> {
+    let files = &deployable.config.build.files;
+    deployable.check_files()?;
+    let mut summary = Vec::new();
+    if let Some(binary) = deployable.binary_path() {
+        summary.push(check_binary(&binary, facts, report)?);
+    }
+    if !files.is_empty() {
+        report.log(
+            LogKind::Success,
+            format!("build.files: {}", files.join(", ")),
+        );
+        summary.push(count(files.len(), "build output"));
+    }
+    Ok(summary.join(" · "))
+}
+
 /// Checks the built binary can run on the server; returns a short summary.
-fn check_binary(deployable: &Deployable, facts: &Facts, report: &Reporter) -> Result<String> {
-    let info = build::inspect(&deployable.binary_path())?;
+fn check_binary(binary: &Path, facts: &Facts, report: &Reporter) -> Result<String> {
+    let info = build::inspect(binary)?;
     if info.arch != facts.arch {
         bail!(
             "the binary is built for {}, but the server is {}",
@@ -522,7 +771,7 @@ pub(crate) async fn recover(
     err: anyhow::Error,
     previous: Option<&str>,
     discard: Option<&str>,
-    steps: &[&str],
+    total: usize,
 ) -> Outcome {
     report.fail(step, short(&err));
     report.log(LogKind::Error, format!("{err:#}"));
@@ -535,7 +784,7 @@ pub(crate) async fn recover(
         }
         _ => report.log(LogKind::Warn, "could not read the journal"),
     }
-    skip_rest(report, step, steps, "rolled back");
+    skip_rest(report, step, total, "rolled back");
 
     let Some(previous) = previous else {
         report.log(
@@ -588,7 +837,12 @@ async fn restore(server: &Server, id: &str, report: &Reporter) -> Result<()> {
     server.install_unit(report).await
 }
 
-async fn rotate(server: &Server, deployable: &Deployable, report: &Reporter) -> Result<String> {
+async fn rotate(
+    server: &Server,
+    deployable: &Deployable,
+    report: &Reporter,
+    step: usize,
+) -> Result<String> {
     let keep = deployable.config.releases;
     let listing = server.list().await?;
     let plan = plan_rotation(&listing, keep);
@@ -603,24 +857,18 @@ async fn rotate(server: &Server, deployable: &Deployable, report: &Reporter) -> 
     let total = plan.len() as u64;
     let mut done = 0;
     for id in &plan.compress {
-        report.progress(
-            ROTATE,
-            done,
-            total,
-            Unit::Items,
-            format!("compressing {id}"),
-        );
+        report.progress(step, done, total, Unit::Items, format!("compressing {id}"));
         server.compress(id, report).await?;
         done += 1;
     }
     for id in &plan.drop_open {
-        report.progress(ROTATE, done, total, Unit::Items, format!("deleting {id}"));
+        report.progress(step, done, total, Unit::Items, format!("deleting {id}"));
         server.drop_open(id, report).await?;
         done += 1;
     }
     for id in &plan.drop_backup {
         report.progress(
-            ROTATE,
+            step,
             done,
             total,
             Unit::Items,
@@ -629,7 +877,7 @@ async fn rotate(server: &Server, deployable: &Deployable, report: &Reporter) -> 
         server.drop_backup(id, report).await?;
         done += 1;
     }
-    report.progress(ROTATE, done, total, Unit::Items, "done");
+    report.progress(step, done, total, Unit::Items, "done");
     Ok(format!(
         "{} compressed · {} deleted",
         plan.compress.len(),
@@ -638,18 +886,27 @@ async fn rotate(server: &Server, deployable: &Deployable, report: &Reporter) -> 
 }
 
 /// A failure before anything live changed.
-fn stop(report: &Reporter, step: usize, err: anyhow::Error) -> Outcome {
+fn stop(report: &Reporter, step: usize, total: usize, err: anyhow::Error) -> Outcome {
     report.fail(step, short(&err));
     report.log(LogKind::Error, format!("{err:#}"));
-    skip_rest(report, step, &DEPLOY_STEPS, "stopped");
+    skip_rest(report, step, total, "stopped");
     Outcome::Failed {
         error: format!("{err:#}"),
     }
 }
 
-fn skip_rest(report: &Reporter, failed: usize, steps: &[&str], why: &str) {
-    for step in failed + 1..steps.len() {
+fn skip_rest(report: &Reporter, failed: usize, total: usize, why: &str) {
+    for step in failed + 1..total {
         report.skip(step, why);
+    }
+}
+
+/// `1 command`, `3 commands`.
+fn count(n: usize, what: &str) -> String {
+    if n == 1 {
+        format!("1 {what}")
+    } else {
+        format!("{n} {what}s")
     }
 }
 
@@ -688,3 +945,7 @@ impl Throttle {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "deploy_test.rs"]
+mod tests;

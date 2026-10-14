@@ -1,0 +1,31 @@
+# A Python app: nothing to build; each release gets its own virtualenv.
+name: Reports (prod)
+
+ssh:
+  host: prod
+  user: deploy
+
+hooks:
+  before:
+    - python3 -m pytest -q
+  server:
+    - python3 -m venv .venv
+    - .venv/bin/pip install --quiet -r requirements.txt
+    # Migrations see the release's .env when it is loaded first:
+    # - set -a && . ./.env && set +a && .venv/bin/python -m app.migrate
+
+build:
+  cwd: ../../../reports
+  # No command: the files ship as they are.
+  files: [app, requirements.txt]
+  version_from: ../../../reports/pyproject.toml
+
+remote:
+  dir: /opt/reports
+  service: reports
+  start: .venv/bin/python -m app
+  requires: [python3]
+  env_file: .env
+
+bundle:
+  - .env

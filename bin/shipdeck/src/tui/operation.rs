@@ -171,10 +171,22 @@ fn first_line(text: &str) -> String {
 }
 
 fn steps(frame: &mut Frame, area: Rect, op: &Operation, tick: u64) {
+    // When the panel is shorter than the list, scroll so the step in hand
+    // and the one after it stay in view.
+    let visible = (area.height.saturating_sub(2) as usize).max(1);
+    let focus = op
+        .steps
+        .iter()
+        .rposition(|s| s.state != StepState::Pending)
+        .unwrap_or(0);
+    let skip = (focus + 2)
+        .saturating_sub(visible)
+        .min(op.steps.len().saturating_sub(visible));
     let rows: Vec<Row> = op
         .steps
         .iter()
         .enumerate()
+        .skip(skip)
         .map(|(index, step)| {
             let name_style = match step.state {
                 StepState::Running => theme::bold(ACCENT),

@@ -7,6 +7,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{HighlightSpacing, List, ListItem, Paragraph, Wrap};
 
+use shipdeck_engine::bundle::unit;
 use shipdeck_engine::config::Deployable;
 use shipdeck_engine::release::ReleaseName;
 use shipdeck_engine::ssh::Login;
@@ -193,33 +194,80 @@ fn details(
         "runs as",
         vec![Span::styled(deployable.run_as().to_string(), theme::text())],
     );
+    field(
+        &mut lines,
+        "start",
+        vec![Span::styled(
+            unit::exec_start(deployable, None),
+            theme::text(),
+        )],
+    );
+    let tools = deployable.required_tools();
+    if !tools.is_empty() {
+        field(
+            &mut lines,
+            "needs",
+            vec![Span::styled(tools.join(", "), theme::text())],
+        );
+    }
     field(&mut lines, "live", live_summary(live, tick));
 
     section(&mut lines, "Build");
+    let build = &config.build;
     field(
         &mut lines,
         "run",
-        vec![Span::styled(
-            config.build.command.join(" "),
-            Style::new().fg(VIOLET),
-        )],
+        match &build.command {
+            Some(command) => vec![Span::styled(command.display(), Style::new().fg(VIOLET))],
+            None => vec![Span::styled("nothing to build", theme::muted())],
+        },
     );
     field(
         &mut lines,
         "in",
-        vec![Span::styled(config.build.cwd.clone(), theme::text())],
+        vec![Span::styled(build.cwd.clone(), theme::text())],
     );
-    field(
-        &mut lines,
-        "binary",
-        vec![Span::styled(config.build.binary.clone(), theme::text())],
-    );
+    if let Some(binary) = &build.binary {
+        field(
+            &mut lines,
+            "binary",
+            vec![Span::styled(binary.clone(), theme::text())],
+        );
+    }
+    if !build.files.is_empty() {
+        field(
+            &mut lines,
+            "ships",
+            vec![Span::styled(build.files.join(", "), theme::text())],
+        );
+    }
+
+    let hooks = &config.hooks;
+    if !(hooks.before.is_empty() && hooks.server.is_empty() && hooks.after.is_empty()) {
+        section(&mut lines, "Hooks");
+        for (when, commands) in [
+            ("before", &hooks.before),
+            ("server", &hooks.server),
+            ("after", &hooks.after),
+        ] {
+            for command in commands {
+                field(
+                    &mut lines,
+                    when,
+                    vec![Span::styled(
+                        command.trim().to_string(),
+                        Style::new().fg(VIOLET),
+                    )],
+                );
+            }
+        }
+    }
 
     section(&mut lines, "Bundle");
     let bundle = deployable.bundle_status();
     if bundle.is_empty() {
         lines.push(Line::from(Span::styled(
-            "  only the binary",
+            "  nothing from this folder",
             theme::muted(),
         )));
     }
@@ -233,7 +281,14 @@ fn details(
             Line::from(vec![
                 Span::styled("  ✘ ", theme::bold(ERR)),
                 Span::styled(entry, Style::new().fg(ERR)),
-                Span::styled("  missing, the deploy will stop", theme::muted()),
+                Span::styled(
+                    if config.hooks.before.is_empty() {
+                        "  missing, the deploy will stop"
+                    } else {
+                        "  missing; hooks.before must create it"
+                    },
+                    theme::muted(),
+                ),
             ])
         });
     }
@@ -317,12 +372,12 @@ fn empty(frame: &mut Frame, area: Rect, app: &App) {
         Line::from(Span::styled("No deployables yet", theme::bold(ACCENT))),
         Line::default(),
         Line::from(Span::styled(
-            format!("shipdeck looks for folders with a deploy.json inside {root}"),
+            format!("shipdeck looks for folders with a deploy.yaml inside {root}"),
             theme::text(),
         )),
         Line::default(),
         Line::from(Span::styled(
-            format!("{root}/server-prod/deploy.json"),
+            format!("{root}/server-prod/deploy.yaml"),
             Style::new().fg(VIOLET),
         )),
         Line::from(Span::styled(
@@ -331,14 +386,14 @@ fn empty(frame: &mut Frame, area: Rect, app: &App) {
         )),
         Line::default(),
         Line::from(Span::styled(
-            "See docs/plan.md for every deploy.json field.",
+            "The README and examples/ show every deploy.yaml field.",
             theme::muted(),
         )),
     ];
     if !app.broken.is_empty() {
         lines.push(Line::default());
         lines.push(Line::from(Span::styled(
-            "These folders have a deploy.json that could not be used:",
+            "These folders have a config that could not be used:",
             Style::new().fg(ERR),
         )));
         for (folder, err) in &app.broken {

@@ -162,6 +162,50 @@ sudo -n systemctl enable {svc_q} 2>&1",
         Ok(())
     }
 
+    /// Runs one `hooks.server` command inside `releases/<id>`, streaming its
+    /// output to the log.
+    pub async fn hook(&self, id: &str, command: &str, report: &Reporter) -> Result<()> {
+        ensure_id(id)?;
+        let dir = &self.dir;
+        // The command is shell by design: it comes from deploy.yaml, written
+        // by whoever deploys, and runs as the deploy user.
+        let script = format!(
+            "set -e
+cd {release}
+export SHIPDECK_RELEASE={id} SHIPDECK_APP_DIR={app} SHIPDECK_SHARED_DIR={shared}
+{command}",
+            release = sh_quote(&format!("{dir}/releases/{id}")),
+            app = sh_quote(dir),
+            shared = sh_quote(&format!("{dir}/shared")),
+        );
+        report.log(
+            LogKind::Command,
+            format!(
+                "{} › {}  (in releases/{id})",
+                self.session.label,
+                command.trim()
+            ),
+        );
+        let out = self
+            .session
+            .exec_with(&script, |stream, line| {
+                let kind = match stream {
+                    Stream::Out => LogKind::Out,
+                    Stream::Err => LogKind::Err,
+                };
+                report.log(kind, line);
+            })
+            .await?;
+        if !out.success() {
+            bail!(
+                "`{}` exited with code {} on the server",
+                command.trim(),
+                out.code
+            );
+        }
+        Ok(())
+    }
+
     /// The service's last 30 journal lines.
     pub async fn journal(&self) -> Result<Vec<String>> {
         let out = self

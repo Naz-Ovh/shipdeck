@@ -1,33 +1,84 @@
-//! Running the build command on this machine and streaming its output.
+//! Running commands on this machine (the build and the local hooks) and
+//! streaming their output.
 
 mod binary;
 mod version;
 
 pub use binary::{BinaryInfo, GlibcVersion, inspect, normalize_arch};
-pub use version::{deployer, release_name};
+pub use version::{deployer, read_version, release_name};
 
+use std::path::Path;
 use std::process::Stdio;
 
 use anyhow::{Context, Result, bail};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
 
-use crate::config::Deployable;
+use crate::config::{CommandLine, Deployable};
 use crate::deploy::report::{LogKind, Reporter, Unit};
 
-/// Runs `build.command` in `build.cwd`. Cargo's progress bar becomes the
-/// step's progress; every other line goes to the log.
+/// Runs `build.command` in `build.cwd`, if there is one.
 pub async fn run(deployable: &Deployable, report: &Reporter, step: usize) -> Result<()> {
-    let command = &deployable.config.build.command;
-    let dir = deployable.build_dir();
+    let Some(command) = &deployable.config.build.command else {
+        report.log(
+            LogKind::Info,
+            "no build.command; shipping the files as they are",
+        );
+        return Ok(());
+    };
+    let env = local_env(deployable, None);
+    run_local(command, &deployable.build_dir(), &env, report, step)
+        .await
+        .context("the build failed")
+}
+
+/// What every local command sees besides the usual environment.
+pub fn local_env(deployable: &Deployable, release: Option<&str>) -> Vec<(&'static str, String)> {
+    let folder = std::path::absolute(&deployable.folder).unwrap_or(deployable.folder.clone());
+    let mut env = vec![
+        ("SHIPDECK_NAME", deployable.config.name.clone()),
+        ("SHIPDECK_FOLDER", folder.display().to_string()),
+        ("SHIPDECK_HOST", deployable.endpoint.name.clone()),
+        ("SHIPDECK_APP_DIR", deployable.config.remote.dir.clone()),
+    ];
+    if let Some(id) = release {
+        env.push(("SHIPDECK_RELEASE", id.to_string()));
+    }
+    env
+}
+
+/// Runs one command in `dir`. Cargo's progress bar becomes the step's
+/// progress; every other line goes to the log.
+pub async fn run_local(
+    command: &CommandLine,
+    dir: &Path,
+    env: &[(&str, String)],
+    report: &Reporter,
+    step: usize,
+) -> Result<()> {
     report.log(
         LogKind::Command,
-        format!("{}  (in {})", command.join(" "), dir.display()),
+        format!("{}  (in {})", command.display(), dir.display()),
     );
-
-    let mut child = Command::new(&command[0])
-        .args(&command[1..])
-        .current_dir(&dir)
+    let mut process = match command {
+        CommandLine::Shell(line) => {
+            let mut process = Command::new("sh");
+            process.arg("-c").arg(line);
+            process
+        }
+        CommandLine::Args(args) => {
+            let mut process = Command::new(&args[0]);
+            process.args(&args[1..]);
+            process
+        }
+    };
+    let program = match command {
+        CommandLine::Shell(_) => "sh",
+        CommandLine::Args(args) => &args[0],
+    };
+    let mut child = process
+        .current_dir(dir)
+        .envs(env.iter().map(|(key, value)| (key, value)))
         // Cargo draws its progress bar only for a terminal unless told otherwise.
         .env("CARGO_TERM_PROGRESS_WHEN", "always")
         .env("CARGO_TERM_PROGRESS_WIDTH", "120")
@@ -37,7 +88,7 @@ pub async fn run(deployable: &Deployable, report: &Reporter, step: usize) -> Res
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
-        .with_context(|| format!("starting `{}` in {}", command[0], dir.display()))?;
+        .with_context(|| format!("starting `{program}` in {}", dir.display()))?;
 
     let stdout = child.stdout.take().expect("stdout is piped");
     let stderr = child.stderr.take().expect("stderr is piped");
@@ -48,11 +99,11 @@ pub async fn run(deployable: &Deployable, report: &Reporter, step: usize) -> Res
     out?;
     err?;
 
-    let status = child.wait().await.context("waiting for the build")?;
+    let status = child.wait().await.context("waiting for the command")?;
     if !status.success() {
         match status.code() {
-            Some(code) => bail!("build failed with exit code {code}"),
-            None => bail!("build was killed by a signal"),
+            Some(code) => bail!("`{}` exited with code {code}", command.display()),
+            None => bail!("`{}` was killed by a signal", command.display()),
         }
     }
     Ok(())
@@ -72,7 +123,7 @@ async fn forward(
         let n = stream
             .read(&mut buf)
             .await
-            .context("reading build output")?;
+            .context("reading command output")?;
         if n == 0 {
             break;
         }

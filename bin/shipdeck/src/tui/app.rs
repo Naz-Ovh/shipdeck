@@ -14,7 +14,7 @@ use shipdeck_engine::config::{Deployable, Discovery};
 use shipdeck_engine::deploy::report::{
     LogKind, OpEvent, OpId, OpUpdate, Outcome, Reporter, StepState, Unit,
 };
-use shipdeck_engine::deploy::{self, DEPLOY_STEPS, ROLLBACK_STEPS};
+use shipdeck_engine::deploy::{self, ROLLBACK_STEPS};
 use shipdeck_engine::remote::{Kind, Listing, Server, Status};
 use shipdeck_engine::setup::{self, SetupCommand};
 
@@ -510,7 +510,8 @@ impl App {
         }
         let deployable = self.deployables[index].clone();
         let id = self.next_op_id();
-        self.op = Some(Operation::new(id, OpKind::Deploy, index, &DEPLOY_STEPS));
+        let steps = deploy::deploy_step_names(&deployable.config);
+        self.op = Some(Operation::new(id, OpKind::Deploy, index, &steps));
         self.screen = Screen::Operation;
         let reporter = Reporter::new(id, self.ops.clone());
         tokio::spawn(deploy::deploy(deployable, self.pool.clone(), reporter));

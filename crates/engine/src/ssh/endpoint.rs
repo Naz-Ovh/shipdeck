@@ -1,4 +1,4 @@
-//! Where and as whom to log in: `deploy.json`'s `ssh` block with
+//! Where and as whom to log in: `deploy.yaml`'s `ssh` block with
 //! `~/.ssh/config` applied, so `"host": "prod"` works like `ssh prod`.
 
 use std::path::PathBuf;
@@ -10,7 +10,7 @@ use crate::config::SshTarget;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Endpoint {
-    /// `ssh.host` as written in deploy.json: an alias or a real address.
+    /// `ssh.host` as written in deploy.yaml: an alias or a real address.
     pub name: String,
     /// The address to connect to: `HostName` for an alias, else `name`.
     pub host: String,
@@ -19,12 +19,12 @@ pub struct Endpoint {
     /// `IdentityFile` from `~/.ssh/config`, used when no `--key` or
     /// `--password` is given.
     pub identity: Option<PathBuf>,
-    /// `User` from `~/.ssh/config`, which `deploy.json` may have overridden.
+    /// `User` from `~/.ssh/config`, which `deploy.yaml` may have overridden.
     pub config_user: Option<String>,
 }
 
 impl Endpoint {
-    /// Applies `~/.ssh/config` to `target`. Values in deploy.json win.
+    /// Applies `~/.ssh/config` to `target`. Values in deploy.yaml win.
     pub fn resolve(target: &SshTarget) -> Result<Self> {
         Self::from_config(target, ssh_config::lookup(&target.host))
     }

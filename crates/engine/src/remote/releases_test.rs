@@ -36,11 +36,11 @@ fn parses_and_sorts_newest_first() {
 
 #[test]
 fn reads_release_json() {
-    let json = r#"{  "id": "x",  "version": "0.1.3",  "git": "abc0003",  "dirty": false,  "built_at": "t",  "deployed_by": "naz"}"#;
+    let json = r#"{  "id": "x",  "version": "0.1.3",  "git": "abc0003",  "dirty": false,  "built_at": "t",  "deployed_by": "me"}"#;
     let listing = parse_listing(&format!("open\t{}\t5\t{json}\n", id(3)));
     assert_eq!(
         listing.entries[0].manifest.as_ref().unwrap().deployed_by,
-        "naz"
+        "me"
     );
 }
 

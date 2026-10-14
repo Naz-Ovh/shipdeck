@@ -1,0 +1,42 @@
+# A Node.js app: built here, its production dependencies installed on the
+# server inside each new release before it goes live.
+name: Web (prod)
+
+ssh:
+  host: prod
+
+hooks:
+  # On this machine, before anything else. Any failure stops the deploy.
+  before:
+    - npm test
+  # On the server, inside the new release folder, before it goes live.
+  # A failure removes the release; the live one keeps running.
+  server:
+    - npm ci --omit=dev
+  # On this machine, once the new release is live. A failure is a warning.
+  after:
+    - echo "$SHIPDECK_RELEASE is live on $SHIPDECK_HOST"
+
+build:
+  cwd: ../../../web
+  command: npm ci && npm run build
+  files: [dist, package.json, package-lock.json]
+  # The version comes from package.json.
+
+remote:
+  dir: /opt/web
+  service: web
+  # The default unit hides /home from the service, so node must be
+  # installed system-wide (apt, NodeSource), not with nvm.
+  start: node dist/main.js
+  requires: [npm]       # node is checked already: start names it
+  env_file: .env        # the service gets .env as its environment
+  env:
+    NODE_ENV: production
+    PORT: "3000"
+
+bundle:
+  - .env
+
+health:
+  url: http://127.0.0.1:3000/health

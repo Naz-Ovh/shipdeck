@@ -47,7 +47,7 @@ while [ $# -gt 0 ]; do
 done
 
 # Every value ends up in a sudo rule run as root, so only plain names pass;
-# these are the same rules shipdeck applies to deploy.json.
+# these are the same rules shipdeck applies to deploy.yaml.
 [ -n "$DEPLOY_USER" ] && [ -n "$APP_DIR" ] && [ -n "$SERVICE" ] || { usage >&2; die "--user, --dir and --service are required"; }
 [[ "$DEPLOY_USER" =~ ^[A-Za-z0-9._-]+$ ]] || die "--user may only use letters, digits, '.', '_' and '-'"
 [[ "$APP_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]] || die "--dir must be an absolute path of letters, digits, '.', '_', '-' and '/'"

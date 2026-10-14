@@ -8,8 +8,8 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use tokio::sync::mpsc::unbounded_channel;
 
-use shipdeck_engine::config::{DeployConfig, Deployable, Discovery};
-use shipdeck_engine::deploy::DEPLOY_STEPS;
+use shipdeck_engine::config::{DeployConfig, Deployable, Discovery, parse};
+use shipdeck_engine::deploy::deploy_step_names;
 use shipdeck_engine::deploy::report::{LogKind, OpEvent, OpUpdate, Outcome, StepState, Unit};
 use shipdeck_engine::release::ReleaseName;
 use shipdeck_engine::remote::{Kind, Listing, ReleaseEntry, Status};
@@ -28,19 +28,50 @@ const RELEASES: [&str; 4] = [
 ];
 
 fn deployable(slug: &str, name: &str, host: &str) -> Deployable {
-    let config: DeployConfig = serde_json::from_value(serde_json::json!({
-        "name": name,
-        "ssh": { "host": slug.split('-').next().unwrap(), "user": "deploy" },
-        "build": {
-            "cwd": "../../../Server",
-            "command": ["cargo", "zigbuild", "--release", "-p", "my-api"],
-            "binary": "target/release/server"
-        },
-        "remote": { "dir": format!("/opt/{slug}"), "service": slug, "args": ["-E=.env"] },
-        "bundle": [".env", "files/"],
-        "health": { "url": "http://127.0.0.1:6520/", "timeout_secs": 20 }
-    }))
+    let yaml = format!(
+        "
+name: {name}
+ssh: {{ host: {alias}, user: deploy }}
+build:
+  cwd: ../../../Server
+  command: [cargo, zigbuild, --release, -p, my-api]
+  binary: target/release/server
+remote: {{ dir: /opt/{slug}, service: {slug}, args: [-E=.env] }}
+bundle: [.env, files/]
+health: {{ url: \"http://127.0.0.1:6520/\", timeout_secs: 20 }}
+",
+        alias = slug.split('-').next().unwrap()
+    );
+    with_config(slug, host, parse(&yaml).unwrap())
+}
+
+/// A Node app: build output instead of a binary, and every kind of hook.
+fn node_app() -> Deployable {
+    let config = parse(
+        "
+name: Web (prod)
+ssh: { host: web, user: deploy }
+hooks:
+  before: [npm test]
+  server: [npm ci --omit=dev]
+  after: [./notify.sh]
+build:
+  cwd: ../../../web
+  command: npm ci && npm run build
+  files: [dist, package.json, package-lock.json]
+remote:
+  dir: /opt/web
+  service: web
+  start: node dist/main.js
+  requires: [npm]
+bundle: [.env]
+",
+    )
     .unwrap();
+    with_config("web-prod", "203.0.113.13", config)
+}
+
+fn with_config(slug: &str, host: &str, config: DeployConfig) -> Deployable {
     let endpoint = Endpoint::from_config(
         &config.ssh,
         HostConfig {
@@ -68,10 +99,11 @@ fn app() -> App {
             deployable("api-prod", "My API (prod)", "203.0.113.10"),
             deployable("proxy-prod", "My Proxy (prod)", "203.0.113.11"),
             deployable("api-beta", "My API (beta)", "203.0.113.12"),
+            node_app(),
         ],
         broken: vec![(
             PathBuf::from("scripts/deploy/old"),
-            "parsing deploy.json: unknown field `colour`".into(),
+            "in scripts/deploy/old/deploy.yaml: unknown field `colour` at line 8, column 1".into(),
         )],
     };
     let pool = Arc::new(Pool::new(Login::Auto, questions));
@@ -89,6 +121,7 @@ fn app() -> App {
             active: "active".into(),
         }),
         Live::Error("connecting to deploy@203.0.113.11 timed out after 15s".into()),
+        Live::Loading,
         Live::Loading,
     ];
     app
@@ -115,7 +148,8 @@ fn send(app: &mut App, event: OpEvent) {
 }
 
 fn running_deploy(app: &mut App) {
-    app.op = Some(Operation::new(1, OpKind::Deploy, 0, &DEPLOY_STEPS));
+    let steps = deploy_step_names(&app.deployables[0].config);
+    app.op = Some(Operation::new(1, OpKind::Deploy, 0, &steps));
     app.screen = Screen::Operation;
     send(
         app,
@@ -329,6 +363,79 @@ async fn draws_every_screen_at_common_and_small_sizes() {
         app.modals.pop_front();
         app.modals.pop_front();
         render(&mut app, width, height, "password");
+    }
+}
+
+#[tokio::test]
+async fn draws_an_app_with_hooks() {
+    for (width, height) in [(160, 46), (100, 30), (60, 18)] {
+        let mut app = app();
+        app.list.select(Some(3));
+        render(&mut app, width, height, "node-app");
+
+        let steps = deploy_step_names(&app.deployables[3].config);
+        assert_eq!(
+            steps,
+            [
+                "Before",
+                "Preflight",
+                "Build",
+                "Pack",
+                "Upload",
+                "Prepare",
+                "Switch",
+                "Restart",
+                "Health",
+                "Rotate",
+                "After"
+            ]
+        );
+        app.op = Some(Operation::new(1, OpKind::Deploy, 3, &steps));
+        app.screen = Screen::Operation;
+        for (step, detail) in [
+            (0, "1 command · 4.1s"),
+            (1, "x86_64 · glibc 2.39 · 41.2 GiB free"),
+            (2, "3 build outputs · 12.0s"),
+            (3, "412 files · 3.1 MiB → 0.9 MiB"),
+            (4, "0.9 MiB in 0.6s"),
+        ] {
+            send(
+                &mut app,
+                OpEvent::Step {
+                    step,
+                    state: StepState::Done,
+                    detail: Some(detail.into()),
+                },
+            );
+        }
+        send(
+            &mut app,
+            OpEvent::Step {
+                step: 5,
+                state: StepState::Running,
+                detail: None,
+            },
+        );
+        send(
+            &mut app,
+            OpEvent::Progress {
+                step: 5,
+                done: 0,
+                total: 1,
+                unit: Unit::Items,
+                label: "npm ci --omit=dev".into(),
+            },
+        );
+        send(
+            &mut app,
+            OpEvent::Log {
+                kind: LogKind::Command,
+                text:
+                    "deploy@web › npm ci --omit=dev  (in releases/v1.4.0-77aa001-20261014.160501)"
+                        .into(),
+            },
+        );
+        render(&mut app, width, height, "node-prepare");
     }
 }
 

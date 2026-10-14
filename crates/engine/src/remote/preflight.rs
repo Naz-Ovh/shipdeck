@@ -23,11 +23,33 @@ pub struct Facts {
     pub sudo_missing: Vec<String>,
     /// The sudoers line that would allow every needed command.
     pub sudoers_line: String,
+    /// Each program asked for, with where `command -v` found it.
+    pub tools: Vec<(String, Option<String>)>,
+}
+
+impl Facts {
+    /// Where the server has `tool`, if it was asked for and found.
+    pub fn tool_path(&self, tool: &str) -> Option<&str> {
+        self.tools
+            .iter()
+            .find(|(name, _)| name == tool)
+            .and_then(|(_, path)| path.as_deref())
+    }
 }
 
 impl Server {
-    pub async fn facts(&self, user: &str) -> Result<Facts> {
+    /// Looks the server over as `user`, finding each of `tools` on its PATH.
+    pub async fn facts(&self, user: &str, tools: &[String]) -> Result<Facts> {
         let commands = self.sudo_commands();
+        let lookups: String = tools
+            .iter()
+            .map(|tool| {
+                format!(
+                    "printf 'tool=%s:%s\\n' {q} \"$(command -v {q} 2>/dev/null)\"\n",
+                    q = sh_quote(tool)
+                )
+            })
+            .collect();
         let checks: String = commands
             .iter()
             .map(|c| {
@@ -48,7 +70,7 @@ echo \"free_kb=$(df -Pk \"$p\" | awk 'NR==2 {{print $4}}')\"
 echo \"current=$(readlink \"$dir/current\" 2>/dev/null)\"
 echo \"active=$(systemctl is-active {svc} 2>&1 | head -n1)\"
 for tool in systemctl install journalctl; do echo \"path_$tool=$(command -v $tool)\"; done
-{checks}",
+{lookups}{checks}",
             dir = self.q_dir(),
             svc = self.q_service(),
         );
@@ -101,6 +123,19 @@ for tool in systemctl install journalctl; do echo \"path_$tool=$(command -v $too
                 .map(|(_, v)| v.to_string())
                 .collect(),
             sudoers_line,
+            tools: tools
+                .iter()
+                .map(|tool| {
+                    let path = values
+                        .iter()
+                        .filter(|(k, _)| *k == "tool")
+                        .filter_map(|(_, v)| v.split_once(':'))
+                        .find(|(name, _)| name == tool)
+                        .map(|(_, path)| path.trim().to_string())
+                        .filter(|path| !path.is_empty());
+                    (tool.clone(), path)
+                })
+                .collect(),
         })
     }
 }

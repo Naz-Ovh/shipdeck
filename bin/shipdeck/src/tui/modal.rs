@@ -184,7 +184,15 @@ fn confirm_deploy(app: &App, index: usize) -> Dialog {
             format!("{}:{}", deployable.endpoint.label(), config.remote.dir),
         ),
         row("service", config.remote.service.clone()),
-        row("build", config.build.command.join(" ")),
+        row(
+            "build",
+            config
+                .build
+                .command
+                .as_ref()
+                .map(|command| command.display())
+                .unwrap_or_else(|| "nothing to build".into()),
+        ),
         row("live now", live),
         Line::default(),
         Line::from(Span::styled(
@@ -195,13 +203,18 @@ fn confirm_deploy(app: &App, index: usize) -> Dialog {
     ];
     if !missing.is_empty() {
         lines.push(Line::default());
-        lines.push(Line::from(Span::styled(
+        let text = if config.hooks.before.is_empty() {
             format!(
                 "Missing bundle files: {}. The deploy stops at Preflight, before connecting or building.",
                 missing.join(", ")
-            ),
-            Style::new().fg(ERR),
-        )));
+            )
+        } else {
+            format!(
+                "Missing bundle files: {}. hooks.before must create them, or the deploy stops at Preflight.",
+                missing.join(", ")
+            )
+        };
+        lines.push(Line::from(Span::styled(text, Style::new().fg(ERR))));
     }
     (
         "Deploy".into(),

@@ -1,0 +1,29 @@
+# A Go service: a static binary needs nothing from the server.
+name: Worker (prod)
+
+ssh:
+  host: prod
+
+build:
+  cwd: ../../../worker
+  # A shell line: `&&`, pipes and variables work.
+  command: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/worker ./cmd/worker
+  binary: dist/worker
+  files: [templates]    # build output that ships too, at the same path
+  # No version file: the version is the latest git tag (v1.2.0 → 1.2.0).
+
+remote:
+  dir: /opt/worker
+  service: worker
+  start: ./worker --config config.yaml
+  env_file: .env
+  env:
+    GOMAXPROCS: "2"
+
+bundle:
+  - .env
+  - config.yaml
+
+releases:
+  open: 3               # unpacked, for instant rollback
+  compressed: 10        # kept as .tar.gz after that

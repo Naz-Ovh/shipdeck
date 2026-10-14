@@ -10,7 +10,7 @@ Wants=network-online.target
 Type=simple
 User={{user}}
 WorkingDirectory={{dir}}/current
-ExecStart={{dir}}/current/{{binary}} {{args}}
+ExecStart={{exec}}
 Environment=APP_RELEASE={{id}}
 {{env}}
 # Restart on crash. SIGTERM lets in-flight requests finish.
