@@ -5,7 +5,7 @@ members = ["bin/shipdeck", "crates/engine"]
 [workspace.package]
 version = "0.3.0"
 edition = "2024"
-license = "UNLICENSED"
+license = "MIT OR Apache-2.0"
 publish = false
 repository = "https://github.com/Naz-Ovh/shipdeck"
 
@@ -32,4 +32,9 @@ toml = "1.1.8"
 
 [profile.release]
 strip = true
+lto = "thin"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
 lto = "thin"

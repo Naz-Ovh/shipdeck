@@ -16,3 +16,12 @@ futures.workspace = true
 ratatui.workspace = true
 tokio.workspace = true
 
+# musl's own malloc is the main reason musl builds run slower than gnu ones;
+# gnu and macOS keep their system allocator
+[target.'cfg(target_env = "musl")'.dependencies]
+mimalloc = "0.1.52"
+
+[package.metadata.dist]
+# dist skips packages with publish = false unless told otherwise
+dist = true
+

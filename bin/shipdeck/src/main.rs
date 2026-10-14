@@ -14,6 +14,10 @@ use tokio::sync::mpsc::unbounded_channel;
 use shipdeck_engine::config;
 use shipdeck_engine::ssh::{Login, Pool};
 
+#[cfg(target_env = "musl")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[derive(Parser)]
 #[command(
     name = "shipdeck",

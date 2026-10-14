@@ -1,4 +1,8 @@
 # Deploys the docs site (docs/website) to Cloudflare when a release is published.
+# release.yml calls it once dist has published the release (dist-workspace.toml,
+# post-announce-jobs): a release made with the workflow's own token never
+# triggers other workflows, so the release event below only fires for releases
+# made by hand.
 # Pre-releases are skipped, so shipdeck.naz.ovh always documents a stable version.
 # "Run workflow" on the Actions tab redeploys by hand from any branch or tag.
 #
@@ -11,6 +15,11 @@ name: Docs
 on:
   release:
     types: [published]
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
   workflow_dispatch:
 
 permissions:
@@ -26,7 +35,8 @@ jobs:
     name: Deploy to Cloudflare
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (!github.event.release.prerelease && !contains(github.event.release.tag_name, '-'))
+      (github.event_name == 'release' && !github.event.release.prerelease && !contains(github.event.release.tag_name, '-')) ||
+      (inputs.plan != '' && !fromJson(inputs.plan).announcement_is_prerelease)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:

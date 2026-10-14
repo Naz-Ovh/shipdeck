@@ -23,13 +23,25 @@ field is under [deploy.yaml](#deployyaml).
 **3. Deploy.** Run `shipdeck ./scripts/deploy`, pick the deployable and press
 `⏎`.
 
+## Install
+
+```sh
+# Linux and macOS
+curl -LsSf https://github.com/Naz-Ovh/shipdeck/releases/latest/download/shipdeck-installer.sh | sh
+
+# from source
+cargo install --git https://github.com/Naz-Ovh/shipdeck shipdeck
+```
+
+The script installs to `~/.local/bin`. On Linux it picks the gnu build when
+the system has glibc 2.28 or newer, and a static musl build otherwise
+(Alpine, or an older distribution).
+
 ## Run it
 
 ```sh
 cargo run --release -p shipdeck -- <deploy-root> [--key <path> | --password <value>]
 
-# or install it once
-cargo install --git https://github.com/Naz-Ovh/shipdeck shipdeck
 shipdeck ./scripts/deploy --key ~/.ssh/id_ed25519
 shipdeck ./scripts/deploy                 # asks for the password in the TUI
 shipdeck --schema > deploy.schema.json    # the JSON Schema, for offline editors
@@ -454,14 +466,33 @@ cargo run -q -p shipdeck -- --schema > deploy.schema.json
 
 The setup command fetches `server-setup.sh`, and editors fetch
 `deploy.schema.json`, at the tag `v<version>`, so every release needs its tag
-pushed:
+pushed. A release has three steps:
+
+1. Bump `[workspace.package] version` in `Cargo.toml`, update the schema line
+   in `examples/` and this README, regenerate `deploy.schema.json`, and commit.
+2. On GitHub, draft a release (Releases, Draft a new release) for the tag
+   `v<version>` and write its notes. Save it as a draft; do not publish it.
+3. Push the tag:
 
 ```sh
-# bump [workspace.package] version in Cargo.toml, update the schema line in
-# examples/ and this README, regenerate deploy.schema.json, commit, then
 git tag v0.3.0 && git push origin main v0.3.0
 ```
 
 `setup_test.rs` fails if `server-setup.sh` and `remote::sudo_commands` ever
 disagree, and `config_test.rs` fails if the examples point at another
 version's schema.
+
+The tag push runs `.github/workflows/release.yml`, which
+[dist](https://github.com/axodotdev/cargo-dist) generates from
+`dist-workspace.toml`. Nothing else runs it, pull requests included. It builds
+six binaries (gnu and static musl for x86_64 and aarch64 Linux, plus both
+macOS architectures) and checks that no gnu binary needs a glibc newer than
+`min-glibc-version`. Then it uploads the archives, their checksums and
+`shipdeck-installer.sh` into your draft and publishes it, so a release is
+never public without its binaries. If the build or the check fails, the
+release stays a draft. If no draft waits for the tag, every build job stops
+before it compiles: draft the release, then re-run the workflow. The docs site
+deploys once the release is published.
+
+After changing `dist-workspace.toml`, run `dist generate`: the release
+workflow refuses to run while `release.yml` is out of date.

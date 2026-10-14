@@ -1,0 +1,43 @@
+# Release check, called by release.yml after the binaries are built and before
+# the GitHub Release is made. The install script hands the gnu build to any
+# machine with glibc at or above min-glibc-version in dist-workspace.toml; this
+# fails the release if a gnu binary actually needs a newer glibc than that.
+name: glibc floor
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: gnu builds within the floor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Fetch the gnu builds
+        uses: actions/download-artifact@v8
+        with:
+          pattern: artifacts-build-local-*-linux-gnu
+          path: artifacts
+          merge-multiple: true
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check each binary
+        run: |
+          floor=$(python3 -c 'import tomllib; print(tomllib.load(open("dist-workspace.toml", "rb"))["dist"]["min-glibc-version"]["*"])')
+          mkdir unpacked
+          for archive in artifacts/*-unknown-linux-gnu.tar.xz; do
+            tar -xJf "$archive" -C unpacked
+          done
+          cargo run --locked -q -p shipdeck-engine --example glibc_floor -- "$floor" unpacked/*/shipdeck
