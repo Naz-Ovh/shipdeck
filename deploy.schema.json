@@ -1,5 +1,5 @@
 {
-  "$id": "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.1/deploy.schema.json",
+  "$id": "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.4.0/deploy.schema.json",
   "$schema": "http://json-schema.org/draft-07/schema#",
   "additionalProperties": false,
   "definitions": {

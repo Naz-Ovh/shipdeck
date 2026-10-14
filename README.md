@@ -28,7 +28,7 @@ field is under [deploy.yaml](#deployyaml).
 ```sh
 # Linux and macOS: the latest release, or the one -V names
 curl -LsSf https://shipdeck.naz.ovh/install.sh | sh
-curl -LsSf https://shipdeck.naz.ovh/install.sh | sh -s -- -V=v0.3.1
+curl -LsSf https://shipdeck.naz.ovh/install.sh | sh -s -- -V=v0.4.0
 
 # from source
 cargo install --git https://github.com/Naz-Ovh/shipdeck shipdeck
@@ -86,7 +86,7 @@ mistake, it does not start, and prints every problem in every file at once
 ## deploy.yaml
 
 ```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.1/deploy.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.4.0/deploy.schema.json
 name: Web (prod)
 project: ../../../web                       # your source; local commands run here
 ssh:
@@ -332,13 +332,13 @@ same descriptions as above, for any editor using the YAML language server
 `deploy.yaml` with:
 
 ```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.1/deploy.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.4.0/deploy.schema.json
 ```
 
 or map it once for the whole repository in `.vscode/settings.json`:
 
 ```json
-{ "yaml.schemas": { "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.1/deploy.schema.json": "**/deploy.yaml" } }
+{ "yaml.schemas": { "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.4.0/deploy.schema.json": "**/deploy.yaml" } }
 ```
 
 ### From 0.2
@@ -480,7 +480,7 @@ line in `examples/` and this README, regenerate `deploy.schema.json`, commit,
 and push the tag:
 
 ```sh
-git tag v0.3.1 && git push origin main v0.3.1
+git tag v0.4.0 && git push origin main v0.4.0
 ```
 
 `setup_test.rs` fails if `server-setup.sh` and `remote::sudo_commands` ever
