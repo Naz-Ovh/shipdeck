@@ -55,7 +55,7 @@ shipdeck 0.3.0 keeps a narrow scope:
 
 **On your PC**
 
-- A Rust toolchain (1.89 or newer) and a C compiler, to build shipdeck itself. See [Installation](/docs/getting-started/installation).
+- Nothing extra for shipdeck itself: the [install script](/docs/getting-started/installation) downloads a prebuilt binary. Only building it from source needs a Rust toolchain (1.89 or newer) and a C compiler.
 - A Unix-like system: Linux, macOS, or Windows through WSL. Local commands run through `sh -c`.
 - Whatever your own build needs: `cargo`, `cargo zigbuild`, `go`, `npm` and so on.
 - A terminal with 24-bit colour and Unicode box-drawing characters.
@@ -64,6 +64,7 @@ shipdeck 0.3.0 keeps a narrow scope:
 **On the server**
 
 - Linux with systemd and an SSH server.
+- `zstd`, to unpack releases (`apt install zstd`, or `dnf install zstd`).
 - `curl` or `wget`, if you set `pipeline.health.url`.
 - Either the root user, or a user with passwordless `sudo` for the five commands shipdeck needs. [Server access](/docs/guides/server-access) lists them and shows the one-time setup script.
 - At least 100 MiB of free disk space.

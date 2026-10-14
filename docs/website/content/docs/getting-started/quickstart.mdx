@@ -5,7 +5,7 @@ description: From nothing to a first deploy and a first rollback of a small Rust
 
 This page takes a Rust service called `my-api` from your PC to a server at `203.0.113.10`, deploys it as the user `deploy`, then rolls it back. It takes about ten minutes plus your build time.
 
-You need shipdeck's [requirements](/docs#what-you-need): a Rust toolchain on your PC, and a Linux server with systemd that you can reach over SSH.
+You need a Linux server with systemd that you can reach over SSH, and a Rust toolchain on your PC to build the example service. shipdeck itself installs as a prebuilt binary; the rest of its [requirements](/docs#what-you-need) are short.
 
 <Steps>
 <Step>
@@ -259,7 +259,7 @@ shipdeck switches to the Operation screen and runs the pipeline. The Steps panel
 | --- | --- |
 | Preflight | Connects, reads the server's CPU, glibc and free space, and creates `/opt/my-api` on the first deploy. Checks that `.env` exists in the deploy folder. |
 | Build | Names the release from `Cargo.toml` and the git commit, runs `cargo zigbuild`, then shows a bar of crates compiled. Checks the binary against the server. |
-| Pack | Builds one `.tar.gz` with the binary, `.env`, `release.json` and the unit file. |
+| Pack | Builds one `.tar.zst` with the binary, `.env`, `release.json` and the unit file. |
 | Upload | Sends it, with bytes and speed. |
 | Unpack | Unpacks it into `releases/<id>`. |
 | Setup | Nothing to run in this example, so it is skipped. |

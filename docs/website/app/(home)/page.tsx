@@ -5,7 +5,7 @@ import { CopyCommand } from '@/components/home/copy-command';
 import { PipelineSteps } from '@/components/pipeline-steps';
 import { shipdeckVersion } from '@/lib/version';
 
-const install = 'cargo install --git https://github.com/Naz-Ovh/shipdeck shipdeck';
+const install = 'curl -LsSf https://shipdeck.naz.ovh/install.sh | sh';
 
 const yaml = `name: My API (prod)
 project: ../../..
