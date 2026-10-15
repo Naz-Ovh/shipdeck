@@ -25,7 +25,9 @@ shipdeck treats this layout and the release id format as a contract with servers
       <Folder name="v0.3.0-9f8e7d6-20261012.091000" />
     </Folder>
     <Folder name="backups" defaultOpen>
-      <File name="v0.2.9-1a2b3c4-20261001.120000.tar.gz" />
+      <File name="v0.3.1-ab12cd3-20261014.153012.tar.zst" />
+      <File name="v0.3.0-9f8e7d6-20261012.091000.tar.zst" />
+      <File name="v0.2.9-1a2b3c4-20261001.120000.tar.zst" />
     </Folder>
     <Folder name="shared" defaultOpen>
       <Folder name="uploads" />
@@ -50,8 +52,11 @@ The same as text, with the transient files:
 │   ├── .<id>.tar.zst                     transient: the upload
 │   └── .<id>.partial/                    transient: unpacking or restoring
 ├── backups/
-│   ├── <id>.tar.gz                       compressed releases
-│   └── .<id>.tar.gz.part                 transient, during compression
+│   ├── <id>.tar.zst                      a release's backup, made after setup
+│   ├── <id>.tar.gz                       a whole release, from before backups
+│   ├── .<id>.tar.zst.part                transient, while packing a backup
+│   ├── .<id>.files                       transient, the list of files to pack
+│   └── .<id>.tar.gz.part                 transient, while compressing an old release
 └── shared/
     └── uploads/                          service.shared folders, kept across releases
 
@@ -66,12 +71,13 @@ The same as text, with the transient files:
 | Path | What it is |
 | --- | --- |
 | `current` | A relative symlink to `releases/<id>`: the live release. A switch replaces it in one rename, so it is never missing. |
-| `releases/<id>/` | An open release: unpacked and ready to switch to. The newest `service.keep.open` stay here, the live one included. |
+| `releases/<id>/` | An open release: unpacked and ready to switch to. The newest `pipeline.backup.keep.open` stay here, the live one included. |
 | `releases/<id>/<binary>` | The file named by `pipeline.pack.binary`, at the release root, mode `0755`. |
 | `releases/<id>/release.json` | Who deployed what, from which commit. See below. |
 | `releases/<id>/<service>.service` | The unit rendered for this release. Installed into `/etc/systemd/system/` when the release goes live. |
 | `releases/<id>/<shared folder>` | A symlink to the absolute path `<service.dir>/shared/<folder>`, made at unpack for each `service.shared` entry. |
-| `backups/<id>.tar.gz` | A compressed release: a tarball of `releases/<id>/`. The next `service.keep.compressed` releases live here. |
+| `backups/<id>.tar.zst` | A release's backup, packed at the backup step right after setup: what `pipeline.backup.files` picked, plus `release.json` and the unit, never the `service.shared` links. Every release has one, open ones too. The next `pipeline.backup.keep.compressed` releases after the open ones live only here. See [Releases](/docs/guides/releases#backups). |
+| `backups/<id>.tar.gz` | A whole release, tarred from `releases/<id>/` by a shipdeck from before backups, or when such a release leaves the open ones. A rollback unpacks it and removes it. |
 | `shared/` | Folders kept across releases. With the built-in unit, the only place the service may write. |
 
 `releases/`, `backups/` and `shared/` are created at the upload step if missing. `service.dir` itself is created at preflight on a first deploy.
@@ -83,9 +89,11 @@ These exist only while shipdeck is working. A name starting with a dot keeps the
 | Path | When |
 | --- | --- |
 | `releases/.<id>.tar.zst` | The uploaded archive, between upload and unpack. |
-| `releases/.<id>.partial/` | A release being unpacked, or a compressed one being restored. Renamed to `releases/<id>` when complete. |
+| `releases/.<id>.partial/` | A release being unpacked, or a backup or tarball being restored. Renamed to `releases/<id>` when complete. |
 | `.current.next` | The new symlink, just before it is renamed over `current`. |
-| `backups/.<id>.tar.gz.part` | A tarball being written. Renamed when complete. |
+| `backups/.<id>.tar.zst.part` | A backup being packed. Renamed to `backups/<id>.tar.zst` when complete. |
+| `backups/.<id>.files` | The list of paths that go into a backup, while it is packed. |
+| `backups/.<id>.tar.gz.part` | A whole-release tarball being written. Renamed when complete. |
 
 If a run is cut off, such a file may stay behind. shipdeck never lists it, and the next unpack of the same id removes an old `.partial` first.
 

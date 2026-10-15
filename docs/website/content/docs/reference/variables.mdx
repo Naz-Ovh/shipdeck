@@ -23,7 +23,7 @@ Every command you write under `pipeline` runs with a set of `SHIPDECK_*` variabl
 | `SHIPDECK_FOLDER` | The deploy folder (where deploy.yaml is), absolute | local commands only |
 | `SHIPDECK_PROJECT` | `project`, absolute | local commands only |
 
-In `failed` commands, `SHIPDECK_STEP` can also be a step that takes no commands: `pack`, `upload`, `unpack`, `switch`, `restart`, or `connect` in a manual rollback.
+In `failed` commands, `SHIPDECK_STEP` can also be a step that takes no commands: `pack`, `upload`, `unpack`, `backup`, `switch`, `restart`, or `connect` in a manual rollback.
 
 A variable that is not set is absent, not empty. Under `set -u`, or when a missing value matters, write `${SHIPDECK_PREVIOUS:-none}`.
 
@@ -55,7 +55,7 @@ The env file is read from the release the step works with:
 | Step | Folder | Env file read from |
 | --- | --- | --- |
 | preflight | `service.dir` | `current/<env_file>`, the **live** release's. Skipped on a first deploy, when there is none. |
-| setup | `releases/<id>` | the new release |
+| setup | `releases/<id>` | the new release (on a rollback to a backup, the release just unpacked) |
 | health, done | `current` | the new release, now live |
 
 The reader follows systemd's rules: blank lines and lines starting with `#` or `;` are skipped, an `export ` prefix is allowed, keys must be valid variable names, one pair of surrounding quotes is removed, and **nothing is expanded**: `$HOME` stays the text `$HOME`. A missing file is skipped without an error. [Environment and secrets](/docs/guides/environment) covers shipping the file.
@@ -101,13 +101,15 @@ Local commands run in `project`, not in the deploy folder, so `$SHIPDECK_FOLDER`
 
 ### Migrations on deploy only
 
-Setup runs only on a deploy, so migrations there never run on a manual rollback. A done command runs on both; check `SHIPDECK_ACTION` when it should not:
+Setup runs on a deploy, and again on a manual rollback to a release kept only as a backup, to remake what the backup left out (see [Releases](/docs/guides/releases#rolling-back-by-hand)). Done runs on both. Check `SHIPDECK_ACTION` in a command that should run on deploys only:
 
 ```yaml title="deploy.yaml"
 pipeline:
   setup:
     run:
-      server: npm run migrate                 # deploys only: setup never runs on a rollback
+      server:
+        - npm ci --omit=dev                                          # deploys and rollbacks
+        - '[ "$SHIPDECK_ACTION" = rollback ] || npm run migrate'     # deploys only
   done:
     run:
       server: '[ "$SHIPDECK_ACTION" = rollback ] || ./bin/warm-cache'   # skipped on a rollback

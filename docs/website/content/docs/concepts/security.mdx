@@ -56,7 +56,7 @@ Everything else runs over SSH as `ssh.user`, without sudo:
 
 - the preflight facts script and creating folders in `service.dir`
 - upload, unpack, `service.shared` links and the switch of `current`
-- rotation, compression and restoring old releases
+- packing backups, tidying old releases and restoring them
 - health probes (`systemctl is-active`, `systemctl show`, `curl` or `wget`)
 - your `server` commands from `pipeline`
 
@@ -84,7 +84,7 @@ See [SSH and login](/docs/guides/ssh#host-keys).
 
 ## Safe changes on the server
 
-Unpacking and restoring go through hidden `.partial` folders, `current` changes with one rename, and compression writes a `.part` file before renaming it. A step that fails halfway leaves no half-written release in view.
+Unpacking and restoring go through hidden `.partial` folders, `current` changes with one rename, and packing a backup or compressing an old release writes a `.part` file before renaming it. A step that fails halfway leaves no half-written release in view.
 
 ## Limits
 

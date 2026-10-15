@@ -1,13 +1,13 @@
 ---
 title: The pipeline
-description: The ten steps of a deploy, what shipdeck does at each one, where your commands run, and what a failure at each step means.
+description: The eleven steps of a deploy, what shipdeck does at each one, where your commands run, and what a failure at each step means.
 ---
 
-A deploy is always the same ten steps, in the same order. Some steps are shipdeck's own; the rest also run commands you write under `pipeline` in `deploy.yaml`.
+A deploy is always the same eleven steps, in the same order. Some steps are shipdeck's own; the rest also run commands you write under `pipeline` in `deploy.yaml`.
 
 <PipelineSteps />
 
-Nothing live changes before **switch**. A failure in the first six steps stops the deploy and leaves the running release alone. A failure at switch, restart or health leads to putting the previous release back: after asking you by default, at once with `rollback: auto` (see [Health and rollback](/docs/guides/health-and-rollback)).
+Nothing live changes before **switch**. A failure in the first seven steps stops the deploy and leaves the running release alone. A failure at switch, restart or health leads to putting the previous release back: after asking you by default, at once with `pipeline.failed.rollback: auto` (see [Health and rollback](/docs/guides/health-and-rollback)).
 
 ## The steps
 
@@ -72,7 +72,17 @@ The new release is on the server but not live; the old one still serves. shipdec
 
 With no setup commands the step is skipped (`nothing to run`). A failure removes the new release, logs `releases/<id> was removed; <previous> is still live` and stops.
 
-### 7. Switch
+### 7. Backup
+
+`Backup: packing backups/<id>.tar.zst`
+
+The release is set up and still not live. shipdeck packs part of it into `backups/<id>.tar.zst`, on the server, with `tar -I zstd`. `pipeline.backup.files` says what goes in; by default it is what shipdeck shipped: the binary and the files `pipeline.pack.files` picked. `release.json` and the service file are always in; `service.shared` folders never are. What setup made, such as `node_modules`, stays out, because a rollback to the backup runs setup again.
+
+The log says how much it kept, such as `backups/<id>.tar.zst holds 42 of the release's 3180 files (1.2 MiB)`. An `include` pattern that matches nothing is logged as a warning. When the old folder goes in a later **done**, this backup is what stays for rollback. See [Releases](/docs/guides/releases#backups).
+
+With `pipeline.backup.keep.compressed: 0` the step is skipped (`keep.compressed is 0`). A failure removes the new release, its backup included, and stops; the old one keeps serving.
+
+### 8. Switch
 
 `Switch: making it the current release`
 
@@ -80,13 +90,13 @@ shipdeck points `current` at `releases/<id>` in one rename, then installs `curre
 
 From here on, a failure leads to the [rollback flow](/docs/guides/health-and-rollback#when-a-step-fails-after-the-switch).
 
-### 8. Restart
+### 9. Restart
 
 `Restart: <service>`
 
 `systemctl restart <service>`. This is the only moment the app is down, usually a second or two. A failure leads to the rollback flow.
 
-### 9. Health
+### 10. Health
 
 `Health: waiting for the new release to settle`
 
@@ -94,11 +104,11 @@ shipdeck probes the service once a second until it is `active` (and `pipeline.he
 
 A failure leads to the rollback flow. [Health and rollback](/docs/guides/health-and-rollback) has the details.
 
-### 10. Done
+### 11. Done
 
 `Done: tidying old releases`
 
-The release is live. shipdeck logs `<id> is live`, then tidies old releases as `service.keep` says (see [Releases](/docs/guides/releases)). Then it runs `pipeline.done.run.server` in `current`, then `pipeline.done.run.local` in `project`.
+The release is live. shipdeck logs `<id> is live`, then tidies old releases as `pipeline.backup.keep` says (see [Releases](/docs/guides/releases#how-many-are-kept)). Then it runs `pipeline.done.run.server` in `current`, then `pipeline.done.run.local` in `project`.
 
 A failure here is only a warning (`pipeline.done: <error>; <id> stays live`). The step shows as warned, the deploy still counts as live, and `failed` does not run.
 
@@ -110,6 +120,8 @@ This step is listed only when `pipeline.failed.run.local` has commands. It runs 
 
 If nothing failed, it is skipped (`nothing failed`). Its own failure is logged as a warning and does not change the outcome.
 
+`pipeline.failed.rollback` (`ask` or `auto`) says what happens when switch, restart or health fails: ask before putting the previous release back, or do it at once. See [Health and rollback](/docs/guides/health-and-rollback).
+
 ## Summary
 
 | # | Step | shipdeck does | your commands |
@@ -120,10 +132,11 @@ If nothing failed, it is skipped (`nothing failed`). Its own failure is logged a
 | 4 | upload | sends the archive to the server | - |
 | 5 | unpack | unpacks it into `releases/<id>`, links `service.shared` | - |
 | 6 | setup | nothing: the old release is still live | `run.server` → `check.server` |
-| 7 | switch | points `current` at `releases/<id>`, installs its unit | - |
-| 8 | restart | restarts the service | - |
-| 9 | health | waits until the service is active and `url` answers | `check.server` → `check.local` |
-| 10 | done | tidies old releases (`service.keep`) | `run.server` → `run.local` |
+| 7 | backup | packs `backups/<id>.tar.zst` from the release | - |
+| 8 | switch | points `current` at `releases/<id>`, installs its unit | - |
+| 9 | restart | restarts the service | - |
+| 10 | health | waits until the service is active and `url` answers | `check.server` → `check.local` |
+| 11 | done | tidies old releases (`backup.keep`) | `run.server` → `run.local` |
 | ✱ | failed | a step failed | `run.local` |
 
 A step takes commands only where it can run them:
@@ -135,10 +148,11 @@ A step takes commands only where it can run them:
 | pack | ✘ | ✘ | - | `binary`, `files` | stops |
 | upload, unpack | ✘ | ✘ | - | - | the release is removed |
 | setup | ✘ | `run`, `check` | `releases/<id>` | - | the release is removed; the old one keeps serving |
+| backup | ✘ | ✘ | - | `files`, `keep` | the release is removed; the old one keeps serving |
 | switch, restart | ✘ | ✘ | - | - | asks, then rolls back |
-| health | `check` | `check` | `current` | `url`, `timeout_secs`, `rollback` | asks, then rolls back |
+| health | `check` | `check` | `current` | `url`, `timeout_secs` | asks, then rolls back |
 | done | `run` | `run` | `current` | - | a warning only |
-| failed | `run` | ✘ | - | - | logged |
+| failed | `run` | ✘ | - | `rollback` | logged |
 
 Local commands always run in `project`. A key that is not in this table, such as `pipeline.build.run.server` or a step named `upload`, is refused before shipdeck starts (see [Config problems](/docs/reference/config-problems)).
 
@@ -231,14 +245,15 @@ What happens when you deploy it:
 2. **Build** names the release from `package.json`, such as `v1.4.0-ab12cd3-20261014.153012`, then runs `npm ci` and `npm run build`.
 3. **Pack**, **upload** and **unpack** put `dist/`, the package files and `.env` into `releases/v1.4.0-…`, with `uploads` linked to `shared/uploads`.
 4. **Setup** installs production dependencies and runs migrations inside the new release. If a migration fails, the release is removed and the old one keeps serving.
-5. **Switch** and **restart** make it live.
-6. **Health** waits for three healthy probes of the URL, then runs the smoke test on the server and the public check on your PC, for up to 30 seconds in all.
-7. **Done** tidies old releases and sends the message.
+5. **Backup** keeps `dist/`, the package files and `.env` in `backups/<id>.tar.zst`; `node_modules` stays out.
+6. **Switch** and **restart** make it live.
+7. **Health** waits for three healthy probes of the URL, then runs the smoke test on the server and the public check on your PC, for up to 30 seconds in all.
+8. **Done** tidies old releases and sends the message.
 
 If anything fails, `failed` sends the step and the error. Because `node` is a bare name, shipdeck writes its full path into the unit, as found on the server.
 
 <Callout type="warn" title="Migrations and rollback">
-Setup runs before the switch, so a migration has already run when health fails and shipdeck rolls back. A rollback puts the old code back, not the old schema. Keep migrations compatible with the previous release.
+Setup runs before the switch, so a migration has already run when health fails and shipdeck rolls back. A rollback puts the old code back, not the old schema. Keep migrations compatible with the previous release. A manual rollback to a backup runs setup again; to keep a migration out of it, guard it with `SHIPDECK_ACTION` (see [Variables](/docs/reference/variables#migrations-on-deploy-only)).
 </Callout>
 
 ## Next

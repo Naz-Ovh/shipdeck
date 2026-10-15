@@ -123,7 +123,7 @@ The hints for a step's misplaced commands:
 | `` `<path>` must be a whole number `` | ``found `22` `` | a quoted, negative, hex, float or exponent number | Write a plain unquoted number: `port: 22`. |
 | `` `<path>` must be a map `` | `say where it runs` | `run:` or `check:` written as a bare command | Name the side, as the hint shows: `` `run: { server: npm ci }` ``. |
 | `` `ssh.port` must be at most 65535 `` | `too large` | a port above 65535 | Use a real port. |
-| `` `pipeline.health.rollback` must be ask or auto `` | `found <value>` | any other value, `Auto` included | Write `ask` or `auto` in lowercase. |
+| `` `pipeline.failed.rollback` must be ask or auto `` | `found <value>` | any other value, `Auto` included | Write `ask` or `auto` in lowercase. |
 | `` `<path>` reads as a YAML tag `` | `YAML treats a leading ! as a tag` | an unquoted `!pattern`, such as `[dist, !dist/maps]` | Put it in quotes: `"!dist/maps"`. |
 
 ## Value rules
@@ -158,7 +158,6 @@ These run once the shape of the file is right.
 | `` `service.env.<KEY>` must not contain quotes, backslashes or newlines `` | `not allowed` | Put values like this in `service.env_file`. |
 | `` `service.shared` entry "<e>" must be a folder inside the release `` | `not allowed` | A relative folder such as `uploads` or `data/cache`. |
 | `` `service.shared` lists "<b>" and "<a>", which overlap `` | `overlaps` | Keep the outer folder. |
-| `` `service.keep.open` must be at least 1 `` | `the live release counts` | Use `1` or more. |
 
 ### pipeline
 
@@ -172,6 +171,8 @@ These run once the shape of the file is right.
 | `` `pipeline.health.timeout_secs` must be at least 3 `` | `too short` | A release counts as up after 3 healthy seconds. |
 | `` `pipeline.pack.binary` is empty `` | `empty` | Give the path, or remove the line. |
 | `nothing to ship` | `empty` | Set `pipeline.pack.binary`, `pipeline.pack.files.include`, or both. |
+| `` `pipeline.backup.keep.open` must be at least 1 `` | `the live release counts` | Use `1` or more. |
+| `the backup would hold nothing but release.json and the service file` | `nothing to back up` | Set `deployed: true`, list paths in `include`, or keep no backups with `keep.compressed: 0`. |
 
 ## 0.2 keys
 
@@ -183,7 +184,7 @@ A key from shipdeck 0.2 gives `` `<key>` moved in shipdeck 0.3 ``, labelled `a 0
 | `hooks` | ``each step has its own commands now: `pipeline.preflight.run.local`, `pipeline.setup.run.server`, `pipeline.done.run.local` `` |
 | `build` (top level) | ``it is `pipeline.build` now (run.local, version_from); binary and files moved to `pipeline.pack` `` |
 | `bundle` | ``it is `pipeline.pack.files.include.deploy` now`` |
-| `releases` | ``it is `service.keep` now`` |
+| `releases` | ``it is `pipeline.backup.keep` now`` |
 | `health` (top level) | ``it is `pipeline.health` now`` |
 | `service.service` | ``the unit's name is `service.name` `` |
 | `service.args` | ``put the arguments at the end of `service.start` `` |
@@ -192,19 +193,30 @@ A key from shipdeck 0.2 gives `` `<key>` moved in shipdeck 0.3 ``, labelled `a 0
 | `pipeline.build.binary` | ``it is `pipeline.pack.binary` now`` |
 | `pipeline.build.files` | ``it is `pipeline.pack.files.include.project` now`` |
 | `pipeline.build.cwd` | ``it is `project` now, at the top of the file`` |
-| `pipeline.rotate` | ``old releases are tidied in done; `service.keep` says how many stay`` |
+| `pipeline.rotate` | ``old releases are tidied in done; `pipeline.backup.keep` says how many stay`` |
 
 While any of these is in the file, value checks are held back. Move every key, then run again. [Upgrading from 0.2](/docs/guides/upgrading) has the full mapping.
 
+## Moved keys
+
+Two keys moved after shipdeck 0.5. Each gives `` `<key>` moved ``, labelled `moved`, with a hint that says where it went:
+
+| Key | Hint |
+| --- | --- |
+| `service.keep` | ``it is `pipeline.backup.keep` now`` |
+| `pipeline.health.rollback` | ``it is `pipeline.failed.rollback` now; it covers a failed switch or restart too`` |
+
+Move the key; the values stay the same. See [Upgrading](/docs/guides/upgrading#after-05).
+
 ## Files and paths
 
-The `pipeline.pack.files` lists are checked at launch for patterns shipdeck can never use. Each pattern problem is labelled `not a usable pattern`:
+The `pipeline.pack.files` and `pipeline.backup.files` lists are checked at launch for patterns shipdeck can never use. Each pattern problem is labelled `not a usable pattern`:
 
 | Message | Fix |
 | --- | --- |
 | `"<pattern>" is empty` | Remove it (`""` or a lone `"!"`). |
 | `"<pattern>" starts with /; patterns are relative to their source` | Drop the leading `/`. |
-| ``"<pattern>" climbs out with `..` `` | A pattern stays inside its source; move the file, or point `project` higher. |
+| ``"<pattern>" climbs out with `..` `` | A pattern stays inside its source (for `pipeline.backup.files`, inside the release); move the file, or point `project` higher. |
 | ``"<pattern>" has an empty or `.` folder in the middle`` | Remove `//` or `/./`. |
 | ``"<pattern>" has a `{` that is never closed`` | Close the brace. |
 | ``"<pattern>" has a `[` that is never closed`` | Close the bracket. |
@@ -216,9 +228,10 @@ Other launch checks on paths:
 
 | Message | Label | When | Fix |
 | --- | --- | --- | --- |
-| `"<pattern>" is listed twice` | `again` | the same literal path twice in one list (`./dist/`, `dist/` and `dist` count as the same) | Remove one. |
+| `"<pattern>" is listed twice` | `again` | the same literal path twice in one list (`./dist/`, `dist/` and `dist` count as the same), in `pipeline.pack.files` or `pipeline.backup.files` | Remove one. |
 | `<name> belongs to shipdeck` | `reserved` | a literal include, a shared entry or the binary named `release.json` or `<service.name>.service` | Rename it or leave it out. For the binary: rename the binary. |
 | `` "<literal>" is in `service.shared`, so it cannot be shipped too `` | `shared across releases` | a literal include inside or around a `service.shared` folder | Leave it out of the pack: every release links that folder to `shared/`. |
+| `` "<literal>" is in `service.shared`, so no backup holds it `` | `shared across releases` | a literal `pipeline.backup.files.include` inside or around a `service.shared` folder | Leave it out: the folder lives in `shared/`, outside every release, and is never in a backup. |
 
 Reserved names and shared folders are checked here only for literal paths. A glob or `.` that selects one is caught when the release is packed. Patterns that match nothing are caught during the deploy, not at launch. See [Packing files](/docs/guides/packing-files).
 

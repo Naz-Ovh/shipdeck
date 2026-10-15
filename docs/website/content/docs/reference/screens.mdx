@@ -82,8 +82,9 @@ The start screen. shipdeck connects to nothing when it opens: every deployable s
 │                                        ││   build     local   cargo zigbuild --release -p my-api │
 │                                        ││   pack      binary  target/release/server              │
 │                                        ││             deploy  .env, files/                       │
+│                                        ││   backup    takes   deployed files                     │
 │                                        ││   health    waits   http://127.0.0.1:6520/ · 20s       │
-│                                        ││             failing asks, then rolls back after 30s    │
+│                                        ││   failed    policy  asks, then rolls back after 30s    │
 │                                        ││                                                        │
 │                                        ││ POLICY ─────────────────────────                       │
 │                                        ││   keeps    5 unpacked + 15 compressed                  │
@@ -120,8 +121,8 @@ The live summary is one of:
 The panel on the right shows the selected deployable, read from its `deploy.yaml`:
 
 - **TARGET:** `ssh` (with `→ <address:port>  ~/.ssh/config` when the host is an alias), `login`, `folder`, `service` with its state, `runs as`, `start` (the full `ExecStart`), and `live`.
-- **PIPELINE:** one row per configured step item: the commands of each step, with `local`, `server` or `check` beside them, the `pack` lists (`binary`, `project`, `deploy`, `leaves`), and how `health` waits and what happens when it is `failing`.
-- **POLICY:** `keeps` (`5 unpacked + 15 compressed`), `shared` and `env file` when set, and `unit`: `service.template` when that file is in the deploy folder, else `built-in template`.
+- **PIPELINE:** one row per configured step item: the commands of each step, with `local`, `server` or `check` beside them, the `pack` lists (`binary`, `project`, `deploy`, `leaves`), what the `backup` `takes` and `leaves` (or a faint `none: keep.compressed is 0`), how `health` waits, and the `failed` `policy`: `asks, then rolls back after 30s` or `rolls back at once`.
+- **POLICY:** `keeps` (`5 unpacked + 15 compressed`, from `pipeline.backup.keep`), `shared` and `env file` when set, and `unit`: `service.template` when that file is in the deploy folder, else `built-in template`.
 
 With no deployables, the screen shows `No deployables yet` and where shipdeck looks for them.
 
@@ -154,10 +155,11 @@ A deploy or rollback, running or finished. Starting one switches to this screen.
 │ ⠋ 4 Upload     59%                    0.0s ││ 00:00 ━━ Build: compiling on this machine          │
 │ ○ 5 Unpack                                 ││ 00:00      Compiling my-api v0.3.2 (/home/me/my-ap │
 │ ○ 6 Setup                                  ││ 00:00       Finished \`release\` profile [optimized] │
-│ ○ 7 Switch                                 ││ 00:00 ▲ the source has uncommitted changes; the re │
-│ ○ 8 Restart                                ││ 00:00 ━━ Upload: sending the release               │
-│ ○ 9 Health                                 ││ 00:00 › deploy@203.0.113.10 › upload 11.8 MiB to / │
-│ ○ 10 Done                                  ││                                                    │
+│ ○ 7 Backup                                 ││ 00:00 ▲ the source has uncommitted changes; the re │
+│ ○ 8 Switch                                 ││ 00:00 ━━ Upload: sending the release               │
+│ ○ 9 Restart                                ││ 00:00 › deploy@203.0.113.10 › upload 11.8 MiB to / │
+│ ○ 10 Health                                ││                                                    │
+│ ○ 11 Done                                  ││                                                    │
 ╰────────────────────────────────────────────╯│                                                    │
 ╭ Progress ──────────────────────────────────╮│                                                    │
 │ ⠋ Upload  0.0s                             ││                                                    │
@@ -165,9 +167,8 @@ A deploy or rollback, running or finished. Starting one switches to this screen.
 │ 7.0 MiB of 11.8 MiB                        ││                                                    │
 │ 4.2 MiB/s                                  ││                                                    │
 │                                            ││                                                    │
-│                                            ││                                                    │
 │ overall  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ││                                                    │
-│ 3/10 steps  ·  0.0s                        ││                                                    │
+│ 3/11 steps  ·  0.0s                        ││                                                    │
 ╰────────────────────────────────────────────╯╰────────────────────────────────────────────────────╯
  ↑↓  scroll    pgup/pgdn  page    G  follow    r  releases    esc  back    q  quit
 `}</Screen>
@@ -184,7 +185,7 @@ The capture uses test data, so every time reads `0.0s`.
 | ` KEPT ` | `<Step> failed: <error>  · <release> stays live as you chose` |
 | ` ROLLBACK FAILED ` | `<error>  then: <rollback error>  · check the server now` |
 
-**Steps.** One row per step: icon, number, name, a short detail and the time it took. A deploy has `Preflight`, `Build`, `Pack`, `Upload`, `Unpack`, `Setup`, `Switch`, `Restart`, `Health`, `Done`, plus `Failed` when `pipeline.failed.run.local` has commands. A rollback has `Connect`, `Unpack`, `Switch`, `Restart`, `Health`, `Done`, plus `Failed` under the same condition (`Unpack` only does work for a compressed release). See [The pipeline](/docs/guides/pipeline).
+**Steps.** One row per step: icon, number, name, a short detail and the time it took. A deploy has `Preflight`, `Build`, `Pack`, `Upload`, `Unpack`, `Setup`, `Backup`, `Switch`, `Restart`, `Health`, `Done`, plus `Failed` when `pipeline.failed.run.local` has commands. A rollback has `Connect`, `Unpack`, `Setup`, `Switch`, `Restart`, `Health`, `Done`, plus `Failed` under the same condition (`Unpack` only does work for a compressed release, `Setup` only for a backup). See [The pipeline](/docs/guides/pipeline).
 
 | Icon | Step state |
 | --- | --- |
@@ -235,7 +236,7 @@ The releases on the server for one deployable, newest first. From here you roll 
 │                                                                                                  │
 │  ●  v0.3.1-ab12cd3-  0.3.1         ab12cd3    2026-10-14 15:30    29.6 MiB   LIVE                │
 │     v0.3.0-9f8e7d6-  0.3.0         9f8e7d6    2026-10-12 09:10    29.6 MiB  unpacked             │
-│ ▌   v0.2.9-1a2b3c4-  0.2.9         1a2b3c4    2026-10-01 12:00    10.5 MiB  tar.gz               │
+│ ▌   v0.2.9-1a2b3c4-  0.2.9         1a2b3c4    2026-10-01 12:00     8.2 MiB  backup               │
 │     v0.2.8-5d6e7f8-  0.2.8         5d6e7f8    2026-09-20 08:00    10.5 MiB  tar.gz               │
 │                                                                                                  │
 │                                                                                                  │
@@ -252,7 +253,7 @@ The releases on the server for one deployable, newest first. From here you roll 
 │ kept  2/5 unpacked  ·  2/15 compressed                                                           │
 │                                                                                                  │
 │ release  v0.2.9-1a2b3c4-20261001.120000                                                          │
-│ ⏎  roll back to this release (unpack, switch + restart)                                          │
+│ ⏎  roll back to this release (unpack, setup, switch + restart)                                   │
 │                                                                                                  │
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
@@ -268,11 +269,11 @@ At 100 columns the `Release` column is cut; a wider terminal shows the full id.
 | `Version` | The version from the release id. |
 | `Commit` | The commit, with `*` when built with uncommitted changes (`ab12cd3*`). |
 | `Built (UTC)` | `YYYY-MM-DD HH:MM`, from the release id. |
-| `Size` | Disk use on the server as `du` reports it: the unpacked folder for an open release, the `.tar.gz` for a compressed one. |
-| `Where` | ` LIVE `, `unpacked`, `tar.gz`, or `not ours` for a folder shipdeck did not name. |
+| `Size` | Disk use on the server as `du` reports it: the unpacked folder for an open release, the backup (`.tar.zst`) or old `.tar.gz` for a compressed one. |
+| `Where` | ` LIVE `, `unpacked`, `backup` for a release kept only as `backups/<id>.tar.zst`, `tar.gz` for a whole release compressed by a shipdeck from before backups, or `not ours` for a folder shipdeck did not name. |
 | (no header) | Who deployed it, from `release.json`. |
 
-The **Details** panel shows `kept  <n>/<keep.open> unpacked  ·  <n>/<keep.compressed> compressed`, then for the selected release its id, `deployed by ... built ...` when known, `built from a working copy with uncommitted changes` when dirty, and what `⏎` does: `This release is live.`, `shipdeck did not create this folder and will not switch to it.`, `⏎  roll back to this release (switch + restart)` or `⏎  roll back to this release (unpack, switch + restart)`.
+The **Details** panel shows `kept  <n>/<keep.open> unpacked  ·  <n>/<keep.compressed> compressed`, then for the selected release its id, `deployed by ... built ...` when known, `built from a working copy with uncommitted changes` when dirty, and what `⏎` does: `This release is live.`, `shipdeck did not create this folder and will not switch to it.`, `⏎  roll back to this release (switch + restart)`, `⏎  roll back to this release (unpack, setup, switch + restart)` for a backup, or `⏎  roll back to this release (unpack, switch + restart)` for a `tar.gz`.
 
 Other states of the panel: `Reading releases from the server…`, `Could not read the releases` with the error and `Press r to try again.`, and `No releases on the server yet. Deploy once and they will show up here.`
 
@@ -314,8 +315,9 @@ Opens with `⏎` or `d` on Deployables.
 │           ║ pipeline.pack.files.include.deploy in scripts/deploy/api-prod: .env (not ║ -p my-api │
 │           ║ found). The deploy will stop at Preflight, before building.              ║           │
 │           ║                                                                          ║           │
-│           ║  y  deploy     n  cancel                                                 ║ 20s       │
-│           ╚══════════════════════════════════════════════════════════════════════════╝ter 30s    │
+│           ║  y  deploy     n  cancel                                                 ║           │
+│           ╚══════════════════════════════════════════════════════════════════════════╝ 20s       │
+│                                        ││   failed    policy  asks, then rolls back after 30s    │
 │                                        ││                                                        │
 │                                        ││ POLICY ─────────────────────────                       │
 │                                        ││   keeps    5 unpacked + 15 compressed                  │
@@ -330,7 +332,7 @@ It shows the target, the service, the first build command (`(+N more)` when ther
 The new release goes live after a restart (about 1–2 s of downtime). If it fails after the switch, shipdeck asks before putting the previous release back, and does so on its own after 30 s.
 ```
 
-With `rollback: auto` the last sentence reads `If it fails after the switch, the previous release is put back at once.` When a file listed in `pipeline.pack.files.include.deploy` is missing, a red line says so and that `The deploy will stop at Preflight, before building.` (or, when preflight has local commands, that `pipeline.preflight.run.local must create them, or the deploy stops at Preflight.`).
+With `pipeline.failed.rollback: auto` the last sentence reads `If it fails after the switch, the previous release is put back at once.` When a file listed in `pipeline.pack.files.include.deploy` is missing, a red line says so and that `The deploy will stop at Preflight, before building.` (or, when preflight has local commands, that `pipeline.preflight.run.local must create them, or the deploy stops at Preflight.`).
 
 | Key | Action |
 | --- | --- |
@@ -347,17 +349,17 @@ My API (prod)
 roll back to v0.2.9-1a2b3c4-20261001.120000  v0.2.9 (1a2b3c4)
 live now     v0.3.1-ab12cd3-20261014.153012  v0.3.1 (ab12cd3)
 
-This release is compressed; it is unpacked first.
+This release is a backup: it is unpacked and set up again with pipeline.setup first.
 The service restarts on that release. If it fails its health check, the current release is put back.
 
  y  roll back     n  cancel
 ```
 
-The `compressed` line shows only for a `tar.gz` release, and `live now` reads `nothing` when no release is live. The keys are the same as for Deploy. The last sentence is the dialog's fixed text: when the target fails at Switch, Restart or Health, the rollback policy applies as in a deploy, so with `rollback: ask` you get the [rollback question](#rollback-question) first.
+The violet line shows only for a compressed release: the one above for a backup, `This release is compressed; it is unpacked first.` for a `tar.gz`. `live now` reads `nothing` when no release is live. The keys are the same as for Deploy. The last sentence is the dialog's fixed text: when the target fails at Switch, Restart or Health, the rollback policy applies as in a deploy, so with `pipeline.failed.rollback: ask` you get the [rollback question](#rollback-question) first.
 
 ### Rollback question
 
-Opens when the new release fails at `Switch`, `Restart` or `Health`, `rollback` is `ask` (the default) and there is a previous release. It also opens during a manual rollback when the release you rolled back to fails at one of those steps; it then offers the release that was live before the rollback. The screen jumps to Operation. The title names the deployable's folder and the step, for example `my-api-prod · health failed`.
+Opens when the new release fails at `Switch`, `Restart` or `Health`, `pipeline.failed.rollback` is `ask` (the default) and there is a previous release. It also opens during a manual rollback when the release you rolled back to fails at one of those steps; it then offers the release that was live before the rollback. The screen jumps to Operation. The title names the deployable's folder and the step, for example `my-api-prod · health failed`.
 
 ```txt
 v1.4.0 failed at Health: not healthy after 20s: systemd says active; the health url said: curl…
@@ -375,7 +377,7 @@ The error is its first line, cut at 70 characters; the full error is in the log.
 | `y`, `Y` | Roll back now. |
 | `n`, `N` | Keep the new release live. You can roll back later from Releases. |
 
-No other key works here, not even `Esc` or `Ctrl+C`, so you cannot quit until you answer or the countdown ends. With `rollback: auto` this dialog never opens. See [Health and rollback](/docs/guides/health-and-rollback).
+No other key works here, not even `Esc` or `Ctrl+C`, so you cannot quit until you answer or the countdown ends. With `pipeline.failed.rollback: auto` this dialog never opens. See [Health and rollback](/docs/guides/health-and-rollback).
 
 ### Quit now?
 
@@ -418,8 +420,9 @@ Asks for an SSH password (title `SSH password`) or a key passphrase (title `Key 
 │           ╚══════════════════════════════════════════════════════════════════════════╝ -p my-api │
 │                                        ││   pack      binary  target/release/server              │
 │                                        ││             deploy  .env, files/                       │
+│                                        ││   backup    takes   deployed files                     │
 │                                        ││   health    waits   http://127.0.0.1:6520/ · 20s       │
-│                                        ││             failing asks, then rolls back after 30s    │
+│                                        ││   failed    policy  asks, then rolls back after 30s    │
 │                                        ││                                                        │
 │                                        ││ POLICY ─────────────────────────                       │
 │                                        ││   keeps    5 unpacked + 15 compressed                  │

@@ -3,7 +3,7 @@ title: Releases
 description: What a release is, how many shipdeck keeps on the server, and how to roll back to any of them by hand.
 ---
 
-Every deploy leaves a complete, named release on the server. shipdeck keeps the newest ones unpacked and ready, compresses older ones, and lets you switch back to any of them from the Releases screen.
+Every deploy leaves a complete, named release on the server, and a backup of what it shipped. shipdeck keeps the newest releases unpacked and ready, keeps only the backup of older ones, and lets you switch back to any of them from the Releases screen.
 
 ## What a release is
 
@@ -16,7 +16,7 @@ A release is one folder, `releases/<id>` under `service.dir`. It holds everythin
 - `<service>.service`: this release's own systemd unit;
 - a link for each `service.shared` folder, pointing at `shared/<folder>`.
 
-Because each release installed its own dependencies at its own setup, a rollback finds them in place and setup is not run again.
+Because each release installed its own dependencies at its own setup, a rollback to an unpacked release finds them in place and setup is not run again. A rollback to a backup runs setup again (see [below](#rolling-back-by-hand)).
 
 ### Release ids
 
@@ -26,21 +26,44 @@ v<version>-<git commit>[-dirty]-<UTC date.time>
 
 For example `v0.3.1-ab12cd3-20261014.153012`: version `0.3.1` from your version file, commit `ab12cd3`, built on 14 October 2026 at 15:30:12 UTC. `-dirty` means tracked files had uncommitted changes when you deployed; untracked files do not count. Without git, the commit reads `nogit`. [Server layout](/docs/reference/server-layout#release-ids) has the exact rules.
 
-## How many are kept
+## Backups
 
-`service.keep` sets how many releases stay on the server:
+Right after setup, the **backup** step packs part of the new release into `backups/<id>.tar.zst`, on the server. Every release gets one, so the unpacked ones have a backup too. When a release later leaves `releases/`, its backup stays, and a rollback can bring it back.
+
+By default a backup holds what shipdeck shipped: the binary and the files `pipeline.pack.files` picked. What setup made, such as `node_modules` or a `.venv`, stays out, because a rollback runs setup again to make it. That keeps backups small.
 
 ```yaml title="deploy.yaml"
-service:
-  keep:
-    open: 5          # unpacked in releases/, counting the live one. At least 1.
-    compressed: 15   # as .tar.gz in backups/. 0 deletes older releases.
+pipeline:
+  backup:
+    files:
+      deployed: true          # the default: the binary and the packed files
+      include: [data/keys]    # more from the release, such as a file setup cannot make again
+      exclude: []             # leave out, shipped or not
+    keep: { open: 5, compressed: 15 }
+```
+
+- `include` and `exclude` take the same patterns as [`pipeline.pack.files`](/docs/guides/packing-files), relative to the release. A folder brings (or leaves out) everything in it; `"!pattern"` turns a pattern around.
+- `release.json` and the service file (`<service>.service`, or `<service>.pm2.json`) are always in the backup. `service.shared` folders never are: they live in `shared/`, outside every release.
+- An `include` pattern that matches nothing is a warning in the log, not a failure.
+- A failure in this step removes the new release, like a setup failure. The live release was not touched.
+- With `keep.compressed: 0` no backups are kept and the step is skipped (`keep.compressed is 0`).
+
+## How many are kept
+
+`pipeline.backup.keep` sets how many releases stay on the server:
+
+```yaml title="deploy.yaml"
+pipeline:
+  backup:
+    keep:
+      open: 5          # unpacked in releases/, counting the live one. At least 1.
+      compressed: 15   # only as their backup in backups/. 0 keeps none.
 ```
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `service.keep.open` | `5` | Releases kept unpacked and ready to switch to, counting the live one |
-| `service.keep.compressed` | `15` | Older releases kept as `backups/<id>.tar.gz` |
+| `pipeline.backup.keep.open` | `5` | Releases kept unpacked and ready to switch to, counting the live one |
+| `pipeline.backup.keep.compressed` | `15` | Older releases kept only as `backups/<id>.tar.zst` |
 
 With the defaults, up to 20 releases stay on the server.
 
@@ -48,11 +71,14 @@ shipdeck tidies in the **done** step of every successful deploy. It never tidies
 
 1. The live release always stays open and takes one open slot.
 2. The newest other open releases fill the remaining open slots. Newest means by the time in the release id, never by version text.
-3. The open releases left over, together with the tarballs already in `backups/`, are sorted newest first. The first `keep.compressed` stay as tarballs: open ones among them are compressed. The rest are deleted.
+3. The next `keep.compressed` releases, newest first, keep only their backup: their folder in `releases/` is deleted, the `.tar.zst` stays.
+4. Anything older loses its folder and its backup.
 
-For example, with `open: 5` and `compressed: 3`, releases 3 to 9 unpacked with 9 live, and tarballs of 1 and 2: releases 5 to 9 stay open, 4 and 3 are compressed, 2 stays as a tarball and the tarball of 1 is deleted.
+For example, with `open: 5` and `compressed: 3`, releases 2 to 9 unpacked with 9 live, and only the backup of 1: releases 5 to 9 stay open, 4, 3 and 2 keep only their backup, and 1 is deleted.
 
-The done step shows what it did, such as `2 compressed · 1 deleted`, or `3/5 open` when there was nothing to do. A tidying error is only a warning; the deploy stays live.
+A release deployed with a shipdeck from before backups has none. When it leaves the open releases it is still compressed whole into `backups/<id>.tar.gz`, as before.
+
+The done step shows what it did, such as `2 backed up only · 1 deleted`, or `3/5 open` when there was nothing to do. A tidying error is only a warning; the deploy stays live.
 
 ## The Releases screen
 
@@ -67,7 +93,7 @@ Press `r` on a deployable (or `3`) to read its releases from the server.
 │                                                                                                  │
 │  ●  v0.3.1-ab12cd3-  0.3.1         ab12cd3    2026-10-14 15:30    29.6 MiB   LIVE                │
 │     v0.3.0-9f8e7d6-  0.3.0         9f8e7d6    2026-10-12 09:10    29.6 MiB  unpacked             │
-│ ▌   v0.2.9-1a2b3c4-  0.2.9         1a2b3c4    2026-10-01 12:00    10.5 MiB  tar.gz               │
+│ ▌   v0.2.9-1a2b3c4-  0.2.9         1a2b3c4    2026-10-01 12:00     8.2 MiB  backup               │
 │     v0.2.8-5d6e7f8-  0.2.8         5d6e7f8    2026-09-20 08:00    10.5 MiB  tar.gz               │
 │                                                                                                  │
 │                                                                                                  │
@@ -84,7 +110,7 @@ Press `r` on a deployable (or `3`) to read its releases from the server.
 │ kept  2/5 unpacked  ·  2/15 compressed                                                           │
 │                                                                                                  │
 │ release  v0.2.9-1a2b3c4-20261001.120000                                                          │
-│ ⏎  roll back to this release (unpack, switch + restart)                                          │
+│ ⏎  roll back to this release (unpack, setup, switch + restart)                                   │
 │                                                                                                  │
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
@@ -97,10 +123,11 @@ Releases are listed newest first. The `Where` column says where each one is:
 | --- | --- |
 | `LIVE` | `current` points at it. Marked with a green `●`. |
 | `unpacked` | In `releases/`, ready to switch to. |
-| `tar.gz` | Compressed in `backups/`. A rollback unpacks it first. |
+| `backup` | Only its backup, `backups/<id>.tar.zst`. A rollback unpacks it and runs setup first. |
+| `tar.gz` | A whole release compressed into `backups/<id>.tar.gz` by a shipdeck from before backups. A rollback unpacks it first. |
 | `not ours` | A folder in `releases/` that shipdeck did not name. |
 
-A commit with a `*` (`ab12cd3*`) was built from a dirty working copy. `Size` is the disk use `du` reports on the server: the unpacked folder for an open release, the `.tar.gz` for a compressed one. The Details panel shows the counts against `service.keep` and, for the selected release, who deployed it and when (from its `release.json`; compressed releases do not show this).
+A commit with a `*` (`ab12cd3*`) was built from a dirty working copy. `Size` is the disk use `du` reports on the server: the unpacked folder for an open release, the `.tar.zst` or `.tar.gz` for a compressed one. The Details panel shows the counts against `pipeline.backup.keep` and, for the selected release, who deployed it and when (from its `release.json`; compressed releases do not show this).
 
 Keys: `↑`/`↓` (or `k`/`j`) to select, `⏎` to roll back, `r` to read the list again, `Esc` to go back. See [Screens and keys](/docs/reference/screens).
 
@@ -119,7 +146,16 @@ A manual rollback runs these steps:
 <Step>
 ### Unpack
 
-Only for a compressed release: `Unpack: unpacking it from backups/`. The tarball is unpacked into `releases/<id>` through a hidden `.partial` folder, then removed, so the release is open again. For an open release this step is skipped (`already unpacked`). A failure here stops; nothing live changed.
+Only for a compressed release: `Unpack: unpacking backups/<id>.tar.zst`. The backup is unpacked into `releases/<id>` through a hidden `.partial` folder, and each `service.shared` folder is linked in. The backup stays in `backups/`. For an open release this step is skipped (`already unpacked`). A failure here removes what was unpacked and stops; nothing live changed.
+
+For an old `.tar.gz` from before backups, the whole release is unpacked as before and the tarball is then removed, so the release is open again.
+</Step>
+<Step>
+### Setup
+
+Only for a backup: `Setup: setting up releases/<id>`. shipdeck runs `pipeline.setup.run.server`, then `pipeline.setup.check.server`, in `releases/<id>` with `SHIPDECK_ACTION=rollback`, so `npm ci` and the like make again what the backup left out. These are the setup commands of your `deploy.yaml` now, not of the release, and they need what setup needs, such as access to your package registry. A command that must not run again, such as a migration, can check `SHIPDECK_ACTION` (see [Variables](/docs/reference/variables#migrations-on-deploy-only)).
+
+If setup fails, `releases/<id>` is removed, its backup stays, and the rollback stops; nothing live changed. For an open release or a `.tar.gz` the step is skipped (`already set up`).
 </Step>
 <Step>
 ### Switch
@@ -134,7 +170,7 @@ Only for a compressed release: `Unpack: unpacking it from backups/`. The tarball
 <Step>
 ### Health
 
-The same probes, URL and checks as a deploy, with the same `timeout_secs`. If switch, restart or health fails, the same [rollback flow](/docs/guides/health-and-rollback#when-a-step-fails-after-the-switch) applies: shipdeck asks (or, with `rollback: auto`, does not) and puts back the release that was live before. The target is not deleted.
+The same probes, URL and checks as a deploy, with the same `timeout_secs`. If switch, restart or health fails, the same [rollback flow](/docs/guides/health-and-rollback#when-a-step-fails-after-the-switch) applies: shipdeck asks (or, with `pipeline.failed.rollback: auto`, does not) and puts back the release that was live before. The target is not deleted.
 </Step>
 <Step>
 ### Done
@@ -143,7 +179,7 @@ The same probes, URL and checks as a deploy, with the same `timeout_secs`. If sw
 </Step>
 </Steps>
 
-Setup commands do not run again: the target already has what its own setup installed. `pipeline.failed` runs if a step fails, as in a deploy.
+An open release does not run setup again: it already has what its own setup installed. `pipeline.failed` runs if a step fails, as in a deploy.
 
 ## Folders shipdeck did not create
 

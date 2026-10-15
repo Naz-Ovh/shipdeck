@@ -29,7 +29,6 @@ service:
     NODE_ENV: production
     PORT: "3000"
   shared: [uploads]                 # kept in shared/ across releases
-  keep: { open: 5, compressed: 15 } # the defaults
 
 pipeline:
   preflight:
@@ -53,18 +52,22 @@ pipeline:
       server: [npm ci --omit=dev, npm run migrate]
     check:
       server: node --check dist/main.js
+  backup:                           # what stays for rollback; setup remakes node_modules
+    files:
+      include: [data/keys]          # besides the shipped files
+    keep: { open: 5, compressed: 15 } # the defaults
   health:
     url: http://127.0.0.1:3000/health
     check:
       server: curl -fsS http://127.0.0.1:3000/ready
     timeout_secs: 30
-    rollback: ask                   # or auto
   done:
     run:
       local: ./notify.sh "my-api $SHIPDECK_VERSION is live"
   failed:
     run:
       local: ./notify.sh "my-api failed at $SHIPDECK_STEP"
+    rollback: ask                   # or auto
 ```
 
 Only `name`, `ssh.host`, `service.name`, `service.dir` and something to ship are required. A Rust service with a compiled binary can be this short:
@@ -101,7 +104,7 @@ More complete files for Rust, Go, Node and Python are on [Examples](/docs/guides
 
 **Text fields** take any YAML scalar as text: `name: true` is `"true"`, `PORT: 3000` is `"3000"`, `DEBUG: no` is `"no"`.
 
-**Whole-number fields** (`ssh.port`, `service.keep.open`, `service.keep.compressed`, `pipeline.health.timeout_secs`) must be written unquoted, as a plain decimal number. `"22"`, `-1`, `0x16`, `1e3` and `22.0` are refused with `must be a whole number`.
+**Whole-number fields** (`ssh.port`, `pipeline.backup.keep.open`, `pipeline.backup.keep.compressed`, `pipeline.health.timeout_secs`) must be written unquoted, as a plain decimal number. `"22"`, `-1`, `0x16`, `1e3` and `22.0` are refused with `must be a whole number`.
 
 **Empty values.** A key with nothing after it (`url:`), or `~`, `null`, `Null`, `NULL`, means "use the default" on an optional key. On a required key it is a problem: `` `name` is empty ``.
 
@@ -222,7 +225,6 @@ The systemd service on the server, and where its releases live. Required.
 | `service.env_file` | text | no | none |
 | `service.env` | map of text | no | `{}` |
 | `service.shared` | list of text | no | `[]` |
-| `service.keep` | map | no | `{ open: 5, compressed: 15 }` |
 
 ### service.name
 
@@ -324,27 +326,9 @@ Rules for each entry:
 
 A release must not contain a shared path itself, and the pack refuses files under one. With the built-in unit the service can write only under `<service.dir>/shared`, so writable data belongs here.
 
-### service.keep
-
-How many old releases stay on the server, for rollback.
-
-| Field | Type | Default | Rules |
-| --- | --- | --- | --- |
-| `service.keep.open` | whole number | `5` | at least `1` |
-| `service.keep.compressed` | whole number | `15` | `0` or more |
-
-`open` counts the releases kept unpacked and ready to switch to, the live one included. `compressed` counts the older ones kept as `.tar.gz` in `backups/`. Anything older is deleted. `compressed: 0` keeps none.
-
-```yaml
-service:
-  keep: { open: 3, compressed: 10 }
-```
-
-shipdeck tidies old releases in the `done` step of a successful deploy, not after a manual rollback. See [Releases](/docs/guides/releases).
-
 ## pipeline
 
-The steps of a deploy, in order. Every step is optional; a step that is absent has no commands. Seven steps take settings:
+The steps of a deploy, in order. Every step is optional; a step that is absent has no commands. Eight steps take settings:
 
 | Step | `run` | `check` | Other settings |
 | --- | --- | --- | --- |
@@ -352,9 +336,10 @@ The steps of a deploy, in order. Every step is optional; a step that is absent h
 | `build` | `local` | | `version_from` |
 | `pack` | | | `binary`, `files` |
 | `setup` | `server` | `server` | |
-| `health` | | `local`, `server` | `url`, `timeout_secs`, `rollback` |
+| `backup` | | | `files`, `keep` |
+| `health` | | `local`, `server` | `url`, `timeout_secs` |
 | `done` | `local`, `server` | | |
-| `failed` | `local` | | |
+| `failed` | `local` | | `rollback` |
 
 `upload`, `unpack`, `switch` and `restart` are done by shipdeck and take no settings; writing them is a problem. Any other side or block is refused with a message that says where the command belongs (for example `build cannot run commands on the server`). For the order of steps and what shipdeck does in between, see [The pipeline](/docs/guides/pipeline).
 
@@ -447,9 +432,40 @@ Step 6, after shipdeck uploads and unpacks the release. Runs in `releases/<id>` 
 
 Setup has no `local` side. Commands on your PC belong in `pipeline.preflight.run.local` or `pipeline.build.run.local`.
 
+A rollback to a backup runs these commands again, from the `deploy.yaml` you have now, with `SHIPDECK_ACTION=rollback`. See [Releases](/docs/guides/releases#rolling-back-by-hand).
+
+### pipeline.backup
+
+Step 7, right after setup. shipdeck packs part of the new release into `backups/<id>.tar.zst` on the server. When the release folder is deleted later, this backup stays, and a rollback to it unpacks it and runs setup again. A failure removes the new release; the old one keeps serving.
+
+| Field | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `files.deployed` | `true` or `false` | `true` | The files shipdeck shipped: the binary and what `pipeline.pack.files` picked. |
+| `files.include` | list of patterns | `[]` | More from the release, such as a file setup made that it cannot make again. |
+| `files.exclude` | list of patterns | `[]` | What to leave out, shipped or not. |
+| `keep.open` | whole number | `5` | Releases kept unpacked, the live one included. At least `1`. |
+| `keep.compressed` | whole number | `15` | The next older releases, kept only as their backup. `0` or more. |
+
+```yaml
+pipeline:
+  backup:
+    files:
+      include: [data/keys]
+      exclude: ["**/*.log"]
+    keep: { open: 3, compressed: 10 }
+```
+
+**`files`** patterns are relative to the release and use the syntax of [`pipeline.pack.files`](#pipelinepack): a folder brings everything in it, and `"!pattern"` turns a pattern around (in `include` it leaves out, in `exclude` it keeps). `release.json` and the service file are always in the backup. `service.shared` folders never are; naming one in `include` is a problem. What setup made, such as `node_modules` or `.venv`, is not shipped, so it stays out unless you include it: a rollback runs setup again to make it. An `include` pattern that matches nothing is logged as a warning.
+
+Rules: no pattern listed twice; with `deployed: false`, `include` must name something, unless `keep.compressed` is `0`.
+
+**`keep`** says how many releases stay on the server. `open` counts the releases kept unpacked and ready to switch to, the live one included. `compressed` counts the older ones kept only as `backups/<id>.tar.zst`. Anything older is deleted. `compressed: 0` keeps no backups, and then the backup step is skipped.
+
+shipdeck tidies old releases in the `done` step of a successful deploy, not after a manual rollback. See [Releases](/docs/guides/releases#backups).
+
 ### pipeline.health
 
-Step 9, after shipdeck switches `current` and restarts the service. It waits until the service is active, `url` answers and every check passes.
+Step 10, after shipdeck switches `current` and restarts the service. It waits until the service is active, `url` answers and every check passes.
 
 | Field | Type | Default | Rules |
 | --- | --- | --- | --- |
@@ -457,7 +473,6 @@ Step 9, after shipdeck switches `current` and restarts the service. It waits unt
 | `check.server` | commands | none | |
 | `check.local` | commands | none | |
 | `timeout_secs` | whole number | `20` | at least `3` |
-| `rollback` | `ask` or `auto` | `ask` | lowercase, exactly |
 
 **`url`** is fetched on the server, such as `http://127.0.0.1:3000/health`, with `curl -fsS --max-time 3`, or `wget -q -T 3` when there is no curl. curl does not follow redirects and fails only on a status of 400 or more, so a 3xx answer counts as healthy; wget follows redirects. A fetch that fails counts as unhealthy, and a server with neither tool fails the step. Without a `url`, health waits for systemd to report the service `active`.
 
@@ -465,26 +480,18 @@ Step 9, after shipdeck switches `current` and restarts the service. It waits unt
 
 **`timeout_secs`** is the time the release has to become healthy. A release counts as up after 3 healthy checks in a row, one second apart, so the minimum is `3`.
 
-**`rollback`** says what happens when the new release is not healthy, or the switch or restart fails:
-
-| Value | Behavior |
-| --- | --- |
-| `ask` | Ask before rolling back to the release that was live. With no answer within 30 seconds, roll back. |
-| `auto` | Roll back at once. |
-
 ```yaml
 pipeline:
   health:
     url: http://127.0.0.1:3000/health
     timeout_secs: 30
-    rollback: auto
 ```
 
-See [Health and rollback](/docs/guides/health-and-rollback).
+When health fails, [`pipeline.failed.rollback`](#pipelinefailed) decides what happens. See [Health and rollback](/docs/guides/health-and-rollback).
 
 ### pipeline.done
 
-Step 10: the new release is live. shipdeck tidies old releases (see [`service.keep`](#servicekeep)), then runs `run.server` in `current`, then `run.local` in `project`. A failure is only a warning; the release stays live.
+Step 11: the new release is live. shipdeck tidies old releases (see [`pipeline.backup`](#pipelinebackup)), then runs `run.server` in `current`, then `run.local` in `project`. A failure is only a warning; the release stays live.
 
 | Field | Type | What it does |
 | --- | --- | --- |
@@ -497,18 +504,31 @@ A manual rollback from the Releases screen runs `done` too, with `SHIPDECK_ACTIO
 
 Runs when any step fails, after a rollback if there was one. `SHIPDECK_STEP` names the step that failed and `SHIPDECK_ERROR` holds the first line of the error.
 
-| Field | Type | What it does |
-| --- | --- | --- |
-| `run.local` | commands | On your PC, in `project`. |
+| Field | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `run.local` | commands | none | On your PC, in `project`. |
+| `rollback` | `ask` or `auto` | `ask` | What happens when the switch, the restart or the health check fails. Lowercase, exactly. |
 
 There is no `server` side: the server may be out of reach when a step fails. A failure here is only a warning. The Failed step appears in the step list only when `run.local` has commands.
+
+**`rollback`** puts back the release that was live before:
+
+| Value | Behavior |
+| --- | --- |
+| `ask` | Ask before rolling back to the release that was live. With no answer within 30 seconds, roll back. |
+| `auto` | Roll back at once. |
+
+`--on-failure` on the command line overrides it for one run (see [CLI](/docs/reference/cli)).
 
 ```yaml
 pipeline:
   failed:
     run:
       local: ./notify.sh "my-api failed at $SHIPDECK_STEP: $SHIPDECK_ERROR"
+    rollback: auto
 ```
+
+See [Health and rollback](/docs/guides/health-and-rollback).
 
 Every variable shipdeck sets for commands is listed on [Variables](/docs/reference/variables).
 

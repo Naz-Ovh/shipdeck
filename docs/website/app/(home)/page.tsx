@@ -123,7 +123,7 @@ export default function HomePage() {
         <div className="mx-auto w-full max-w-6xl px-6 py-20">
           <div className="max-w-2xl">
             <p className="sd-eyebrow">The pipeline</p>
-            <h2 className="sd-heading mt-3 text-3xl text-sd-ink sm:text-[2.2rem]">Ten steps, and nothing live changes before the switch.</h2>
+            <h2 className="sd-heading mt-3 text-3xl text-sd-ink sm:text-[2.2rem]">Eleven steps, and nothing live changes before the switch.</h2>
             <p className="mt-4 text-sd-ink-soft leading-relaxed">
               Every deploy runs the same steps in the same order. You add your own commands where a step can run them,
               and the file says plainly which run on your PC and which on the server.
@@ -174,8 +174,8 @@ export default function HomePage() {
             <p className="sd-eyebrow">Releases on the server</p>
             <h2 className="sd-heading mt-3 text-[1.9rem] text-sd-ink">Twenty versions, one link.</h2>
             <p className="mt-4 text-sd-ink-soft leading-relaxed">
-              Each deploy unpacks into its own folder. The newest five stay unpacked, the next fifteen are kept
-              compressed, and the Releases screen switches back to any of them.
+              Each deploy unpacks into its own folder and leaves a backup of what it shipped. The newest five stay
+              unpacked, the next fifteen as backups, and the Releases screen switches back to any of them.
             </p>
             <div className="mt-6 rounded-xl border border-sd-line bg-sd-1 p-2">
               <div className="rounded-lg bg-sd-2 p-4 font-mono text-[0.78rem] leading-[1.85]">
@@ -196,7 +196,10 @@ export default function HomePage() {
                   </div>
                   <p className="text-sd-ink">backups/</p>
                   <div className="ml-2 rounded-md bg-sd-3 py-1 pl-3 pr-2">
-                    <p className="truncate text-sd-ink-faint">v0.2.4-1c2d3e4-20260921.171203.tar.gz</p>
+                    <p className="truncate text-sd-ink-faint">v0.3.2-77aa001-20261014.160501.tar.zst</p>
+                    <p className="truncate text-sd-ink-faint">v0.3.1-ab12cd3-20261009.112040.tar.zst</p>
+                    <p className="truncate text-sd-ink-faint">v0.3.0-5e6f7a8-20261002.094415.tar.zst</p>
+                    <p className="truncate text-sd-ink-faint">v0.2.4-1c2d3e4-20260921.171203.tar.zst</p>
                   </div>
                   <p className="text-sd-ink">shared/</p>
                 </div>

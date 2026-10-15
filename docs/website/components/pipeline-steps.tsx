@@ -3,7 +3,7 @@ import { pipelineSteps } from '@/lib/pipeline';
 
 const chip = 'rounded-md bg-sd-3 px-1.5 py-0.5 font-mono text-[0.66rem]';
 
-/** The ten deploy steps, with the sides that accept your commands. */
+/** The eleven deploy steps, with the sides that accept your commands. */
 export function PipelineSteps({ className }: { className?: string }) {
   return (
     <div className={cn('not-prose', className)}>

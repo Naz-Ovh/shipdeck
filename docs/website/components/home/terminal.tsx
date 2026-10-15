@@ -10,10 +10,11 @@ const steps: { n: number; name: string; state: 'done' | 'run' | 'wait'; detail?:
   { n: 4, name: 'Upload', state: 'run', detail: '59%', time: '1.7s' },
   { n: 5, name: 'Unpack', state: 'wait' },
   { n: 6, name: 'Setup', state: 'wait' },
-  { n: 7, name: 'Switch', state: 'wait' },
-  { n: 8, name: 'Restart', state: 'wait' },
-  { n: 9, name: 'Health', state: 'wait' },
-  { n: 10, name: 'Done', state: 'wait' },
+  { n: 7, name: 'Backup', state: 'wait' },
+  { n: 8, name: 'Switch', state: 'wait' },
+  { n: 9, name: 'Restart', state: 'wait' },
+  { n: 10, name: 'Health', state: 'wait' },
+  { n: 11, name: 'Done', state: 'wait' },
 ];
 
 type LogKind = 'step' | 'cmd' | 'info' | 'out' | 'ok' | 'warn';
@@ -43,7 +44,7 @@ const marker: Record<LogKind, string> = {
 
 export function Terminal() {
   return (
-    <div className="sd-term" role="img" aria-label="The shipdeck terminal app halfway through a deploy of my-api: four of ten steps done, upload at 59 percent.">
+    <div className="sd-term" role="img" aria-label="The shipdeck terminal app halfway through a deploy of my-api: three of eleven steps done, upload at 59 percent.">
       <div className="sd-term-bar">
         <span className="sd-term-dots" aria-hidden="true">
           <i />
@@ -82,7 +83,7 @@ export function Terminal() {
               <span className="sd-accent">
                 <span className="sd-spin" /> Upload…
               </span>
-              <span className="sd-muted">step 4 of 10</span>
+              <span className="sd-muted">step 4 of 11</span>
             </div>
           </div>
 
@@ -118,7 +119,7 @@ export function Terminal() {
                     <span style={{ width: '30%' }} />
                   </span>
                 </div>
-                <div className="sd-row sd-muted">3/10 steps · 1m09s</div>
+                <div className="sd-row sd-muted">3/11 steps · 1m09s</div>
               </div>
             </div>
 

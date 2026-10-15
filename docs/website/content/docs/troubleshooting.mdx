@@ -148,7 +148,7 @@ Preflight checks your PC and the server before anything is built. A failure here
   </Accordion>
 
   <Accordion title="only <size> free on the server">
-    Preflight needs at least 100 MiB free on the disk that holds `service.dir`. Free some space, or lower `service.keep` so fewer old releases stay on the server.
+    Preflight needs at least 100 MiB free on the disk that holds `service.dir`. Free some space, or lower `pipeline.backup.keep` so fewer old releases stay on the server.
   </Accordion>
 
   <Accordion title="pipeline.pack.files.include.deploy in <dir>: .env (not found)">
@@ -208,11 +208,23 @@ Preflight checks your PC and the server before anything is built. A failure here
   </Accordion>
 
   <Accordion title="the server has <free> free; this release needs about <size>">
-    Pack checks that the server has room for about twice the archive plus its unpacked size. Free space on the server or lower `service.keep`.
+    Pack checks that the server has room for about twice the archive plus its unpacked size. Free space on the server or lower `pipeline.backup.keep`.
   </Accordion>
 
   <Accordion title="Version errors such as <file> has no package.version">
     shipdeck names the release from the version in `Cargo.toml`, `package.json`, `pyproject.toml` or `VERSION`, in that order, else the latest git tag, else `0.0.0`. Point `pipeline.build.version_from` at the right file, or add the version to it. A `Cargo.toml` with `version.workspace = true` needs a workspace `Cargo.toml` above it that sets `workspace.package.version`.
+  </Accordion>
+</Accordions>
+
+## Backup
+
+<Accordions>
+  <Accordion title="pipeline.backup.files.include: <pattern> matched nothing in releases/<id>">
+    A warning, not a failure: the backup was made without it. Check the pattern against what the release holds after setup; patterns are relative to `releases/<id>`, not to `project`.
+  </Accordion>
+
+  <Accordion title="The backup step failed">
+    shipdeck removed the new release and its backup, and the old release keeps serving. The error says which part failed: listing the release, sending the file list, or `tar -I zstd` on the server. A full disk is the usual cause; free space or lower `pipeline.backup.keep`. A file whose name is not UTF-8 cannot go into a backup: rename it, or leave it out with `pipeline.backup.files.exclude`.
   </Accordion>
 </Accordions>
 
@@ -244,7 +256,7 @@ A failure at Switch, Restart or Health means the new release was already made cu
   </Accordion>
 
   <Accordion title="The rollback question ignores esc and q">
-    The question accepts only `y` (roll back now) and `n` (keep the new release live). With no answer, it rolls back after 30 seconds. To never be asked, set `pipeline.health.rollback: auto`.
+    The question accepts only `y` (roll back now) and `n` (keep the new release live). With no answer, it rolls back after 30 seconds. To never be asked, set `pipeline.failed.rollback: auto`.
   </Accordion>
 
   <Accordion title="rollback failed: <previous> did not come back either: systemd says <state>">
@@ -265,6 +277,10 @@ A failure at Switch, Restart or Health means the new release was already made cu
 
   <Accordion title="shipdeck did not create that folder, so it will not switch to it">
     The release is listed as `not ours`: a folder in `releases/` whose name is not a shipdeck release id. shipdeck lists it but never switches to it, compresses it or deletes it. Remove or rename it on the server if it does not belong there.
+  </Accordion>
+
+  <Accordion title="A rollback to a backup fails at Setup">
+    A release kept only as a backup is unpacked, then `pipeline.setup` runs in it again, with `SHIPDECK_ACTION=rollback`. These are the setup commands of your `deploy.yaml` now, and they need what setup needs, such as access to your package registry. When they fail, shipdeck logs `releases/<id> was removed; its backup stays` and stops; the live release was not touched. Fix the cause and roll back again. If the release needs a file that setup cannot make again, add it to `pipeline.backup.files.include` for future releases.
   </Accordion>
 
   <Accordion title="That release is already live">

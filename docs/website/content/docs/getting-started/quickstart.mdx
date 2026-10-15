@@ -229,8 +229,9 @@ Fix the file and run the command again. When the files are clean, the Deployable
 │                                        ││   build     local   cargo zigbuild --release -p my-api │
 │                                        ││   pack      binary  target/release/server              │
 │                                        ││             deploy  .env, files/                       │
+│                                        ││   backup    takes   deployed files                     │
 │                                        ││   health    waits   http://127.0.0.1:6520/ · 20s       │
-│                                        ││             failing asks, then rolls back after 30s    │
+│                                        ││   failed    policy  asks, then rolls back after 30s    │
 │                                        ││                                                        │
 │                                        ││ POLICY ─────────────────────────                       │
 │                                        ││   keeps    5 unpacked + 15 compressed                  │
@@ -269,6 +270,7 @@ shipdeck switches to the Operation screen and runs the pipeline. The Steps panel
 | Upload | Sends it, with bytes and speed. |
 | Unpack | Unpacks it into `releases/<id>`. |
 | Setup | Nothing to run in this example, so it is skipped. |
+| Backup | Packs the binary, `.env`, `release.json` and the unit into `backups/<id>.tar.zst`, kept for rollback. |
 | Switch | Points `current` at the new release and installs `my-api.service`. |
 | Restart | `systemctl restart my-api`. |
 | Health | Waits until the service is `active` and the URL answers, three times in a row. |
@@ -295,7 +297,9 @@ ssh prod 'ls -l /opt/my-api; systemctl status my-api --no-pager'
         <File name="my-api.service" />
       </Folder>
     </Folder>
-    <Folder name="backups" />
+    <Folder name="backups" defaultOpen>
+      <File name="v0.1.0-ab12cd3-20261014.153012.tar.zst" />
+    </Folder>
     <Folder name="shared" />
   </Folder>
 </Files>
@@ -331,13 +335,13 @@ y roll back now    n keep v0.1.1 live
 
 The question shows only the first line of the error, cut at 70 characters. The full error is in the Log panel.
 
-To roll back at once without a question, set `pipeline.health.rollback: auto`. A failure before the switch never needs a rollback: the live release was not touched. See [Health and rollback](/docs/guides/health-and-rollback).
+To roll back at once without a question, set `pipeline.failed.rollback: auto`. A failure before the switch never needs a rollback: the live release was not touched. See [Health and rollback](/docs/guides/health-and-rollback).
 </Step>
 
 <Step>
 ### Roll back by hand
 
-Press `r` on the deployable to open the Releases screen. It lists every release on the server, newest first, with its version, commit, build time, size and whether it is live, unpacked or compressed.
+Press `r` on the deployable to open the Releases screen. It lists every release on the server, newest first, with its version, commit, build time, size and whether it is live, unpacked or kept only as a backup.
 
 <Screen title="Releases">{`
  ◆ shipdeck   root ./scripts/deploy                    login ~/.ssh/config key, else password prompt
@@ -348,8 +352,8 @@ Press `r` on the deployable to open the Releases screen. It lists every release 
 │                                                                                                  │
 │  ●  v0.3.1-ab12cd3-  0.3.1         ab12cd3    2026-10-14 15:30    29.6 MiB   LIVE                │
 │     v0.3.0-9f8e7d6-  0.3.0         9f8e7d6    2026-10-12 09:10    29.6 MiB  unpacked             │
-│ ▌   v0.2.9-1a2b3c4-  0.2.9         1a2b3c4    2026-10-01 12:00    10.5 MiB  tar.gz               │
-│     v0.2.8-5d6e7f8-  0.2.8         5d6e7f8    2026-09-20 08:00    10.5 MiB  tar.gz               │
+│ ▌   v0.2.9-1a2b3c4-  0.2.9         1a2b3c4    2026-10-01 12:00     8.2 MiB  backup               │
+│     v0.2.8-5d6e7f8-  0.2.8         5d6e7f8    2026-09-20 08:00     8.1 MiB  backup               │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
@@ -365,14 +369,14 @@ Press `r` on the deployable to open the Releases screen. It lists every release 
 │ kept  2/5 unpacked  ·  2/15 compressed                                                           │
 │                                                                                                  │
 │ release  v0.2.9-1a2b3c4-20261001.120000                                                          │
-│ ⏎  roll back to this release (unpack, switch + restart)                                          │
+│ ⏎  roll back to this release (unpack, setup, switch + restart)                                   │
 │                                                                                                  │
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  ↑↓  select    ⏎  roll back    r  refresh    esc  back    q  quit
 `}</Screen>
 
-Select the older release, press `⏎`, then `y`. A manual rollback runs Connect, Unpack (only for a compressed release), Switch, Restart, Health and Done (only when `pipeline.done` has commands, which then run with `SHIPDECK_ACTION=rollback`). If the release fails at Switch, Restart or Health, the same rollback question appears, and the release that was live before goes back on `y`, on no answer, or at once with `rollback: auto`. See [Releases](/docs/guides/releases).
+Select the older release, press `⏎`, then `y`. A manual rollback runs Connect, Unpack (only for a compressed release), Setup (only for a backup: `pipeline.setup` runs again to remake what the backup left out), Switch, Restart, Health and Done (only when `pipeline.done` has commands, which then run with `SHIPDECK_ACTION=rollback`). If the release fails at Switch, Restart or Health, the same rollback question appears, and the release that was live before goes back on `y`, on no answer, or at once with `pipeline.failed.rollback: auto`. See [Releases](/docs/guides/releases).
 </Step>
 
 <Step>

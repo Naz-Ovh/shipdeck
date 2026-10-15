@@ -47,8 +47,9 @@ A deploy builds the new release next to the running one:
 1. Preflight, build and pack happen on your PC, plus checks on the server and your own `pipeline.preflight.run.server` commands.
 2. Upload and unpack write into `releases/`, under names the live release never uses.
 3. Setup runs your commands inside the new release folder, while the old one serves.
+4. Backup packs what shipdeck shipped from the new release into `backups/<id>.tar.zst`, next to the live release's own.
 
-Until step 7, **switch**, the service still runs the old release from the old folder, and its unit has not changed. A failure up to here removes the new release folder and stops; the app never noticed. (On a first deploy, preflight does create `service.dir`. There is nothing live yet to disturb.)
+Until step 8, **switch**, the service still runs the old release from the old folder, and its unit has not changed. A failure up to here removes the new release folder (and its backup) and stops; the app never noticed. (On a first deploy, preflight does create `service.dir`. There is nothing live yet to disturb.)
 
 ## Why the switch is atomic
 
@@ -59,7 +60,7 @@ ln -sfn releases/<id> .current.next
 mv -Tf .current.next current
 ```
 
-A rename replaces the name in one step. At every moment `current` exists and points at a complete release, the old one or the new one, never at nothing and never at a half-written folder. Unpacking goes through a hidden `.partial` folder for the same reason, and compressing an old release writes a `.part` file first.
+A rename replaces the name in one step. At every moment `current` exists and points at a complete release, the old one or the new one, never at nothing and never at a half-written folder. Unpacking goes through a hidden `.partial` folder for the same reason, and packing a backup writes a `.part` file first.
 
 ## Why systemd only sees current/
 
@@ -77,7 +78,7 @@ The restart is the only moment the app is down: about a second or two.
 
 ## Health, then rollback
 
-After the restart, the engine probes the service once a second until it has been `active` (and your URL answered) three times in a row, then runs your checks. If switch, restart or health fails, it reads the last 30 journal lines, asks whether to roll back (or rolls back at once with `rollback: auto`), and puts the previous release back the same way: move `current`, install its unit, restart. See [Health and rollback](/docs/guides/health-and-rollback).
+After the restart, the engine probes the service once a second until it has been `active` (and your URL answered) three times in a row, then runs your checks. If switch, restart or health fails, it reads the last 30 journal lines, asks whether to roll back (or rolls back at once with `pipeline.failed.rollback: auto`), and puts the previous release back the same way: move `current`, install its unit, restart. See [Health and rollback](/docs/guides/health-and-rollback).
 
 ## What is checked before the screen opens
 
@@ -93,6 +94,6 @@ Some things can only be checked later, against your PC or the server, and are le
 ## Next
 
 <Cards>
-  <Card title="The pipeline" href="/docs/guides/pipeline" description="The ten steps of a deploy, one by one." />
+  <Card title="The pipeline" href="/docs/guides/pipeline" description="The eleven steps of a deploy, one by one." />
   <Card title="Security model" href="/docs/concepts/security" description="What runs as root, what runs as you, and what is quoted." />
 </Cards>

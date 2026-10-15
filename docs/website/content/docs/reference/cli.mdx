@@ -237,7 +237,7 @@ Each step prints once, when it ends; a long step also prints its progress every 
 
 #### `--on-failure <rollback|keep>`
 
-What to do when the new release fails after the switch: at the switch, the restart or the health check. It overrides [`pipeline.health.rollback`](/docs/guides/health-and-rollback) for this run.
+What to do when the new release fails after the switch: at the switch, the restart or the health check. It overrides [`pipeline.failed.rollback`](/docs/guides/health-and-rollback) for this run.
 
 | Value | Effect |
 | --- | --- |
@@ -246,7 +246,7 @@ What to do when the new release fails after the switch: at the switch, the resta
 
 ### `rollback <DEPLOY_ROOT> <NAME> --to <RELEASE>`
 
-Makes a release already on the server live again, unpacking it first if it is compressed. `RELEASE` is an id as `shipdeck releases` lists it. A rollback whose health check fails puts back what was live.
+Makes a release already on the server live again. A release kept only as its backup is unpacked first and set up again with `pipeline.setup`; an old `.tar.gz` is unpacked first. `RELEASE` is an id as `shipdeck releases` lists it. A rollback whose health check fails puts back what was live. See [Releases](/docs/guides/releases#rolling-back-by-hand).
 
 ```sh
 shipdeck rollback ./scripts/deploy my-api --to v0.3.0-9f8e7d6-20261012.091000
@@ -254,7 +254,7 @@ shipdeck rollback ./scripts/deploy my-api --to v0.3.0-9f8e7d6-20261012.091000
 
 ### `releases <DEPLOY_ROOT> <NAME>`
 
-Prints the releases on the server to stdout, newest first, as aligned columns. `STATE` is `live`, `unpacked`, `compressed` or `not-ours` (a folder shipdeck did not create, which it never switches to).
+Prints the releases on the server to stdout, newest first, as aligned columns. `STATE` is `live`, `unpacked`, `compressed` (only its backup, or an old `.tar.gz`, is in `backups/`) or `not-ours` (a folder shipdeck did not create, which it never switches to).
 
 ```txt
 RELEASE                         VERSION  COMMIT   BUILT (UTC)       SIZE      STATE       DEPLOYED BY

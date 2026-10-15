@@ -10,8 +10,8 @@ Each example sits in its own deploy folder, such as `scripts/deploy/web-prod/dep
 | Example | Ships | Built | Notable |
 | --- | --- | --- | --- |
 | Rust | a binary and `.env` | on your PC, against the server's glibc | `cargo zigbuild`, `health.url` |
-| Go | a static binary, templates, `.env` and `config.yaml` | on your PC | version from the git tag, `rollback: auto` |
-| Node.js | `dist` and the package files | on your PC; dependencies on the server | `requires`, `shared`, `setup`, `done` and `failed` |
+| Go | a static binary, templates, `.env` and `config.yaml` | on your PC | version from the git tag, `backup.keep`, `failed.rollback: auto` |
+| Node.js | `dist` and the package files | on your PC; dependencies on the server | `requires`, `shared`, `setup`, `backup`, `done` and `failed` |
 | Python | the source | on the server, in Setup | `include: [.]` with excludes, `.venv` in the release |
 
 ## Rust
@@ -61,8 +61,8 @@ A static Go binary that needs nothing from the server.
 - `CGO_ENABLED=0` makes a static binary, so there is no glibc to match.
 - `env` values are text; `"2"` is quoted here, though `2` would be read as text too.
 - Files come from both sources: `templates` from the project, `.env` and `config.yaml` from the deploy folder.
-- `keep` holds 3 open releases and 10 compressed ones instead of the default 5 and 15.
-- `health.check.server` runs a command in `current/` until it passes or `timeout_secs` runs out, and `rollback: auto` rolls back without asking.
+- `backup.keep` holds 3 open releases and the backups of 10 more instead of the default 5 and 15. The backup holds what was shipped, which is all this service needs.
+- `health.check.server` runs a command in `current/` until it passes or `timeout_secs` runs out, and `failed.rollback: auto` rolls back without asking.
 - `ssh` has no `user`, so the alias `prod` in `~/.ssh/config` must have a `User`.
 
 ```yaml title="examples/go/deploy.yaml"
@@ -81,7 +81,6 @@ service:
   env_file: .env                  # the service's environment; server commands load it too
   env:
     GOMAXPROCS: "2"
-  keep: { open: 3, compressed: 10 }
 
 pipeline:
   preflight:
@@ -97,9 +96,12 @@ pipeline:
       include:
         project: [templates]
         deploy: [.env, config.yaml]
+  backup:
+    keep: { open: 3, compressed: 10 }
   health:
     check:
       server: ./worker healthcheck  # runs in current/, retried until timeout_secs
+  failed:
     rollback: auto                  # no question: roll back at once
 ```
 
@@ -112,6 +114,7 @@ An app with no binary: built on your PC, with production dependencies installed 
 - The pack ships `dist` and the two package files and leaves out source maps. `"**/*.map"` is quoted because YAML reads a leading `*` as an alias.
 - `setup` runs in the new release folder while the old release still serves: `npm ci --omit=dev` installs only production dependencies, then the migration runs. `check.server` must pass before the switch.
 - `shared: [uploads]` keeps uploaded files in `/opt/web/shared/uploads` across releases.
+- `backup` keeps the shipped files of each release, not `node_modules`: a rollback to a backup runs `setup` again to install them. `keep` holds 3 open releases and the backups of 20 more.
 - `done` and `failed` call a local script. `SHIPDECK_STEP` in `failed` names the step that failed.
 
 ```yaml title="examples/node/deploy.yaml"
@@ -152,6 +155,8 @@ pipeline:
       server: [npm ci --omit=dev, npm run migrate]
     check:
       server: node --check dist/main.js
+  backup:                         # the shipped files, kept for rollback; setup remakes node_modules
+    keep: { open: 3, compressed: 20 }
   health:
     url: http://127.0.0.1:3000/health
   done:
@@ -170,6 +175,7 @@ A source-only app: nothing is built on your PC, and the server builds the virtua
 - There is no `build` step. The log says `pipeline.build.run.local is empty; shipping the files as they are`.
 - `setup` creates `.venv` inside the new release and installs the requirements into it. Each list item runs in its own shell, which is why the second command calls `.venv/bin/pip` by path.
 - `start: .venv/bin/python -m app` contains a `/`, so it is a path inside the release: `/opt/reports/current/.venv/bin/python`.
+- The backup holds the shipped source, not `.venv`: a rollback to a backup runs `setup` again to build it.
 - There is no `health.url`, so Health waits until `systemctl is-active` says `active` three times in a row, one second apart.
 
 ```yaml title="examples/python/deploy.yaml"
