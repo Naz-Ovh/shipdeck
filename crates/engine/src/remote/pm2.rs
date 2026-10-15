@@ -10,48 +10,38 @@ use super::Server;
 /// refused at preflight rather than trusted to behave the same.
 pub const PM2_NEWEST_MAJOR: u64 = 6;
 
-/// Checks the output of `pm2 -v` against [`PM2_NEWEST_MAJOR`].
+/// Checks the output of `pm2 -v`, which is the version alone, against
+/// [`PM2_NEWEST_MAJOR`].
 pub fn check_version(output: &str) -> Result<String, String> {
-    let Some(version) = output
-        .lines()
-        .rev()
-        .map(str::trim)
-        .find(|line| line.starts_with(|c: char| c.is_ascii_digit()))
-    else {
-        return Err(format!(
-            "could not read PM2's version (`pm2 -v` said {:?})",
-            output.trim()
-        ));
+    let version = output.trim();
+    let parts: Option<Vec<u64>> = version.split('.').map(|part| part.parse().ok()).collect();
+    let Some([major, _, _]) = parts.as_deref() else {
+        return Err(format!("`pm2 -v` did not print a version: {version:?}"));
     };
-    let major = version
-        .split('.')
-        .next()
-        .and_then(|major| major.parse::<u64>().ok());
-    match major {
-        Some(major) if major <= PM2_NEWEST_MAJOR => Ok(version.to_string()),
-        Some(_) => Err(format!(
+    if *major > PM2_NEWEST_MAJOR {
+        return Err(format!(
             "the server has PM2 {version}, newer than this shipdeck supports \
              (up to {PM2_NEWEST_MAJOR}.x); update shipdeck, or install pm2@{PM2_NEWEST_MAJOR}"
-        )),
-        None => Err(format!("could not read PM2's version {version:?}")),
+        ));
     }
+    Ok(version.to_string())
 }
 
-/// The app's state from `pm2 jlist`, in systemd's words so the screens
-/// colour it alike, with its restart count summed over its instances.
-/// `missing` when PM2 has no app of that name.
-pub fn app_state(jlist: &str, app: &str) -> (String, Option<u64>) {
-    // PM2 may print a notice before the JSON.
-    let json = jlist.find('[').map(|at| &jlist[at..]).unwrap_or("");
-    let Ok(Value::Array(processes)) = serde_json::from_str::<Value>(json.trim_end()) else {
-        return (String::new(), None);
-    };
+/// The app's state from `pm2 jlist`, which prints the process list as
+/// JSON, in systemd's words so the screens colour it alike, with its
+/// restart count summed over its instances. `missing` when PM2 has no app
+/// of that name.
+pub fn app_state(jlist: &str, app: &str) -> Result<(String, Option<u64>), String> {
+    let processes: Vec<Value> = serde_json::from_str(jlist.trim()).map_err(|err| {
+        let first = jlist.lines().next().unwrap_or_default();
+        format!("`pm2 jlist` did not print JSON ({err}); it said: {first}")
+    })?;
     let mine: Vec<&Value> = processes
         .iter()
         .filter(|p| p.get("name").and_then(Value::as_str) == Some(app))
         .collect();
     if mine.is_empty() {
-        return ("missing".into(), None);
+        return Ok(("missing".into(), None));
     }
     let statuses: Vec<&str> = mine
         .iter()
@@ -76,21 +66,22 @@ pub fn app_state(jlist: &str, app: &str) -> (String, Option<u64>) {
     } else {
         "activating"
     };
-    (state.into(), restarts)
+    Ok((state.into(), restarts))
 }
 
 impl Server {
-    /// The app's state and restart count, or nothing when PM2 cannot be
-    /// asked.
+    /// The app's state and restart count; nothing when the server has no
+    /// `pm2` (preflight says so).
     pub(super) async fn pm2_state(&self) -> Result<(String, Option<u64>)> {
         let out = self
             .session
-            .exec("command -v pm2 >/dev/null 2>&1 && pm2 jlist 2>/dev/null")
+            .exec("command -v pm2 >/dev/null 2>&1 || exit 127\npm2 jlist")
             .await?;
-        if !out.success() {
+        if out.code == 127 {
             return Ok((String::new(), None));
         }
-        Ok(app_state(&out.stdout, &self.pm2_app))
+        let out = out.check("pm2 jlist")?;
+        app_state(&out.stdout, &self.pm2_app).map_err(anyhow::Error::msg)
     }
 }
 
