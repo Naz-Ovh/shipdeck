@@ -10,6 +10,14 @@ rolls back any release. Design and decisions: `docs/plan.md`. Usage: `README.md`
   the body says why. Small commits.
 - Organise by subject. No `shared`, `common`, `kit`, `utils` or `helpers` modules.
 
+## Replies
+
+- Answer like one person to another in a casual chat: short, plain, quick to
+  read. No walls of text.
+- After building something: a short list of what is new.
+- After fixing something: a before/after table of at most 3 rows, then one
+  line of context.
+
 ## Layout
 
 - `crates/engine/` (`shipdeck-engine`): `config` (deploy.yaml: types that
