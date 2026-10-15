@@ -37,6 +37,11 @@ rolls back any release. Design and decisions: `docs/plan.md`. Usage: `README.md`
 
 ## Code
 
+- No hacks or tricks. Do it the proper, documented way: the tool's own
+  flag, format or API, or the spec. A guess that works on one machine fails
+  on the next. When there is no proper way, say so instead of working
+  around it.
+
 - Every value that reaches a remote shell is either validated in
   `config/rules.rs`, checked with `release::is_safe_id`, or quoted with
   `ssh::sh_quote`. Keep it that way. The one exception is the `server`
