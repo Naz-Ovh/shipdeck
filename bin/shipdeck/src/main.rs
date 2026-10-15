@@ -26,7 +26,7 @@ const PASSWORD_ENV: &str = "SHIPDECK_PASSWORD";
 #[command(
     name = "shipdeck",
     version,
-    about = "Build locally, deploy over SSH as a systemd service, roll back any release.",
+    about = "Build locally, deploy over SSH as a systemd service or PM2 app, roll back any release.",
     after_help = "Each folder under DEPLOY_ROOT with a deploy.yaml is one deployable.\n\
                   With neither --key nor --password (nor SHIPDECK_PASSWORD), the host's\n\
                   ~/.ssh/config key is tried, then the TUI asks for the password.\n\

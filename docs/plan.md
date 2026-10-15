@@ -39,6 +39,7 @@ live.
 | Version visibility | Each release carries `release.json` and its own systemd unit, with the version in `Description=`, so `systemctl status` shows it |
 | Failure handling | A failed switch, restart or health check asks whether to roll back (`rollback: ask`, the default) and rolls back after 30 s with no answer; `rollback: auto` never asks. `n` keeps the new release live. `failed` runs after any failure |
 | Manual rollback | Runs health and then `done` with `SHIPDECK_ACTION=rollback` |
+| PM2 | `service.manager: pm2` instead of systemd, as the SSH user with no sudo. Each release carries `<service>.pm2.json` (`cwd` is `current`), or ships the user's `pm2.ecosystem`; restart is `pm2 startOrReload --only <app> --update-env` with the service's environment loaded, then `pm2 save`. Health reads `pm2 jlist`. PM2 newer than the major version shipdeck is tested with (6) is refused at preflight |
 | Without the TUI | `deploy`, `rollback` and `releases` subcommands run the same engine flows and print what it reports as lines. Nothing waits for a person: rolling back is a flag (`--on-failure`), a new host key needs `--trust-new-host`, a password comes from `--password` or `SHIPDECK_PASSWORD`. Each `Outcome` has its own exit code, which is a contract with the scripts that call shipdeck |
 
 ## Running it

@@ -1,0 +1,37 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.4.0/deploy.schema.json
+# A Node.js app kept running by PM2 in cluster mode, as the SSH user: no sudo
+# on the server. shipdeck writes my-api.pm2.json into each release.
+name: My API (prod)
+project: ../../../my-api
+
+ssh:
+  host: prod
+
+service:
+  name: my-api
+  dir: /opt/my-api
+  manager: pm2
+  start: node dist/main.js --port 3000   # arguments go after the script
+  env_file: .env
+  env: { NODE_ENV: production }
+  pm2:
+    # Options are the exact properties PM2 supports; see them all here:
+    # https://pm2.keymetrics.io/docs/usage/application-declaration/
+    options:
+      instances: max
+      exec_mode: cluster
+      max_memory_restart: 300M
+  # Or ship your own file and leave out `start` and `options`:
+  #   ecosystem: ecosystem.config.js
+
+pipeline:
+  pack:
+    files:
+      include:
+        project: [dist, package.json, package-lock.json]
+        deploy: [.env]
+  setup:
+    run:
+      server: npm ci --omit=dev
+  health:
+    url: http://127.0.0.1:3000/health

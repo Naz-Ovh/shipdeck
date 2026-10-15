@@ -1,7 +1,7 @@
 # shipdeck
 
 A terminal UI that builds an app on your own machine, ships it to a server
-over SSH, and runs it there as a systemd service. Every deploy is kept as its
+over SSH, and runs it there as a systemd service or a PM2 app. Every deploy is kept as its
 own release, so any of them can go live again from the Releases screen.
 
 It exists for servers too small to build on. Whatever the language (Rust, Go,
@@ -226,10 +226,14 @@ so `&&`, pipes and `$VARS` work; give one, or a list.
 | `ssh.host` | | An address or a `~/.ssh/config` alias |
 | `ssh.user` | alias `User` | Who to log in and deploy as. Required if the alias has no `User`. |
 | `ssh.port` | alias `Port`, else `22` | |
-| `service.name` | | The systemd unit, without `.service` |
+| `service.name` | | The systemd unit, without `.service`; with PM2, also the app's name |
 | `service.dir` | | The app's folder on the server, such as `/opt/my-app` |
-| `service.start` | `./<binary>` | What the service runs, from the release folder: `./my-api -E=.env`, `node dist/main.js`, `.venv/bin/python -m app`. A bare program name is looked up on the server at preflight and written into the unit with its full path. |
-| `service.run_as` | `ssh.user` | The user the service runs as. It must be able to read the release. |
+| `service.manager` | `systemd` | What keeps the app running: `systemd` (a unit, installed with sudo) or `pm2` (run as `ssh.user`, no sudo). See [PM2](#pm2). |
+| `service.pm2.app` | `service.name` | The app's name in PM2 |
+| `service.pm2.ecosystem` | none | Your own PM2 file in the release, such as `ecosystem.config.js`, instead of the one shipdeck writes. `service.start` and `pm2.options` are then not used. |
+| `service.pm2.options` | `{}` | More PM2 app settings for the file shipdeck writes: `instances: max`, `exec_mode: cluster`, `max_memory_restart: 300M`, ... |
+| `service.start` | `./<binary>` | What the service runs, from the release folder: `./my-api -E=.env`, `node dist/main.js`, `.venv/bin/python -m app`. A bare program name is looked up on the server at preflight and written into the unit with its full path. Arguments follow the program; quote one with spaces: `--title "my api"`. |
+| `service.run_as` | `ssh.user` | The user the service runs as. It must be able to read the release. Not with PM2, which runs the app as `ssh.user`. |
 | `service.env_file` | none | A `KEY=value` file in the release, such as `.env`: the service's environment (`EnvironmentFile=`), and loaded for every server command too |
 | `service.env` | `{}` | Variables for the service (`Environment=`) and for server commands |
 | `service.shared` | `[]` | Folders kept across releases, such as `uploads`. Each lives in `shared/` and is linked into every release at unpack. |
@@ -410,6 +414,52 @@ service cannot see `/home`. A runtime installed per user, such as Node from
 (`apt`, NodeSource, `/usr/local/bin`), or use a `service.template` without
 `ProtectHome`. Server commands are not affected, since they run over SSH.
 
+## PM2
+
+With `service.manager: pm2`, PM2 keeps the app running instead of systemd.
+It runs as `ssh.user`, so the server needs no sudo rule, and a runtime from
+`nvm` works.
+
+```yaml
+service:
+  name: web
+  dir: /opt/web
+  manager: pm2
+  start: node dist/main.js
+  env_file: .env
+  pm2:
+    options: { instances: max, exec_mode: cluster }
+```
+
+Each release carries `web.pm2.json`, with `cwd` set to `current`. The
+restart step runs, in `current` and with `service.env` and
+`service.env_file` loaded:
+
+```sh
+pm2 startOrReload <dir>/current/web.pm2.json --only web --update-env
+pm2 save
+```
+
+so a rollback reloads the old release's file, and the app comes back after
+a reboot. `node <script>` runs the script with node as PM2's interpreter, so
+cluster mode works; any other program runs as it is. To keep your own file
+instead, ship it and name it:
+
+```yaml
+  pm2:
+    app: web                          # the app in the file to reload
+    ecosystem: ecosystem.config.js    # or .config.cjs, .json, .yml
+```
+
+Health reads `pm2 jlist`: the app is up when every instance is `online`,
+and a rising restart count is a crash. A failure shows `pm2 logs`.
+
+Preflight refuses a PM2 newer than the major version this shipdeck knows
+(6.x), and a systemd unit of the same name that is still running (`sudo
+systemctl disable --now <name>` first). `server-setup.sh --manager pm2`
+skips the sudo rule and runs `pm2 startup` for the deploy user, once PM2 is
+installed.
+
 ## service.template
 
 Without one, shipdeck uses a hardened unit: `Restart=always`, read-only
@@ -438,7 +488,8 @@ must be able to:
 
 As root these simply run. Any other user runs the last three through
 `sudo -n`, so it needs sudo without a password for them. Preflight checks
-each one and, when something is missing, stops and names it.
+each one and, when something is missing, stops and names it. With PM2 only
+the first row applies.
 
 ## On the server
 
