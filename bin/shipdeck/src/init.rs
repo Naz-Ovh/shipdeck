@@ -50,7 +50,10 @@ pub fn run(given: Given) -> Result<ExitCode> {
         Err(problems) => {
             let base = std::env::current_dir().unwrap_or_default();
             let color = std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none();
-            eprint!("{}", config::render(&[problems], &base, color));
+            eprint!(
+                "{}",
+                config::render(&[problems], &base, color, "nothing written")
+            );
             return Ok(ExitCode::FAILURE);
         }
     };

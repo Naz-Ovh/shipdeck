@@ -365,7 +365,10 @@ fn discover(root: &Path) -> Result<Option<Discovery>> {
     }
     let base = std::env::current_dir().unwrap_or_default();
     let color = std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none();
-    eprint!("{}", config::render(&discovery.problems, &base, color));
+    eprint!(
+        "{}",
+        config::render(&discovery.problems, &base, color, "shipdeck did not start")
+    );
     Ok(None)
 }
 

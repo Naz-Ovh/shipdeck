@@ -143,9 +143,11 @@ impl Paint {
     }
 }
 
-/// The whole report shipdeck prints before refusing to start. `base` is
+/// The whole report shipdeck prints before refusing to go on. `base` is
 /// the folder paths are shown relative to; `color` adds terminal colours.
-pub fn render(files: &[FileProblems], base: &Path, color: bool) -> String {
+/// `outcome` heads the report: what did not happen because of them, such
+/// as `shipdeck did not start`.
+pub fn render(files: &[FileProblems], base: &Path, color: bool, outcome: &str) -> String {
     let paint = Paint { on: color };
     let count: usize = files.iter().map(|f| f.problems.len()).sum();
     let mut out = String::new();
@@ -163,9 +165,7 @@ pub fn render(files: &[FileProblems], base: &Path, color: bool) -> String {
         out,
         "{} {}",
         paint.red("✘"),
-        paint.bold(&format!(
-            "shipdeck did not start: {files_text} {problems_text}"
-        ))
+        paint.bold(&format!("{outcome}: {files_text} {problems_text}"))
     );
     for file in files {
         let shown = file.path.strip_prefix(base).unwrap_or(&file.path);
