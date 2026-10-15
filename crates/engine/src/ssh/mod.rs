@@ -4,10 +4,12 @@
 mod endpoint;
 mod handler;
 mod login;
+mod shell_env;
 pub mod ssh_config;
 
 pub use endpoint::Endpoint;
 pub use login::{Login, Question};
+pub use shell_env::ShellEnv;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -62,6 +64,10 @@ pub struct Session {
     pub label: String,
     /// Who it is logged in as.
     pub user: String,
+    /// Whether scripts get the login shell's environment.
+    pub shell_env: ShellEnv,
+    /// The login shell's exported variables, run before every script.
+    prelude: String,
 }
 
 impl Session {
@@ -76,19 +82,47 @@ impl Session {
 
     /// Runs a POSIX `sh` script, handing each output line to `on_line` as it
     /// arrives. The script goes through `sh -c` so the login shell (bash,
-    /// zsh, fish, ...) does not matter.
+    /// zsh, fish, ...) does not matter, after the login shell's environment
+    /// (see [`ShellEnv`]).
     pub async fn exec_with(
         &self,
         script: &str,
-        mut on_line: impl FnMut(Stream, &str),
+        on_line: impl FnMut(Stream, &str),
     ) -> Result<Output> {
+        let script = format!("{}{script}", self.prelude);
+        self.run(&format!("sh -c {}", sh_quote(&script)), on_line)
+            .await
+    }
+
+    /// Captures the login shell's environment for every script after.
+    async fn load_shell_env(&mut self) {
+        let capture = format!("sh -c {}", sh_quote(shell_env::CAPTURE));
+        let found =
+            match tokio::time::timeout(shell_env::TIMEOUT, self.run(&capture, |_, _| {})).await {
+                Err(_) => Err(format!(
+                    "the login shell's startup files took more than {}s",
+                    shell_env::TIMEOUT.as_secs()
+                )),
+                Ok(Err(err)) => Err(format!("{err:#}")),
+                Ok(Ok(out)) => shell_env::prelude(out.code, &out.stdout),
+            };
+        match found {
+            Ok(prelude) => {
+                self.prelude = prelude;
+                self.shell_env = ShellEnv::Loaded;
+            }
+            Err(why) => self.shell_env = ShellEnv::Failed(why),
+        }
+    }
+
+    async fn run(&self, command: &str, mut on_line: impl FnMut(Stream, &str)) -> Result<Output> {
         let mut channel = self
             .handle
             .channel_open_session()
             .await
             .with_context(|| format!("opening a channel to {}", self.label))?;
         channel
-            .exec(true, format!("sh -c {}", sh_quote(script)))
+            .exec(true, command)
             .await
             .context("starting the remote command")?;
 
@@ -217,6 +251,8 @@ pub struct Pool {
     asker: UnboundedSender<Question>,
     secrets: Arc<login::Secrets>,
     slots: Mutex<HashMap<Endpoint, Slot>>,
+    /// False with `--no-shell-env`, whatever `ssh.shell_env` says.
+    shell_env: bool,
 }
 
 impl Pool {
@@ -226,7 +262,14 @@ impl Pool {
             asker,
             secrets: Arc::default(),
             slots: Mutex::default(),
+            shell_env: true,
         }
+    }
+
+    /// Runs commands without the login shell's environment on every server.
+    pub fn without_shell_env(mut self) -> Self {
+        self.shell_env = false;
+        self
     }
 
     /// Unlocks an encrypted key with `passphrase` instead of asking.
@@ -289,11 +332,17 @@ impl Pool {
             Ok(Ok(handle)) => handle,
         };
         login::authenticate(&mut handle, target, &self.login, &self.asker, &self.secrets).await?;
-        Ok(Session {
+        let mut session = Session {
             handle,
             label,
             user: target.user.clone(),
-        })
+            shell_env: ShellEnv::Off,
+            prelude: String::new(),
+        };
+        if self.shell_env && target.shell_env {
+            session.load_shell_env().await;
+        }
+        Ok(session)
     }
 
     pub async fn close_all(&self) {

@@ -510,6 +510,11 @@
             "null"
           ]
         },
+        "shell_env": {
+          "default": true,
+          "description": "Give server commands the environment a terminal has: shipdeck starts the login shell once per connection, so `~/.bashrc`, `~/.zshrc` or `config.fish` set up PATH (nvm and the like). Default: true.",
+          "type": "boolean"
+        },
         "user": {
           "default": null,
           "description": "The user shipdeck logs in and deploys as. Default: the alias's User.",

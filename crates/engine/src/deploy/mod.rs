@@ -23,7 +23,7 @@ use crate::config::{
 use crate::human;
 use crate::release::{Manifest, ReleaseName};
 use crate::remote::{CommandEnv, Facts, HttpCheck, Place, Server, check_version, plan_rotation};
-use crate::ssh::Pool;
+use crate::ssh::{Pool, ShellEnv};
 use report::{LogKind, Outcome, Reporter, Unit};
 
 /// Every step a deploy or rollback can have, in order.
@@ -919,6 +919,20 @@ async fn preflight(
         ),
     );
     let session = pool.get(endpoint).await?;
+    match &session.shell_env {
+        ShellEnv::Loaded => report.log(
+            LogKind::Info,
+            "server commands get the login shell's environment (ssh.shell_env)",
+        ),
+        ShellEnv::Off => report.log(
+            LogKind::Info,
+            "server commands run without the login shell's startup files",
+        ),
+        ShellEnv::Failed(why) => report.log(
+            LogKind::Warn,
+            format!("{why}; server commands run without them"),
+        ),
+    }
     let server = Server::new(session, &config.service);
     let mut tools = deployable.required_tools();
     for tool in SERVER_TOOLS {
@@ -1011,8 +1025,13 @@ fn check_tools(deployable: &Deployable, facts: &Facts, report: &Reporter) -> Res
         );
     }
     if !missing.is_empty() {
+        let path = if deployable.endpoint.shell_env {
+            "the PATH the login shell's startup files set"
+        } else {
+            "the PATH without the login shell's startup files (ssh.shell_env is false)"
+        };
         bail!(
-            "{} cannot find {} on the server; install {} or fix service.start and pipeline.preflight.requires",
+            "{} cannot find {} on the server in {path}; install {}, or fix service.start and pipeline.preflight.requires",
             deployable.endpoint.user,
             missing.join(", "),
             if missing.len() == 1 { "it" } else { "them" }

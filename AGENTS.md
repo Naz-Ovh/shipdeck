@@ -52,7 +52,9 @@ rolls back any release. Design and decisions: `docs/plan.md`. Usage: `README.md`
 - The config types are the schema. Every field needs a doc comment (editors
   show it); after a change run `cargo run -q -p shipdeck -- --schema >
   deploy.schema.json` (a test fails until you do).
-- Remote scripts are POSIX `sh`; they run through `sh -c`, whatever the login shell.
+- Remote scripts are POSIX `sh`; they run through `sh -c`, whatever the login
+  shell, after the variables the login shell's startup files export
+  (`ssh::shell_env`, off with `ssh.shell_env: false` or `--no-shell-env`).
 - The sudo commands in `remote::sudo_commands` are a contract with the sudoers
   line people install. Changing one breaks every existing server, and
   `server-setup.sh` must change with it (`setup_test.rs` checks they match).

@@ -70,6 +70,11 @@ pub struct SshTarget {
     /// The user shipdeck logs in and deploys as. Default: the alias's User.
     #[serde(default)]
     pub user: Option<String>,
+    /// Give server commands the environment a terminal has: shipdeck starts
+    /// the login shell once per connection, so `~/.bashrc`, `~/.zshrc` or
+    /// `config.fish` set up PATH (nvm and the like). Default: true.
+    #[serde(default = "default_true")]
+    pub shell_env: bool,
 }
 
 /// The service shipdeck runs, and where its releases live.
@@ -462,6 +467,9 @@ impl JsonSchema for Commands {
     }
 }
 
+fn default_true() -> bool {
+    true
+}
 fn default_project() -> String {
     ".".into()
 }

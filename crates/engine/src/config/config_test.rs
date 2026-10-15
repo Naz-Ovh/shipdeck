@@ -512,6 +512,17 @@ fn pm2_settings_that_cannot_work_are_named() {
 }
 
 #[test]
+fn the_login_shell_environment_is_on_unless_turned_off() {
+    assert!(sample().ssh.shell_env);
+    let off = parse(&SAMPLE.replace(
+        "ssh: { host: example.com, user: deploy }",
+        "ssh: { host: example.com, user: deploy, shell_env: false }",
+    ))
+    .unwrap();
+    assert!(!off.ssh.shell_env);
+}
+
+#[test]
 fn start_arguments_split_like_systemd() {
     assert_eq!(
         split_args("dist/main.js --port 3000 --title \"my api\" -m 'a b'"),

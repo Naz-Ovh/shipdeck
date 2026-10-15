@@ -6,6 +6,7 @@ project: ../../../my-api
 
 ssh:
   host: prod
+  shell_env: true                 # load ~/.bashrc and friends, so nvm's pm2 is found
 
 service:
   name: my-api

@@ -5,6 +5,7 @@ fn target(host: &str, port: Option<u16>, user: Option<&str>) -> SshTarget {
         host: host.into(),
         port,
         user: user.map(str::to_string),
+        shell_env: true,
     }
 }
 

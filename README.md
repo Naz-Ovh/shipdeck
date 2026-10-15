@@ -234,6 +234,7 @@ so `&&`, pipes and `$VARS` work; give one, or a list.
 | `ssh.host` | | An address or a `~/.ssh/config` alias |
 | `ssh.user` | alias `User` | Who to log in and deploy as. Required if the alias has no `User`. |
 | `ssh.port` | alias `Port`, else `22` | |
+| `ssh.shell_env` | `true` | Server commands get the environment a terminal has: shipdeck starts the login shell once per connection, so `~/.bashrc`, `~/.zshrc` or `config.fish` set up `PATH` (nvm and the like). `false` skips them. See [Tools on the server](#tools-on-the-server). |
 | `service.name` | | The systemd unit, without `.service`; with PM2, also the app's name |
 | `service.dir` | | The app's folder on the server, such as `/opt/my-app` |
 | `service.manager` | `systemd` | What keeps the app running: `systemd` (a unit, installed with sudo) or `pm2` (run as `ssh.user`, no sudo). See [PM2](#pm2). |
@@ -415,6 +416,20 @@ A `deploy.json` from 0.1 is refused too; JSON is YAML, so rename it and move
 the keys the same way.
 
 ## Tools on the server
+
+An SSH command runs without a terminal, so the login shell skips the files
+most tools are set up in: nvm adds itself to `~/.bashrc`, which stops early
+when there is no terminal. So once per connection shipdeck starts the login
+shell the way `ssh <host>` does for a terminal (`$SHELL -i -l`: bash, zsh,
+fish, ... each read their own files) and gives every server command the
+variables it exports. The shell's output and input are cut off, so a
+startup file that prints or reads does no harm; one that fails, or takes
+more than 20 s, is reported at preflight, and commands run without it.
+
+It costs a second or two per connection. To skip it, set
+`ssh.shell_env: false` for one server, or pass `--no-shell-env` for a whole
+run. Something in the startup files that expects a person, such as starting
+tmux, is a reason to.
 
 The built-in unit is hardened (`ProtectHome=true` among others), so the
 service cannot see `/home`. A runtime installed per user, such as Node from

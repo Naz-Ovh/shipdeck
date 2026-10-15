@@ -21,6 +21,8 @@ pub struct Endpoint {
     pub identity: Option<PathBuf>,
     /// `User` from `~/.ssh/config`, which `deploy.yaml` may have overridden.
     pub config_user: Option<String>,
+    /// `ssh.shell_env`: commands get the login shell's environment.
+    pub shell_env: bool,
 }
 
 impl Endpoint {
@@ -57,6 +59,7 @@ impl Endpoint {
             user,
             identity: found.identity_file,
             config_user: found.user,
+            shell_env: target.shell_env,
         })
     }
 

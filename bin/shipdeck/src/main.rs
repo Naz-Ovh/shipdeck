@@ -9,10 +9,10 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use tokio::sync::mpsc::unbounded_channel;
+use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
 use shipdeck_engine::config::{self, Discovery};
-use shipdeck_engine::ssh::{Login, Pool};
+use shipdeck_engine::ssh::{Login, Pool, Question};
 use shipdeck_headless::{Headless, OnFailure};
 
 #[cfg(target_env = "musl")]
@@ -68,6 +68,10 @@ struct LoginArgs {
     /// Log in with this password (it lands in your shell history; SHIPDECK_PASSWORD does not)
     #[arg(long, value_name = "PASSWORD", global = true)]
     password: Option<String>,
+
+    /// Run server commands without the login shell's startup files (~/.bashrc, ~/.zshrc, ...), on every server
+    #[arg(long, global = true)]
+    no_shell_env: bool,
 }
 
 #[derive(Subcommand)]
@@ -153,12 +157,13 @@ async fn main() -> Result<ExitCode> {
         print!("{}", config::schema::text());
         return Ok(ExitCode::SUCCESS);
     }
+    let shell_env = !cli.login.no_shell_env;
     let login = login(cli.login)?;
     let Some(command) = cli.command else {
         let root = cli
             .root
             .expect("clap requires DEPLOY_ROOT without --schema or a command");
-        return run_tui(root, login).await;
+        return run_tui(root, login, shell_env).await;
     };
 
     let (root, ssh) = match &command {
@@ -170,7 +175,7 @@ async fn main() -> Result<ExitCode> {
         return Ok(ExitCode::FAILURE);
     };
     let (questions_tx, questions) = unbounded_channel();
-    let pool = Arc::new(Pool::new(login, questions_tx).with_passphrase(passphrase()));
+    let pool = Arc::new(pool(login, questions_tx, shell_env));
     let mut headless = Headless::new(pool.clone(), questions, ssh.trust_new_host);
     let code = match command {
         Command::Deploy {
@@ -183,14 +188,14 @@ async fn main() -> Result<ExitCode> {
     Ok(code)
 }
 
-async fn run_tui(root: PathBuf, login: Login) -> Result<ExitCode> {
+async fn run_tui(root: PathBuf, login: Login, shell_env: bool) -> Result<ExitCode> {
     let Some(discovery) = discover(&root)? else {
         return Ok(ExitCode::FAILURE);
     };
     let (questions_tx, questions) = unbounded_channel();
     let (ops_tx, ops) = unbounded_channel();
     let (fetched_tx, fetched) = unbounded_channel();
-    let pool = Arc::new(Pool::new(login, questions_tx).with_passphrase(passphrase()));
+    let pool = Arc::new(pool(login, questions_tx, shell_env));
     let app = shipdeck_tui::App::new(root, discovery, pool, ops_tx, fetched_tx);
     shipdeck_tui::run(
         app,
@@ -226,6 +231,17 @@ fn login(args: LoginArgs) -> Result<Login> {
         Some(password) => Login::Password(password),
         None => Login::Auto,
     })
+}
+
+/// The session pool for this run, with the passphrase and shell settings
+/// from the environment and the flags.
+fn pool(login: Login, asker: UnboundedSender<Question>, shell_env: bool) -> Pool {
+    let pool = Pool::new(login, asker).with_passphrase(passphrase());
+    if shell_env {
+        pool
+    } else {
+        pool.without_shell_env()
+    }
 }
 
 fn passphrase() -> Option<String> {
