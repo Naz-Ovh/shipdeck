@@ -139,7 +139,7 @@ An unknown server opens the "New server" dialog:
 2. Press `y` to trust and connect. shipdeck appends the key to `~/.ssh/known_hosts`, creating `~/.ssh` if needed.
 3. Press `n`, Esc or Ctrl-C to refuse. The connection stops with `the host key of <host> was not trusted`.
 
-Because shipdeck connects when it starts, to show each deployable's status, this dialog can appear right away.
+shipdeck connects when you press `c` on a deployable, or when a deploy, the Releases screen or a rollback needs the server, so this dialog appears then.
 
 ### A changed key
 
@@ -157,7 +157,7 @@ Host certificates are refused: `<host> offered a host certificate; only plain ho
 
 ## One session per server
 
-shipdeck opens one SSH session per endpoint (host, port, user and key) and reuses it for status checks, the Releases listing, uploads and every deploy step. A closed session reconnects on the next use.
+shipdeck opens one SSH session per endpoint (host, port, user and key) and reuses it for status checks, the Releases listing, uploads and every deploy step. A closed session reconnects on the next use. Nothing connects until it is needed: `c` on the Deployables screen, a deploy, the Releases listing or a rollback. `c` on a connected deployable closes its session, so every deployable on the same `user@host:port` shows `not connected`.
 
 - Connecting times out after 15 seconds: `connecting to <label> timed out after 15s`.
 - Keepalives go out every 15 seconds.

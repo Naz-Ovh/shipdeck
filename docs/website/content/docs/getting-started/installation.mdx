@@ -47,7 +47,7 @@ The repository has a tag per release (`v0.1.0` up to `v0.3.1`). To install exact
 cargo install --git https://github.com/Naz-Ovh/shipdeck --tag v0.3.1 shipdeck
 ```
 
-`--tag` is a plain cargo option, not something specific to shipdeck. Pinning is useful because two things name a version: the schema line at the top of your `deploy.yaml` files, and the server setup command shipdeck shows, which fetches `server-setup.sh` at the tag of the shipdeck you run.
+`--tag` is a plain cargo option, not something specific to shipdeck. Pinning is useful because two things name a version: the schema line at the top of your `deploy.yaml` files, and the `server-setup.sh` URL, which you pin to the tag of the shipdeck you run (see [Server access](/docs/guides/server-access)).
 
 To upgrade later, run the same command with the new tag. Add `--force` if cargo says the binary is already installed.
 

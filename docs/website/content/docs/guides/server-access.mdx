@@ -55,63 +55,44 @@ A manual rollback runs the same check in its Connect step.
 
 `server-setup.sh` creates a dedicated user that can deploy one app and nothing more. It is optional.
 
-### Get the command
+### Write the command
 
-Select the deployable on the Deployables screen and press `u`. The "Server setup" dialog shows the command for that deployable:
+Write the command yourself, with your deployable's values, and run it once on the server as root. shipdeck does not run it for you, and there is no `shipdeck setup` subcommand.
 
-<Screen title="Server setup">{`
-╔ Server setup ════════════════════════════════════════════════════════════╗
-║ Run this once on the server as root:                                     ║
-║                                                                          ║
-║ curl -fsSL                                                               ║
-║ https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/server-setup.s ║
-║ h | bash -s -- --user deploy --dir /opt/api-prod --service api-prod      ║
-║ --key 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPR1CM562x94ekkDx8f2          ║
-║ me@laptop'                                                               ║
-║                                                                          ║
-║ It fetches server-setup.sh from shipdeck v0.3.0 on GitHub, creates the   ║
-║ user deploy, authorizes its key, creates /opt/api-prod owned by deploy,  ║
-║ and installs the sudo rule for api-prod (checked by visudo first).       ║
-║ Running it again changes nothing already in place. Not root? Put sudo    ║
-║ before bash.                                                             ║
-║                                                                          ║
-║ authorizes   the public half of /home/me/.ssh/id_deploy                  ║
-║ Then press ⏎ on the deployable to deploy as that user.                   ║
-║                                                                          ║
-╚══════════════════════════════════════════════════════════════════════════╝
-`}</Screen>
+```sh
+curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v<version>/server-setup.sh | bash -s -- --user <ssh user> --dir <service.dir> --service <service.name> [--manager pm2] [--key '<public key line>']
+```
 
-Press `c` to copy it (if your terminal allows it). The last command shown is also printed when you quit shipdeck. There is no `shipdeck setup` subcommand.
-
-### The command
+For example, with `ssh.user: deploy`, `service.dir: /opt/my-api` and `service.name: my-api`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/server-setup.sh | bash -s -- --user deploy --dir /opt/my-api --service my-api --key 'ssh-ed25519 AAAAC3Nza me@laptop'
 ```
 
-Run it on the server as root. Not root? Put `sudo` before `bash`:
+Not root? Put `sudo` before `bash`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/server-setup.sh | sudo bash -s -- --user deploy --dir /opt/my-api --service my-api --key 'ssh-ed25519 AAAAC3Nza me@laptop'
 ```
 
-The URL is pinned to the tag of the shipdeck you are running (`v0.3.0` here), so the script that runs as root only changes when you upgrade shipdeck.
+Pin the URL to the tag of the shipdeck you run (`v0.3.0` here; `shipdeck --version` prints it), so the script that runs as root only changes when you upgrade shipdeck.
 
-shipdeck fills the arguments from the deployable:
+Take each argument from the deployable:
 
-| Argument | Filled from |
+| Argument | Take it from |
 | --- | --- |
 | `--user` | the SSH user: `ssh.user`, else the alias's `User` (not `service.run_as`) |
 | `--dir` | `service.dir` |
 | `--service` | `service.name` |
-| `--key` | the public half of `--key <path>` if you passed it, else of the alias's `IdentityFile` |
+| `--manager` | `pm2` when `service.manager` is `pm2`; leave it out for systemd |
+| `--key` | the public key line you log in with, for example the contents of `~/.ssh/id_ed25519.pub` |
 
-The public key is the first line of `<key>.pub`, or derived from the private key file. With no key to find, `--key` is left out and the dialog warns you; the script then tells you to set a password for the user.
+`--key` is optional. Without it the script tells you to set a password for the user.
 
 ### Arguments and validation
 
 ```txt
-Usage: server-setup.sh --user NAME --dir PATH --service NAME [--key 'PUBLIC KEY']
+Usage: server-setup.sh --user NAME --dir PATH --service NAME [--manager systemd|pm2] [--key 'PUBLIC KEY']
 ```
 
 The script checks every argument before it changes anything, and even before it checks for root. Each failure prints `error: <message>` and exits 1.
@@ -124,6 +105,7 @@ The script checks every argument before it changes anything, and even before it 
 | dir has no `..` segment | `--dir must not contain '..'` |
 | service is `[A-Za-z0-9._@-]+` | `--service may only use letters, digits, '.', '_', '@' and '-'` |
 | service does not end in `.service` | `--service is the name without .service` |
+| manager is `systemd` or `pm2` | `--manager must be systemd or pm2` |
 | key is one line | `--key must be a single line` |
 | key looks like a public key (`ssh-`, `ecdsa-` or `sk-` type, then base64) | `--key must be one public key line, e.g. 'ssh-ed25519 AAAA... me@pc'` |
 

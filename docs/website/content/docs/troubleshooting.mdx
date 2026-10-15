@@ -73,14 +73,14 @@ These stop shipdeck before the terminal UI starts. It prints the message and exi
 Connection problems show on the Deployables screen as a `✘` line under the deployable, and in the Log panel when they happen during a deploy.
 
 <Accordions>
-  <Accordion title="Password prompts as soon as shipdeck starts">
-    At startup shipdeck connects to every deployable in the background to show what is live, so host key and password prompts can appear right away. With no key, it asks once per `user@host` (with `:port` added when the port is not 22) and keeps the answer in memory for this run only; it is never written to disk. To avoid the prompt, pass `--key` or add an `IdentityFile` to the alias. shipdeck does not use ssh-agent and does not try default key files that no `IdentityFile` names.
+  <Accordion title="Password prompts when shipdeck connects">
+    shipdeck connects when you press `c` on a deployable, or when a deploy, the Releases screen or a rollback needs the server, so host key and password prompts appear then. With no key, it asks once per `user@host` (with `:port` added when the port is not 22) and keeps the answer in memory for this run only; it is never written to disk. To avoid the prompt, pass `--key` or add an `IdentityFile` to the alias. shipdeck does not use ssh-agent and does not try default key files that no `IdentityFile` names.
   </Accordion>
 
   <Accordion title="connecting to <user>@<host> timed out after 15s">
-    shipdeck gives each connection 15 seconds. Check that the server is up, that the address and port are right (`ssh.port`, or the alias's `Port`), and that a firewall allows SSH from your PC. Try `ssh` to the same host by hand. Press `s` on the Deployables screen to try again.
+    shipdeck gives each connection 15 seconds. Check that the server is up, that the address and port are right (`ssh.port`, or the alias's `Port`), and that a firewall allows SSH from your PC. Try `ssh` to the same host by hand. Press `c` on the Deployables screen to try again.
 
-    The host key check is part of connecting, so the time the **New server** dialog stays open counts toward the 15 seconds. If you read the fingerprint for longer than that, the connection times out. Press `s` to connect again.
+    The host key check is part of connecting, so the time the **New server** dialog stays open counts toward the 15 seconds. If you read the fingerprint for longer than that, the connection times out. Press `c` to connect again.
   </Accordion>
 
   <Accordion title="HOST KEY CHANGED for <host>: it differs from line <n> of ~/.ssh/known_hosts">
@@ -90,7 +90,7 @@ Connection problems show on the Deployables screen as a `✘` line under the dep
   </Accordion>
 
   <Accordion title="the host key of <host> was not trusted">
-    You answered `n` (or `esc`) in the **New server** dialog. Compare the fingerprint with `ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub` on the server, then press `s` to connect again and answer `y` if it matches.
+    You answered `n` (or `esc`) in the **New server** dialog. Compare the fingerprint with `ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub` on the server, then press `c` to connect again and answer `y` if it matches.
   </Accordion>
 
   <Accordion title="<host> offered a host certificate; only plain host keys are supported">
@@ -98,7 +98,7 @@ Connection problems show on the Deployables screen as a `✘` line under the dep
   </Accordion>
 
   <Accordion title="<host> refused the key <path> for user <user>">
-    The server did not accept that key for that user. Check that the public half is in the user's `~/.ssh/authorized_keys` on the server. If you created the user with the server setup command, check that the dialog showed the key you log in with (`authorizes the public half of …`).
+    The server did not accept that key for that user. Check that the public half is in the user's `~/.ssh/authorized_keys` on the server. If you created the user with `server-setup.sh`, check that `--key` was the public half of the key you log in with (for example `~/.ssh/id_ed25519.pub`).
   </Accordion>
 
   <Accordion title="<host> refused the password for user <user> 3 times">
@@ -106,7 +106,7 @@ Connection problems show on the Deployables screen as a `✘` line under the dep
   </Accordion>
 
   <Accordion title="login to <user@host> cancelled">
-    You pressed `esc` in the password dialog. Press `s` on the Deployables screen to connect again.
+    You pressed `esc` in the password dialog. Press `c` on the Deployables screen to connect again.
   </Accordion>
 </Accordions>
 
@@ -128,11 +128,11 @@ Preflight checks your PC and the server before anything is built. A failure here
     journalctl -u <service> -n 30 --no-pager
     ```
 
-    Press `u` on the Deployables screen and run the command it shows once on the server as root. It installs a sudo rule for exactly these commands. Or deploy as `root`. See [Server access](/docs/guides/server-access).
+    Run `server-setup.sh` once on the server as root. It installs a sudo rule for exactly these commands. Or deploy as `root`. See [Server access](/docs/guides/server-access).
   </Accordion>
 
   <Accordion title="<user> may not create <dir>, and has no sudo without a password">
-    On a first deploy shipdeck creates `service.dir`. The user could not create it, and could not use `sudo -n mkdir` either. Create the folder on the server and give it to the deploy user, or run the server setup command (`u`), which does both.
+    On a first deploy shipdeck creates `service.dir`. The user could not create it, and could not use `sudo -n mkdir` either. Create the folder on the server and give it to the deploy user, or run `server-setup.sh` (see [Server access](/docs/guides/server-access)), which does both.
   </Accordion>
 
   <Accordion title="<user> cannot write to <dir>">
@@ -277,10 +277,6 @@ A failure at Switch, Restart or Health means the new release was already made cu
 
   <Accordion title="A release shows * after its commit">
     The release was built from a working copy with uncommitted changes to tracked files. Its id contains `-dirty`. Untracked files do not count.
-  </Accordion>
-
-  <Accordion title="Copy in the server setup dialog did nothing">
-    `c` copies through the OSC 52 terminal escape. Terminals that do not support it, or a multiplexer that blocks it, ignore the request. shipdeck prints the setup command when you quit, so you can copy it from there.
   </Accordion>
 </Accordions>
 

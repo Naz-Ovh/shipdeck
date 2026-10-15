@@ -28,7 +28,7 @@ The engine reports everything through one channel: each step's state (pending, r
 
 ## One SSH session per server
 
-shipdeck opens one SSH session per endpoint (host, port, user and key) when it first needs it, and reuses it for everything: the live status on the Deployables screen, the Releases list, every command and the upload of a deploy. A session that closes is opened again on the next use. Two parts of the screen asking for the same server at once share one connection attempt.
+shipdeck opens one SSH session per endpoint (host, port, user and key) when it first needs it (`c` on the Deployables screen, a deploy, the Releases list or a rollback), and reuses it for everything: the live status on the Deployables screen, the Releases list, every command and the upload of a deploy. A session that closes is opened again on the next use. Two parts of the screen asking for the same server at once share one connection attempt.
 
 So you log in once per server per run. A typed password or key passphrase is kept in memory for the run only, never written anywhere. Connecting gives up after 15 seconds, and a keepalive every 15 seconds notices a dead connection. See [SSH and login](/docs/guides/ssh).
 

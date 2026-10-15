@@ -177,18 +177,6 @@ Each file starts with a heading of its folder and file name. The path after `┌
 
 A deploy or rollback that fails inside the screen does not change the exit code: quitting the screen exits with `0` whatever happened. You see the result on the [Operation screen](/docs/reference/screens#operation). The commands report it in the exit code instead.
 
-## Output after you quit
-
-When you open the **Server setup** dialog (`u`) during a run, shipdeck prints the last setup command it showed to stdout after the screen closes, so you can copy it even if your terminal does not support clipboard copy:
-
-```txt
-One-time server setup for My API (prod); run it on the server as root:
-
-curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/server-setup.sh | bash -s -- --user deploy --dir /opt/my-api --service my-api --key 'ssh-ed25519 AAAA… me@laptop'
-```
-
-Without the dialog, nothing is printed on quit. See [Server access](/docs/guides/server-access) for what the command does.
-
 ## Without the UI
 
 Three commands run the same deploy, rollback and release list as the screen, for scripts and CI. They take the deploy root first, then a deployable by its folder name or its `name`. Every `deploy.yaml` under the root is checked first, as for the screen. Progress goes to stderr as plain lines, in colour only when stderr is a terminal and `NO_COLOR` is not set. Nothing waits for an answer.

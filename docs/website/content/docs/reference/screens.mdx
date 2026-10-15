@@ -32,11 +32,13 @@ Toasts:
 | --- | --- |
 | `An operation is already running` | You start a deploy or rollback while one runs. Only one runs at a time. |
 | `Nothing has run yet. Press ⏎ on a deployable to deploy it` | You open Operation before anything has run. |
-| `Refreshing live status` | You press `s`. |
+| `Refreshing live status` | You press `s` with at least one deployable connected. |
+| `Nothing is connected. Press c to connect` | You press `s` with no deployable connected. |
+| `Still connecting` | You press `c` while the deployable is connecting. |
+| `Disconnected from <user>@<host>[:port]` | You press `c` on a connected deployable. |
+| `An operation is using this connection` | You press `c` to disconnect while a deploy or rollback uses that connection. |
 | `That release is already live` | You press `⏎` on the live release. |
 | `shipdeck did not create that folder, so it will not switch to it` | You press `⏎` on a folder marked `not ours`. |
-| `Copied, if your terminal allows it; it is also printed when you quit` | You press `c` in Server setup. |
-| `Could not copy: <err>` | Copying failed. |
 
 ## Global keys
 
@@ -55,7 +57,7 @@ These work on every screen while no dialog is open. While a dialog is open, only
 
 ## Deployables
 
-The start screen. When it opens, shipdeck connects to every deployable in the background to read what is live, so a password or new-server dialog may appear right away.
+The start screen. shipdeck connects to nothing when it opens: every deployable starts as `○ not connected · c connects`. Press `c` to connect the selected one and read what is live; a password or new-server dialog may appear then. Deploying, opening Releases or rolling back also connect on their own when needed.
 
 <Screen title="Deployables">{`
  ◆ shipdeck   root ./scripts/deploy                    login ~/.ssh/config key, else password prompt
@@ -74,9 +76,9 @@ The start screen. When it opens, shipdeck connects to every deployable in the ba
 │    deploy@api  api-beta                ││   service  api-prod   active                           │
 │    ⠋ connecting…                       ││   runs as  deploy                                      │
 │                                        ││   start    /opt/api-prod/current/server -E=.env        │
-│  ⠋ Web (prod)                          ││   live     v0.3.1 (ab12cd3) · active                   │
+│  ○ Web (prod)                          ││   live     v0.3.1 (ab12cd3) · active                   │
 │    deploy@web  web-prod                ││                                                        │
-│    ⠋ connecting…                       ││ PIPELINE ─────────────────────────                     │
+│    not connected · c connects          ││ PIPELINE ─────────────────────────                     │
 │                                        ││   build     local   cargo zigbuild --release -p my-api │
 │                                        ││   pack      binary  target/release/server              │
 │                                        ││             deploy  .env, files/                       │
@@ -87,7 +89,7 @@ The start screen. When it opens, shipdeck connects to every deployable in the ba
 │                                        ││   keeps    5 unpacked + 15 compressed                  │
 │                                        ││   unit     built-in template                           │
 ╰────────────────────────────────────────╯╰────────────────────────────────────────────────────────╯
- ↑↓  select    ⏎  deploy    r  releases    s  refresh    u  server setup    tab  screens    q  quit
+ ↑↓  select    c  disconnect    ⏎  deploy    r  releases    s  refresh    tab  screens    q  quit
 `}</Screen>
 
 The list on the left has four lines per deployable: a status dot and the name, `<user>@<host>[:port]` and the folder name, then the live summary. `▌` marks the selected one.
@@ -102,14 +104,14 @@ The dot:
 | `●` grey | Any other state, such as `inactive`. |
 | `○` | Nothing is deployed yet. |
 | spinner | Connecting. |
-| faint `○` | Not checked yet. |
+| faint `○` | Not connected. |
 
 The live summary is one of:
 
 | Text | Meaning |
 | --- | --- |
-| `not checked yet` | No check has run. |
-| `⠋ connecting…` | The check is running. |
+| `not connected · c connects` | No connection yet, or you disconnected. |
+| `⠋ connecting…` | Connecting and reading the live status. |
 | `✘ <error>` | The first line of the error, for example `✘ connecting to deploy@203.0.113.11 timed out after 15s`. |
 | `not deployed yet: the first deploy creates its folder` | `service.dir` does not exist on the server. |
 | `nothing deployed yet` | The folder exists but has no live release. |
@@ -128,8 +130,10 @@ With no deployables, the screen shows `No deployables yet` and where shipdeck lo
 | `↑` / `k`, `↓` / `j` | Select. The list wraps around. |
 | `⏎` (also `d`) | Deploy: opens the **Deploy** dialog. |
 | `r` | Open Releases for the selected deployable. |
-| `s` | Refresh the live status of every deployable. |
-| `u` | Show the **Server setup** dialog for the selected deployable. |
+| `c` | Connect the selected deployable and read its live status. When it is connected, disconnect it instead. |
+| `s` | Refresh the live status of the deployables that are connected. |
+
+The footer's `c` label reads `connect`, or `disconnect` when the selected deployable is connected. Disconnecting closes the SSH session, and deployables on the same `user@host:port` share it, so they all show `not connected`. `c` will not disconnect while a deploy or rollback uses that connection, and while the deployable is still connecting it only says `Still connecting`.
 
 ## Operation
 
@@ -300,13 +304,13 @@ Opens with `⏎` or `d` on Deployables.
 │    deploy@║                                                                          ║           │
 │    ✘ conne║ to           deploy@api:/opt/api-prod                                    ║           │
 │           ║ service      api-prod                                                    ║           │
-│  ⠋ My API ║ build        cargo zigbuild --release -p my-api                          ║           │
+│  ○ My API ║ build        cargo zigbuild --release -p my-api                          ║           │
 │    deploy@║ live now     unknown until preflight                                     ║           │
-│    ⠋ conne║                                                                          ║           │
+│    not con║                                                                          ║           │
 │           ║ The new release goes live after a restart (about 1–2 s of downtime). If  ║env        │
-│  ⠋ Web (pr║ it fails after the switch, shipdeck asks before putting the previous     ║           │
+│  ○ Web (pr║ it fails after the switch, shipdeck asks before putting the previous     ║           │
 │    deploy@║ release back, and does so on its own after 30 s.                         ║           │
-│    ⠋ conne║                                                                          ║           │
+│    not con║                                                                          ║           │
 │           ║ pipeline.pack.files.include.deploy in scripts/deploy/api-prod: .env (not ║ -p my-api │
 │           ║ found). The deploy will stop at Preflight, before building.              ║           │
 │           ║                                                                          ║           │
@@ -404,13 +408,13 @@ Asks for an SSH password (title `SSH password`) or a key passphrase (title `Key 
 │    deploy@proxy  proxy-prod            ││ ~/.ssh/config                                          │
 │    ✘ connecting to deploy@203.0.113.11 ││   login    key /home/me/.ssh/id_deploy                 │
 │           ╔ SSH password ════════════════════════════════════════════════════════════╗           │
-│  ⠋ My API ║ Password for deploy@203.0.113.10                                         ║           │
+│  ○ My API ║ Password for deploy@203.0.113.10                                         ║           │
 │    deploy@║                                                                          ║           │
-│    ⠋ conne║  ••••••▏                                                                 ║           │
+│    not con║  ••••••▏                                                                 ║           │
 │           ║                                                                          ║env        │
-│  ⠋ Web (pr║ Kept in memory for this run only; never written to disk.                 ║           │
+│  ○ Web (pr║ Kept in memory for this run only; never written to disk.                 ║           │
 │    deploy@║                                                                          ║           │
-│    ⠋ conne║  ⏎  log in     esc  cancel                                               ║           │
+│    not con║  ⏎  log in     esc  cancel                                               ║           │
 │           ╚══════════════════════════════════════════════════════════════════════════╝ -p my-api │
 │                                        ││   pack      binary  target/release/server              │
 │                                        ││             deploy  .env, files/                       │
@@ -455,32 +459,6 @@ For a port other than 22 the host reads `[203.0.113.10]:2222`.
 | `n`, `N`, `Esc`, `Ctrl+C` | Refuse: `the host key of <host> was not trusted`. |
 
 A key that changed never asks. The connection fails with `HOST KEY CHANGED for <host>: it differs from line <n> of ~/.ssh/known_hosts. ...` See [SSH and login](/docs/guides/ssh).
-
-### Server setup
-
-Opens with `u` on Deployables. It shows the one-time command that prepares the server:
-
-```txt
-Run this once on the server as root:
-
-curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/server-setup.sh | bash -s -- --user deploy --dir /opt/my-api --service my-api --key 'ssh-ed25519 AAAA… me@laptop'
-
-It fetches server-setup.sh from shipdeck v0.3.0 on GitHub, creates the user deploy, authorizes its key, creates /opt/my-api owned by deploy, and installs the sudo rule for my-api (checked by visudo first). Running it again changes nothing already in place. Not root? Put sudo before bash.
-
-authorizes   the public half of /home/me/.ssh/id_deploy
-Then press ⏎ on the deployable to deploy as that user.
-```
-
-When there is no key to authorize, an amber note says `No key to authorize: no --key, and ~/.ssh/config has no IdentityFile for <host>. The script tells you to set a password for <user> instead.` See [Server access](/docs/guides/server-access).
-
-| Key | Action |
-| --- | --- |
-| `c` | Copy the command. |
-| `⏎`, `Esc`, `q`, `Ctrl+C` | Close. |
-
-## Clipboard
-
-`c` in Server setup copies with the OSC 52 terminal escape. It works over SSH and in terminals such as Windows Terminal, kitty, WezTerm and iTerm2; terminals without it ignore the request. shipdeck cannot tell whether the copy worked, so the toast says `Copied, if your terminal allows it; it is also printed when you quit`, and the last setup command shown is printed to stdout when you quit (see [Command line](/docs/reference/cli#output-after-you-quit)). There is no other copy action.
 
 ## Keys the README does not list
 
