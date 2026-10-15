@@ -8,8 +8,8 @@ use super::glob::Pattern;
 use super::problem::{Problem, Span};
 use super::yaml::Node;
 use super::{
-    Commands, DeployConfig, Manager, file_name, is_ecosystem_file, is_plain_name, is_program,
-    release_path, split_args,
+    Commands, DeployConfig, Manager, Program, file_name, is_ecosystem_file, is_node, is_plain_name,
+    is_program, release_path, split_args,
 };
 use crate::release::MANIFEST_FILE;
 
@@ -318,6 +318,20 @@ impl Rules<'_> {
                     "keep `pm2.ecosystem` (your file, deploy.yaml settings ignored), or `pm2.options` (shipdeck writes the file)",
                 );
             }
+        }
+        if pm2.ecosystem.is_none()
+            && let Some(start) = &service.start
+            && let Some(words) = split_args(start)
+            && let [program, first, ..] = words.as_slice()
+            && is_node(&Program::Tool(program.clone()))
+            && first.starts_with('-')
+        {
+            self.fail(
+                &["service", "start"],
+                format!("with PM2, node's first argument is the script, not {first:?}"),
+                "a node flag",
+                "move node's flags to `pm2.options.node_args`, such as `node_args: [--enable-source-maps]`",
+            );
         }
         for key in pm2.options.keys() {
             if let Some((_, help)) = PM2_OWN_OPTIONS.iter().find(|(own, _)| own == key) {

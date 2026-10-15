@@ -380,7 +380,7 @@ fn pm2_runs_node_scripts_through_node_and_the_rest_as_they_are() {
     let pack = "    files:\n      include:\n        project: [dist]";
     let node = deployable(
         &dir,
-        "manager: pm2, start: node --enable-source-maps -r dotenv/config dist/main.js --port 3000",
+        "manager: pm2, start: node dist/main.js --port 3000",
         pack,
     );
     assert_eq!(
@@ -389,11 +389,6 @@ fn pm2_runs_node_scripts_through_node_and_the_rest_as_they_are() {
             script: "dist/main.js".into(),
             args: vec!["--port".into(), "3000".into()],
             interpreter: "/usr/bin/node".into(),
-            node_args: vec![
-                "--enable-source-maps".into(),
-                "-r".into(),
-                "dotenv/config".into()
-            ],
         }
     );
     let binary = deployable(
@@ -407,7 +402,6 @@ fn pm2_runs_node_scripts_through_node_and_the_rest_as_they_are() {
             script: "/opt/demo/current/demo".into(),
             args: vec!["-E=.env".into(), "--title".into(), "my api".into()],
             interpreter: "none".into(),
-            node_args: Vec::new(),
         }
     );
     std::fs::remove_dir_all(dir).unwrap();

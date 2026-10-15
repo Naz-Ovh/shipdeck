@@ -5,19 +5,7 @@ use anyhow::Result;
 use serde_json::{Map, Value, json};
 
 use super::unit::program_path;
-use crate::config::{Deployable, split_args};
-
-/// Node flags whose value is the next word, so it is not the script.
-const NODE_FLAGS_WITH_VALUE: [&str; 8] = [
-    "-r",
-    "--require",
-    "--import",
-    "--loader",
-    "--experimental-loader",
-    "-C",
-    "--conditions",
-    "--env-file",
-];
+use crate::config::{Deployable, is_node, split_args};
 
 /// How PM2 starts the program in `service.start`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,46 +14,30 @@ pub struct Launch {
     pub args: Vec<String>,
     /// `none` for a program PM2 runs as it is.
     pub interpreter: String,
-    pub node_args: Vec<String>,
 }
 
-/// `node dist/main.js` runs `dist/main.js` with node as the interpreter, so
-/// PM2's cluster mode works; anything else runs as it is.
+/// `node <script> [args]` runs the script with node as PM2's interpreter,
+/// so cluster mode works; node's own flags go in `pm2.options.node_args`
+/// (the rules see to it). Any other program runs as it is.
 pub fn launch(deployable: &Deployable, start_path: Option<&str>) -> Launch {
     let (program, rest) = deployable.start();
+    let is_node = is_node(&program);
     let path = program_path(deployable, program, start_path);
     // The rules refuse an unclosed quote before this runs.
-    let words = split_args(&rest).unwrap_or_default();
-    let is_node = path == "node" || path.ends_with("/node");
-    if is_node && let Some(at) = script_at(&words) {
+    let mut words = split_args(&rest).unwrap_or_default();
+    if is_node && !words.is_empty() {
+        let script = words.remove(0);
         return Launch {
-            script: words[at].clone(),
-            args: words[at + 1..].to_vec(),
+            script,
+            args: words,
             interpreter: path,
-            node_args: words[..at].to_vec(),
         };
     }
     Launch {
         script: path,
         args: words,
         interpreter: "none".into(),
-        node_args: Vec::new(),
     }
-}
-
-/// The first word of a node command line that is not a flag or a flag's value.
-fn script_at(words: &[String]) -> Option<usize> {
-    let mut skip = false;
-    for (index, word) in words.iter().enumerate() {
-        if skip {
-            skip = false;
-        } else if word.starts_with('-') {
-            skip = NODE_FLAGS_WITH_VALUE.contains(&word.as_str());
-        } else {
-            return Some(index);
-        }
-    }
-    None
 }
 
 /// The app file. The environment is not in it: shipdeck exports
@@ -80,9 +52,6 @@ pub fn render(deployable: &Deployable, start_path: Option<&str>) -> Result<Strin
     app.insert("script".into(), json!(launch.script));
     app.insert("args".into(), json!(launch.args));
     app.insert("interpreter".into(), json!(launch.interpreter));
-    if !launch.node_args.is_empty() {
-        app.insert("node_args".into(), json!(launch.node_args));
-    }
     for (key, value) in &service.pm2.options {
         app.insert(key.clone(), value.clone());
     }

@@ -711,6 +711,15 @@ fn file_name(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
+/// `node`, by name or path: PM2 runs its script with node as the
+/// interpreter.
+pub fn is_node(program: &Program) -> bool {
+    let (Program::Tool(path) | Program::Absolute(path) | Program::InRelease(path)) = program;
+    Path::new(path)
+        .file_name()
+        .is_some_and(|name| name == "node")
+}
+
 /// The endings PM2 reads as an ecosystem file rather than a script.
 pub const ECOSYSTEM_ENDINGS: [&str; 5] = [".config.js", ".config.cjs", ".json", ".yml", ".yaml"];
 

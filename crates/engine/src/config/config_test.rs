@@ -485,6 +485,10 @@ fn pm2_settings_that_cannot_work_are_named() {
         (", pm2: { options: { env: {} } }", "sets the PM2 `env`"),
         (", run_as: www", "runs the app as the SSH user"),
         (
+            ", start: node --enable-source-maps dist/main.js",
+            "node's first argument is the script",
+        ),
+        (
             ", start: node a.js, pm2: { ecosystem: app.config.js }",
             "both say what runs",
         ),
@@ -498,6 +502,11 @@ fn pm2_settings_that_cannot_work_are_named() {
     }
     let yaml = SAMPLE.replace("dir: /opt/demo }", "dir: /opt/demo, pm2: { app: x } }");
     assert!(messages(&yaml)[0].contains("only read with `manager: pm2`"));
+    // node's flags have their own PM2 setting.
+    parse(&pm2(
+        ", start: node dist/main.js, pm2: { options: { node_args: [--enable-source-maps] } }",
+    ))
+    .unwrap();
     let yaml = pm2(", shared: [demo.pm2.json]");
     assert!(messages(&yaml)[0].contains("belongs to shipdeck"));
 }

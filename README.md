@@ -450,7 +450,8 @@ pm2 save
 
 so a rollback reloads the old release's file, and the app comes back after
 a reboot. `node <script>` runs the script with node as PM2's interpreter, so
-cluster mode works; any other program runs as it is. To keep your own file
+cluster mode works; node's own flags go in `pm2.options.node_args`. Any
+other program runs as it is. To keep your own file
 instead, ship it and name it:
 
 ```yaml
