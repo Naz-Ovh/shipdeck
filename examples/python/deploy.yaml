@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.4.0/deploy.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.5.0/deploy.schema.json
 # A Python app: the source ships as it is; the server builds its virtualenv.
 name: Reports (prod)
 project: ../../../reports

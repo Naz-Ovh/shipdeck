@@ -29,7 +29,7 @@ field is under [deploy.yaml](#deployyaml).
 ```sh
 # Linux and macOS: the latest release, or the one -V names
 curl -LsSf https://shipdeck.naz.ovh/install.sh | sh
-curl -LsSf https://shipdeck.naz.ovh/install.sh | sh -s -- -V=v0.4.0
+curl -LsSf https://shipdeck.naz.ovh/install.sh | sh -s -- -V=v0.5.0
 
 # from source
 cargo install --git https://github.com/Naz-Ovh/shipdeck shipdeck
@@ -167,7 +167,7 @@ mistake, it does not start, and prints every problem in every file at once
 ## deploy.yaml
 
 ```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.4.0/deploy.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.5.0/deploy.schema.json
 name: Web (prod)
 project: ../../../web                       # your source; local commands run here
 ssh:
@@ -418,13 +418,13 @@ same descriptions as above, for any editor using the YAML language server
 `deploy.yaml` with:
 
 ```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.4.0/deploy.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.5.0/deploy.schema.json
 ```
 
 or map it once for the whole repository in `.vscode/settings.json`:
 
 ```json
-{ "yaml.schemas": { "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.4.0/deploy.schema.json": "**/deploy.yaml" } }
+{ "yaml.schemas": { "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.5.0/deploy.schema.json": "**/deploy.yaml" } }
 ```
 
 ### From 0.2
@@ -556,7 +556,7 @@ the first row applies.
 root, with your values:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.4.0/server-setup.sh \
+curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.5.0/server-setup.sh \
   | bash -s -- --user deploy --dir /opt/my-api --service my-api \
       --key "$(cat ~/.ssh/id_ed25519.pub)"     # --manager pm2 for a PM2 app
 ```
@@ -651,7 +651,7 @@ line in `examples/` and this README, regenerate `deploy.schema.json`, commit,
 and push the tag:
 
 ```sh
-git tag v0.4.0 && git push origin main v0.4.0
+git tag v0.5.0 && git push origin main v0.5.0
 ```
 
 `setup_test.rs` fails if `server-setup.sh` and `remote::sudo_commands` ever
