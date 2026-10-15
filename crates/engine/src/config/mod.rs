@@ -581,6 +581,12 @@ impl Deployable {
                 Problem::new(format!("cannot read it: {err}")),
             )
         })?;
+        Self::from_text(folder, path, text)
+    }
+
+    /// Reads a config's text as if it were `path` in `folder`, or every
+    /// problem with it.
+    pub fn from_text(folder: &Path, path: PathBuf, text: String) -> Result<Self, FileProblems> {
         let failed = |problems| FileProblems {
             path: path.clone(),
             source: Some(text.clone()),
@@ -770,6 +776,14 @@ fn is_program(text: &str) -> bool {
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "._+-/".contains(c))
         && !text.split('/').any(|part| part == "..")
+}
+
+/// A systemd unit name without `.service`: `my-api`, `worker@1`.
+pub fn is_unit_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._@-".contains(c))
 }
 
 fn is_plain_name(name: &str) -> bool {

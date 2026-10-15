@@ -9,7 +9,7 @@ use super::problem::{Problem, Span};
 use super::yaml::Node;
 use super::{
     Commands, DeployConfig, Manager, Program, file_name, is_ecosystem_file, is_node, is_plain_name,
-    is_program, release_path, split_args,
+    is_program, is_unit_name, release_path, split_args,
 };
 use crate::release::MANIFEST_FILE;
 
@@ -91,11 +91,7 @@ impl Rules<'_> {
                 "drop .service",
                 "",
             );
-        } else if name.is_empty()
-            || !name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || "._@-".contains(c))
-        {
+        } else if !is_unit_name(name) {
             self.fail(
                 &["service", "name"],
                 "`service.name` is not a unit name",
