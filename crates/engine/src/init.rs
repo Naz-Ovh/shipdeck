@@ -387,10 +387,9 @@ fn quote(text: &str) -> String {
 
 /// Why `name` cannot be a new deployable's folder, if it cannot.
 pub fn name_problem(root: &Path, name: &str) -> Option<String> {
-    if !crate::config::is_unit_name(name) || name.starts_with('.') {
-        return Some(
-            "use letters, digits, `.`, `_`, `@` and `-`, not starting with `.`".to_string(),
-        );
+    // It names the unit and `/opt/<name>`, so it must suit both.
+    if !crate::config::is_plain_name(name) || name.starts_with('.') {
+        return Some("use letters, digits, `.`, `_` and `-`, not starting with `.`".to_string());
     }
     let folder = root.join(name);
     config_file(&folder).map(|file| format!("{} already exists", file.display()))

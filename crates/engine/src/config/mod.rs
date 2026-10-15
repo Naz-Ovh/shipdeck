@@ -786,7 +786,8 @@ pub fn is_unit_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "._@-".contains(c))
 }
 
-fn is_plain_name(name: &str) -> bool {
+/// A user or app name: letters, digits, `.`, `_` and `-`.
+pub fn is_plain_name(name: &str) -> bool {
     !name.is_empty()
         && name
             .chars()

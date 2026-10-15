@@ -94,10 +94,13 @@ fn a_bad_value_is_a_config_problem() {
 }
 
 #[test]
-fn names_must_be_unit_names_and_new() {
+fn names_must_fit_the_unit_and_the_folder_and_be_new() {
     let root = temp_root("names");
     assert!(name_problem(&root, "my-api").is_none());
-    for bad in ["", "my api", "../x", ".hidden", "a/b"] {
+    // Regression: ISSUE-001 — worker@1 passed the name check, then /opt/worker@1 failed service.dir
+    // Found by /qa on 2026-10-15
+    // Report: .gstack/qa-reports/run-20261015T030609Z/qa-report-shipdeck-init-2026-10-15.md
+    for bad in ["", "my api", "../x", ".hidden", "a/b", "worker@1"] {
         assert!(name_problem(&root, bad).is_some(), "{bad:?}");
     }
     std::fs::create_dir_all(root.join("my-api")).unwrap();
