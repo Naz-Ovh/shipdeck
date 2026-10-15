@@ -19,10 +19,13 @@ rolls back any release. Design and decisions: `docs/plan.md`. Usage: `README.md`
   login, host keys, `~/.ssh/config` aliases), `remote` (server scripts),
   `release` (ids, release.json), `setup` (the server setup command),
   `deploy` (the deploy and rollback flows, `report` for progress).
-- `crates/tui/` (`shipdeck-tui`): the screens, dialogs and key handling. It
-  only shows what the engine reports.
+- `crates/tui/` (`shipdeck-tui`): the screens, dialogs and key handling.
+- `crates/headless/` (`shipdeck-headless`): the `deploy`, `rollback` and
+  `releases` commands for scripts and CI: plain lines, no questions, exit
+  codes.
 - `bin/shipdeck/`: the flags (clap lives only here), the login, the config
-  check, then hands over to the TUI.
+  check, then hands over to the TUI or headless. The TUI and headless only
+  show what the engine reports; neither depends on the other.
 
 ## Code
 
@@ -53,6 +56,8 @@ rolls back any release. Design and decisions: `docs/plan.md`. Usage: `README.md`
   README table and an example.
 - Release ids and the `current`/`releases`/`backups`/`shared` layout are a
   contract with servers already deployed to. Change them only on purpose.
+- The exit codes in `shipdeck_headless::exit_code` are a contract with the scripts
+  that call shipdeck. Add new ones; never renumber.
 - Tests live next to the code in `<module>_test.rs`:
   `#[cfg(test)] #[path = "<module>_test.rs"] mod tests;`.
 - Done means `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`
@@ -60,3 +65,4 @@ rolls back any release. Design and decisions: `docs/plan.md`. Usage: `README.md`
   lefthook's pre-push hook (`lefthook.yml`) runs them, with `cargo check`, on
   every push. There is no CI workflow on purpose: GitHub Actions only publish
   releases. Do not add one.
+

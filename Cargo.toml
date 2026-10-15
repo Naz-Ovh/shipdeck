@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["bin/shipdeck", "crates/engine", "crates/tui"]
+members = ["bin/shipdeck", "crates/engine", "crates/headless", "crates/tui"]
 
 [workspace.package]
 version = "0.4.0"
@@ -11,6 +11,7 @@ repository = "https://github.com/Naz-Ovh/shipdeck"
 
 [workspace.dependencies]
 shipdeck-engine = { path = "crates/engine" }
+shipdeck-headless = { path = "crates/headless" }
 shipdeck-tui = { path = "crates/tui" }
 anyhow = "1.0.104"
 chrono = "0.4.45"

@@ -3,12 +3,15 @@ title: Command line
 description: Every argument and flag of the shipdeck command, its errors, exit codes and what it prints.
 ---
 
-shipdeck has one command and no subcommands. You point it at a deploy root, it checks every `deploy.yaml` under it, and then opens the terminal UI. All deploys and rollbacks happen inside that UI.
+You point shipdeck at a deploy root, it checks every `deploy.yaml` under it, and then opens the terminal UI. For scripts and CI, the `deploy`, `rollback` and `releases` commands do the same work [without the UI](#without-the-ui).
 
 ## Synopsis
 
 ```txt
 shipdeck [OPTIONS] <DEPLOY_ROOT>
+shipdeck deploy   <DEPLOY_ROOT> <NAME>... [--on-failure rollback|keep] [--trust-new-host]
+shipdeck rollback <DEPLOY_ROOT> <NAME> --to <RELEASE> [--trust-new-host]
+shipdeck releases <DEPLOY_ROOT> <NAME> [--trust-new-host]
 shipdeck --schema
 ```
 
@@ -58,10 +61,10 @@ Log in with this password.
 | | |
 | --- | --- |
 | Value | the password, as text |
-| Default | none |
+| Default | `SHIPDECK_PASSWORD`, if it is set and not empty |
 | Conflicts with | `--key` |
 
-The password lands in your shell history. In zsh with `HIST_IGNORE_SPACE` set, start the command with a space to keep it out:
+The password lands in your shell history; `SHIPDECK_PASSWORD` does not. In zsh with `HIST_IGNORE_SPACE` set, start the command with a space to keep it out:
 
 ```sh
  shipdeck ./scripts/deploy --password 's3cret'
@@ -74,8 +77,8 @@ With neither `--key` nor `--password`, shipdeck logs in the way `ssh` does: the 
 | Flags | Header shows |
 | --- | --- |
 | `--key P` | `login key P` |
-| `--password X` | `login password from --password` |
-| neither | `login ~/.ssh/config key, else password prompt` |
+| `--password X` or `SHIPDECK_PASSWORD` | `login password` |
+| neither | `login ~/.ssh/config key, else a password` |
 
 ### `--schema`
 
@@ -89,27 +92,37 @@ The output starts with `"$id": "https://raw.githubusercontent.com/Naz-Ovh/shipde
 
 ### `-h`, `--help`
 
-Print the help and exit. This is the real output of 0.3.0:
+Print the help and exit:
 
 ```txt
 Build locally, deploy over SSH as a systemd service, roll back any release.
 
 Usage: shipdeck [OPTIONS] [DEPLOY_ROOT]
+       shipdeck <COMMAND>
+
+Commands:
+  deploy    Build and deploy one or more deployables, one after another, without the TUI
+  rollback  Switch a deployable to a release already on the server, without the TUI
+  releases  List the releases on the server, newest first
+  help      Print this message or the help of the given subcommand(s)
 
 Arguments:
   [DEPLOY_ROOT]  Folder whose subfolders each hold a deploy.yaml
 
 Options:
       --key <PATH>           Log in with this private key file
-      --password <PASSWORD>  Log in with this password (it lands in your shell history)
+      --password <PASSWORD>  Log in with this password (it lands in your shell history; SHIPDECK_PASSWORD does not)
       --schema               Print the JSON Schema of deploy.yaml, for editor completion
   -h, --help                 Print help
   -V, --version              Print version
 
 Each folder under DEPLOY_ROOT with a deploy.yaml is one deployable.
-With neither --key nor --password, the host's ~/.ssh/config key is tried,
-then the TUI asks for the password.
+With neither --key nor --password (nor SHIPDECK_PASSWORD), the host's
+~/.ssh/config key is tried, then the TUI asks for the password.
+deploy, rollback and releases run without the TUI and ask nothing.
 ```
+
+`shipdeck help deploy` (or `shipdeck deploy --help`) shows each command's own flags.
 
 The help shows `[DEPLOY_ROOT]` in brackets because it is optional when `--schema` is given.
 
@@ -154,11 +167,15 @@ Each file starts with a heading of its folder and file name. The path after `┌
 
 | Code | Meaning |
 | --- | --- |
-| `0` | Normal quit, or `--schema`, `--help`, `--version` |
-| `1` | Bad deploy root, missing key file, problems in a `deploy.yaml`, or a terminal error |
+| `0` | Normal quit, or `--schema`, `--help`, `--version`; for a command, the release is live |
+| `1` | Bad deploy root, missing key file, problems in a `deploy.yaml`, or a terminal error; for a command, also an unknown name or a failure before the live release changed |
 | `2` | Wrong usage: a missing argument or conflicting flags |
+| `3` | A command only: the new release failed and the previous one is live again |
+| `4` | A command only: the new release failed and stays live (`--on-failure keep`) |
+| `5` | A command only: the new release failed and putting the old one back failed too |
+| `130` | A command only: stopped with Ctrl-C twice |
 
-A deploy or rollback that fails inside the screen does not change the exit code: quitting the screen exits with `0` whatever happened. You see the result on the [Operation screen](/docs/reference/screens#operation).
+A deploy or rollback that fails inside the screen does not change the exit code: quitting the screen exits with `0` whatever happened. You see the result on the [Operation screen](/docs/reference/screens#operation). The commands report it in the exit code instead.
 
 ## Output after you quit
 
@@ -172,6 +189,62 @@ curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/server-setu
 
 Without the dialog, nothing is printed on quit. See [Server access](/docs/guides/server-access) for what the command does.
 
-## No headless mode
+## Without the UI
 
-0.3.0 has no non-interactive mode: no `--yes`, no `deploy <name>` subcommand, no CI mode. Every deploy and rollback starts from a key press in the screen.
+Three commands run the same deploy, rollback and release list as the screen, for scripts and CI. They take the deploy root first, then a deployable by its folder name or its `name`. Every `deploy.yaml` under the root is checked first, as for the screen. Progress goes to stderr as plain lines, in colour only when stderr is a terminal and `NO_COLOR` is not set. Nothing waits for an answer.
+
+### `deploy <DEPLOY_ROOT> <NAME>...`
+
+Builds and deploys each deployable in turn. The first that does not succeed stops the rest, and the ones left are listed as `▲ not deployed: ...`.
+
+```sh
+shipdeck deploy ./scripts/deploy my-api --key ~/.ssh/id_deploy
+```
+
+```txt
+━━ My API (prod) · deploy → deploy@203.0.113.10:/opt/my-api
+━━ Preflight: checking your PC and the server
+› connect deploy@203.0.113.10 (key /home/me/.ssh/id_deploy)
+⋮
+✔ My API (prod): v0.3.1-ab12cd3-20261014.153012 is live (1m12s)
+```
+
+Each step prints once, when it ends; a long step also prints its progress every 5 seconds. The last line says what is live now.
+
+#### `--on-failure <rollback|keep>`
+
+What to do when the new release fails after the switch: at the switch, the restart or the health check. It overrides [`pipeline.health.rollback`](/docs/guides/health-and-rollback) for this run.
+
+| Value | Effect |
+| --- | --- |
+| `rollback` (default) | Put the release that was live back at once. Exit code `3`. |
+| `keep` | Keep the failed release live, to look at it. Exit code `4`. Roll back later with `shipdeck rollback`. |
+
+### `rollback <DEPLOY_ROOT> <NAME> --to <RELEASE>`
+
+Makes a release already on the server live again, unpacking it first if it is compressed. `RELEASE` is an id as `shipdeck releases` lists it. A rollback whose health check fails puts back what was live.
+
+```sh
+shipdeck rollback ./scripts/deploy my-api --to v0.3.0-9f8e7d6-20261012.091000
+```
+
+### `releases <DEPLOY_ROOT> <NAME>`
+
+Prints the releases on the server to stdout, newest first, as aligned columns. `STATE` is `live`, `unpacked`, `compressed` or `not-ours` (a folder shipdeck did not create, which it never switches to).
+
+```txt
+RELEASE                         VERSION  COMMIT   BUILT (UTC)       SIZE      STATE       DEPLOYED BY
+v0.3.1-ab12cd3-20261014.153012  0.3.1    ab12cd3  2026-10-14 15:30  31.0 MiB  live        me@laptop
+v0.3.0-9f8e7d6-20261012.091000  0.3.0    9f8e7d6  2026-10-12 09:10  31.0 MiB  unpacked    me@laptop
+```
+
+### What the screen would ask
+
+| The screen asks | The commands |
+| --- | --- |
+| Deploy this? | Running the command is the yes. |
+| Roll back? | `--on-failure`. |
+| Trust a server seen for the first time? | No, and the command stops with the key's fingerprint. `--trust-new-host` trusts it and saves it to `~/.ssh/known_hosts`. A changed key is always refused. |
+| A password or a key passphrase? | Never asked; the login fails with a hint. Use `--key` with a key without a passphrase, `--password` or `SHIPDECK_PASSWORD`. |
+
+The first Ctrl-C only warns, since stopping can leave the server between two releases; a second one stops at once with exit code `130`.

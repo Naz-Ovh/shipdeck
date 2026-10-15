@@ -1,5 +1,5 @@
-//! Logging in with a key file, a password from the command line, or a
-//! password asked for in the TUI.
+//! Logging in with a key file, a password from the command line or
+//! SHIPDECK_PASSWORD, or a password asked for in the TUI.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -30,8 +30,8 @@ impl Login {
     pub fn describe(&self) -> String {
         match self {
             Login::Key(path) => format!("key {}", path.display()),
-            Login::Password(_) => "password from --password".into(),
-            Login::Auto => "~/.ssh/config key, else password prompt".into(),
+            Login::Password(_) => "password".into(),
+            Login::Auto => "~/.ssh/config key, else a password".into(),
         }
     }
 }

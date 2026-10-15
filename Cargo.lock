@@ -2756,6 +2756,7 @@ dependencies = [
  "clap",
  "mimalloc",
  "shipdeck-engine",
+ "shipdeck-headless",
  "shipdeck-tui",
  "tokio",
 ]
@@ -2778,6 +2779,14 @@ dependencies = [
  "tokio",
  "toml",
  "zstd",
+]
+
+[[package]]
+name = "shipdeck-headless"
+version = "0.4.0"
+dependencies = [
+ "shipdeck-engine",
+ "tokio",
 ]
 
 [[package]]

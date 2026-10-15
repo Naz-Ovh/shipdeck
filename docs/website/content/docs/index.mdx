@@ -39,12 +39,13 @@ If switch, restart or health fails, shipdeck shows the last journal lines and, w
 
 [The pipeline](/docs/guides/pipeline) covers each step in detail, and [How it works](/docs/concepts/how-it-works) shows what happens on the server.
 
+For scripts and CI, `shipdeck deploy`, `shipdeck rollback` and `shipdeck releases` do the same without the terminal UI, ask nothing, and report how it ended in the exit code. See [Command line](/docs/reference/cli#without-the-ui).
+
 ## What it does not do
 
 shipdeck 0.3.0 keeps a narrow scope:
 
 - **No building on the server.** Builds run on your PC. Server commands are for setup work such as `npm ci --omit=dev`, not for compiling.
-- **No CI or headless mode.** Deploys and rollbacks run only in the terminal UI. Outside it, shipdeck only prints the config problem report, `--schema`, `--help` and `--version`.
 - **No containers and no agent.** shipdeck talks to the server over plain SSH. Nothing of its own stays running there.
 - **Linux with systemd only.** The service is a systemd unit, managed with `systemctl` and read with `journalctl`.
 - **One host per deployable.** To deploy the same app to two servers, use two deployable folders.

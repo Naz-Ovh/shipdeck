@@ -51,8 +51,44 @@ shipdeck --schema > deploy.schema.json    # the JSON Schema, for offline editors
 | Flag | Login |
 | --- | --- |
 | `--key <path>` | Private key file. An encrypted key asks for its passphrase in the TUI. |
-| `--password <value>` | Password. It lands in your shell history; in zsh with `HIST_IGNORE_SPACE`, start the command with a space. |
+| `--password <value>` | Password. It lands in your shell history; in zsh with `HIST_IGNORE_SPACE`, start the command with a space. `SHIPDECK_PASSWORD` does the same without the history. |
 | neither | The host's `IdentityFile` from `~/.ssh/config` if it has one; if there is none or the server refuses it, the TUI asks for the password once per `user@host` and keeps it in memory for the run. |
+
+### Without the TUI
+
+For scripts and CI, three commands do the same work with no screen. They
+print progress to stderr as plain lines and never wait for an answer.
+
+```sh
+shipdeck deploy   ./scripts/deploy my-api [my-web ...] [--on-failure rollback|keep]
+shipdeck rollback ./scripts/deploy my-api --to v0.3.0-9f8e7d6-20261012.091000
+shipdeck releases ./scripts/deploy my-api     # the table on stdout, newest first
+```
+
+A deployable is named by its folder or its `name`. `deploy` takes several and
+runs them one after another; the first that does not succeed stops the rest.
+Every `deploy.yaml` under the root is still checked first.
+
+What the TUI would ask comes from flags instead:
+
+| The TUI asks | Without the TUI |
+| --- | --- |
+| Deploy this? | Running the command is the yes. |
+| Roll back after a failed switch, restart or health check? | `--on-failure rollback` (the default) rolls back at once; `--on-failure keep` keeps the failed release live. Either overrides `pipeline.health.rollback`. |
+| Trust a server seen for the first time? | No, unless `--trust-new-host`. A changed host key is always refused. |
+| A password or key passphrase? | Never asked: use `--key` with a key without a passphrase, `--password` or `SHIPDECK_PASSWORD`. |
+
+The exit code says how it ended:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | The release is live. |
+| `1` | It failed before the live release changed, or shipdeck could not start (a config problem, an unknown name). |
+| `2` | Wrong usage (from the flag parser). |
+| `3` | The new release failed and the previous one is live again. |
+| `4` | The new release failed and stays live (`--on-failure keep`). |
+| `5` | The new release failed and putting the old one back failed too: look at the server now. |
+| `130` | Ctrl-C twice. The first one only warns, since stopping can leave the server between two releases. |
 
 `ssh.host` may be an alias from `~/.ssh/config`, so `host: prod` works like
 `ssh prod`: `HostName`, `Port`, `User` and `IdentityFile` come from the
@@ -440,15 +476,17 @@ back now) or `n` (keep it live).
 ## Development
 
 ```
-bin/shipdeck/      the flags; starts the TUI
+bin/shipdeck/      the flags; starts the TUI or a headless command
 crates/tui/        the TUI: screens, dialogs, key handling
+crates/headless/   deploy, rollback and releases without the TUI
 crates/engine/     everything else: config, build, bundle, ssh, remote, deploy flows
 docs/plan.md       the design and the decisions behind it
 ```
 
 The engine knows nothing about the screen; it reports through
-`deploy::report::Reporter`. Changes to the TUI recompile only `crates/tui` and
-the small bin.
+`deploy::report::Reporter`, and the TUI and headless crates each show those
+reports their own way. Changes to the TUI recompile only `crates/tui` and the
+small bin.
 
 ```sh
 cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings

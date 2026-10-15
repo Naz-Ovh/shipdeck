@@ -1,0 +1,12 @@
+[package]
+name = "shipdeck-headless"
+description = "shipdeck without the terminal UI: deploy, rollback and the release list for scripts and CI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[dependencies]
+shipdeck-engine.workspace = true
+tokio.workspace = true
