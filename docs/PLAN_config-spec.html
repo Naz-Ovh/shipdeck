@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shipdeck 0.3: the deploy.yaml spec</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/forgedoc@2.1.0/dist/themes/default.css" data-forgedoc="css" data-forgedoc-theme="default">
+</head>
+<body>
+<doc-page doc-id="shipdeck-config-spec" accent="teal" density="compact">
+
+<doc-header kicker="Plan · shipdeck 0.3">
+  deploy.yaml, step by step
+  <p slot="lede">Every step, in order. <code>run</code> commands start after shipdeck finishes the step; <code>check</code> commands must pass.</p>
+</doc-header>
+
+<doc-section title="Decided">
+  <doc-list marker="check" kind="positive">
+    <li>Steps live under <code>pipeline:</code>.</li>
+    <li><code>pack.files</code> has <code>include</code> and <code>exclude</code>, each split into <code>project</code> and <code>deploy</code>.</li>
+    <li>When a release fails after the restart, shipdeck asks before rolling back and rolls back by itself after 30 s. <code>rollback: ask</code> is the default.</li>
+    <li>A manual rollback runs <code>done</code> too, with <code>SHIPDECK_ACTION=rollback</code>.</li>
+    <li>Errors are printed in colour, and <code>deploy.schema.json</code> gives editors completion.</li>
+  </doc-list>
+</doc-section>
+
+<doc-section title="The steps">
+<doc-code lang="text" title="what happens, in order">
+#   step       shipdeck does                        your commands
+──  ─────────  ──────────────────────────────────── ─────────────────────────
+1   preflight  checks your PC and the server        run.server → run.local
+2   build      —                                    run.local
+3   pack       packs binary + files                 —
+4   upload     sends the archive to the server      —
+5   unpack     unpacks it into releases/&lt;id&gt;        —
+6   setup      (old release still live)             run.server → check.server
+7   switch     points current at releases/&lt;id&gt;      —
+8   restart    restarts the service                 —
+9   health     waits until healthy, else asks       check.server, check.local
+10  done       (new release is live)                run.server → run.local
+✱   failed     (any step failed)                    run.local
+</doc-code>
+</doc-section>
+
+<doc-section title="The format">
+<doc-code lang="yaml" title="scripts/deploy/web-prod/deploy.yaml">
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
+name: Web (prod)
+project: ../../../web                       # your source; local commands run here
+
+ssh:
+  host: prod                                # address or ~/.ssh/config alias
+  user: deploy
+
+service:
+  name: web                                 # web.service
+  dir: /opt/web                             # current/ releases/ backups/ shared/
+  start: node dist/main.js                  # default: ./&lt;binary&gt;
+  env_file: .env                            # also loaded for server commands
+  env: { NODE_ENV: production }
+  shared: [uploads]                         # kept across releases
+  keep: { open: 5, compressed: 15 }
+
+pipeline:
+  preflight:
+    requires: [node, npm]
+    run:
+      server: pg_isready -q
+      local: npm test
+
+  build:
+    version_from: package.json
+    run:
+      local: [npm ci, npm run build]
+
+  pack:
+    files:
+      include:
+        project: [dist, package.json, package-lock.json]
+        deploy: [.env]                      # next to this deploy.yaml
+      exclude:
+        project: [&quot;**/*.map&quot;]
+
+  # upload, unpack                          shipdeck
+
+  setup:                                    # in releases/&lt;id&gt;, old release still live
+    run:
+      server:
+        - npm ci --omit=dev
+        - npm run migrate
+    check:
+      server: node --check dist/main.js     # fails → release removed
+
+  # switch, restart                         shipdeck
+
+  health:
+    url: http://127.0.0.1:3000/health       # fetched on the server
+    check:
+      server: ./bin/smoke-test
+      local: curl -fsS https://web.example.com/health
+    timeout_secs: 20
+    rollback: ask                           # default; or auto
+
+  done:                                     # new release is live
+    run:
+      server: ./bin/warm-cache
+      local: ./notify.sh &quot;web $SHIPDECK_VERSION is live&quot;
+
+  failed:
+    run:
+      local: ./notify.sh &quot;failed at $SHIPDECK_STEP&quot;
+</doc-code>
+</doc-section>
+
+<doc-section title="Files">
+<doc-code lang="yaml" title="pipeline.pack">
+pack:
+  binary: target/release/my-api       # optional: a compiled program → release root
+  files:
+    include:
+      project: [dist, package.json]   # paths or globs, from project:
+      deploy: [.env, config.yaml]     # paths or globs, next to deploy.yaml
+    exclude:
+      project: [&quot;**/*.map&quot;, &quot;dist/**/*.test.js&quot;]
+      deploy: []
+# include.project: [.] ships the whole project; .git is always left out
+</doc-code>
+</doc-section>
+
+<doc-section title="When health fails">
+<doc-code lang="text" title="rollback: ask">
+╭ web · health failed ────────────────────────────────────╮
+│                                                         │
+│  v1.4.0 is not healthy: http 502 for 20s                │
+│  v1.3.9 was live before it.                             │
+│                                                         │
+│  Roll back to v1.3.9?           rolling back in 27s     │
+│                                                         │
+│   y  roll back now        n  keep v1.4.0 live           │
+╰─────────────────────────────────────────────────────────╯
+</doc-code>
+</doc-section>
+
+<doc-section title="What each step accepts">
+  <doc-table size="sm" stack="never">
+    <table>
+      <thead><tr><th>Step</th><th>local</th><th>server</th><th>server runs in</th><th>settings</th><th>fails →</th></tr></thead>
+      <tbody>
+        <tr><td><code>preflight</code></td><td>run</td><td>run</td><td><code>service.dir</code></td><td><code>requires</code></td><td>stop</td></tr>
+        <tr><td><code>build</code></td><td>run</td><td>✘</td><td></td><td><code>version_from</code></td><td>stop</td></tr>
+        <tr><td><code>pack</code></td><td>✘</td><td>✘</td><td></td><td><code>binary</code> <code>files</code></td><td>stop</td></tr>
+        <tr><td><code>upload</code> <code>unpack</code></td><td>✘</td><td>✘</td><td></td><td></td><td>release removed</td></tr>
+        <tr><td><code>setup</code></td><td>✘</td><td>run, check</td><td><code>releases/&lt;id&gt;</code></td><td></td><td>release removed</td></tr>
+        <tr><td><code>switch</code> <code>restart</code></td><td>✘</td><td>✘</td><td></td><td></td><td>asks, then rollback</td></tr>
+        <tr><td><code>health</code></td><td>check</td><td>check</td><td><code>current</code></td><td><code>url</code> <code>timeout_secs</code> <code>rollback</code></td><td>asks, then rollback</td></tr>
+        <tr><td><code>done</code></td><td>run</td><td>run</td><td><code>current</code></td><td></td><td>warning</td></tr>
+        <tr><td><code>failed</code></td><td>run</td><td>✘</td><td></td><td></td><td>logged</td></tr>
+      </tbody>
+    </table>
+  </doc-table>
+
+<doc-code lang="yaml" title="one command or a list">
+run:
+  local: npm test                           # one command
+  server:                                   # in order, stops at the first failure
+    - npm ci --omit=dev
+    - npm run migrate
+</doc-code>
+</doc-section>
+
+<doc-section title="When the file is wrong">
+<doc-figure type="html" caption="shipdeck ./scripts/deploy">
+<style>
+html,body{overflow:hidden}body{margin:0;background:transparent}
+pre{margin:0;padding:16px 18px;border-radius:12px;background:#0d1117;color:#c9d1d9;font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-x:auto}
+.r{color:#ff7b72;font-weight:700} .w{color:#f0f6fc;font-weight:700} .b{color:#58a6ff}
+.y{color:#e3b341;font-weight:700} .g{color:#3fb950;font-weight:700} .c{color:#d2a8ff}
+.u{color:#f0f6fc;font-weight:700;text-decoration:underline}
+</style>
+<pre><span class="r">✘ shipdeck did not start: </span><span class="w">2 deploy.yaml files have 3 problems</span>
+
+<span class="u">web-prod/deploy.yaml</span>
+
+  <span class="r">error</span><span class="w">: unpack does not take commands</span>
+<span class="b">    ┌─ </span>scripts/deploy/web-prod/deploy.yaml:36:3
+<span class="b">    │</span>
+<span class="b"> 36 │ </span>  unpack:
+<span class="b">    │ </span><span class="y">  ^^^^^^ </span><span class="y">unpack is done by shipdeck</span>
+<span class="b">    │</span>
+<span class="b">    = </span><span class="g">help</span>: commands for the unpacked release go in <span class="c">pipeline.setup.run.server</span>
+
+  <span class="r">error</span><span class="w">: build cannot run commands on the server</span>
+<span class="b">    ┌─ </span>scripts/deploy/web-prod/deploy.yaml:26:7
+<span class="b">    │</span>
+<span class="b"> 25 │ </span>    run:
+<span class="b"> 26 │ </span>      server: npm run build
+<span class="b">    │ </span><span class="y">      ^^^^^^ </span><span class="y">build runs on your PC only</span>
+<span class="b">    │</span>
+<span class="b">    = </span><span class="g">help</span>: the server sets up the release in <span class="c">pipeline.setup.run.server</span>
+
+<span class="u">api-prod/deploy.yaml</span>
+
+  <span class="r">error</span><span class="w">: unknown key </span><span class="c">pipeline.pack.files.include.src</span>
+<span class="b">    ┌─ </span>scripts/deploy/api-prod/deploy.yaml:21:9
+<span class="b">    │</span>
+<span class="b"> 21 │ </span>        src: [dist]
+<span class="b">    │ </span><span class="y">        ^^^ </span><span class="y">not a source</span>
+<span class="b">    │</span>
+<span class="b">    = </span><span class="g">help</span>: sources are <span class="c">project</span> and <span class="c">deploy</span></pre>
+</doc-figure>
+</doc-section>
+
+<doc-section title="Editor completion">
+<doc-figure type="html" caption="Completion and hover come from deploy.schema.json">
+<style>
+html,body{overflow:hidden}body{margin:0;background:transparent;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.ed{background:#1e1e1e;color:#d4d4d4;border-radius:12px;padding:14px 0 18px;position:relative;overflow:hidden}
+.ln{display:flex}.ln>span{white-space:pre}.ln i{width:44px;text-align:right;padding-right:14px;color:#6e7681;font-style:normal}
+.k{color:#9cdcfe}.cur{display:inline-block;width:2px;height:15px;background:#aeafad;vertical-align:-2px}
+.pop{margin:4px 0 0 128px;width:430px;background:#252526;border:1px solid #454545;border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,.45);overflow:hidden}
+.it{display:flex;gap:10px;padding:4px 10px;color:#d4d4d4}.it.on{background:#04395e}
+.it b{color:#c586c0;font-weight:400;width:16px}.it .h{margin-left:auto;color:#8b949e;font-family:ui-sans-serif,system-ui;font-size:12px}
+.doc{margin:0 0 0 128px;width:430px;background:#252526;border:1px solid #454545;border-top:0;border-radius:0 0 6px 6px;padding:8px 10px;color:#c9d1d9;font-family:ui-sans-serif,system-ui;font-size:12px}
+</style>
+<div class="ed">
+<div class="ln"><i>28</i><span>  <span class="k">pack</span>:</span></div>
+<div class="ln"><i>29</i><span>    <span class="k">files</span>:</span></div>
+<div class="ln"><i>30</i><span>      <span class="k">include</span>:</span></div>
+<div class="ln"><i>31</i><span>        <span class="cur"></span></span></div>
+<div class="pop">
+  <div class="it on"><b>⬚</b>project<span class="h">paths from project:</span></div>
+  <div class="it"><b>⬚</b>deploy<span class="h">paths next to deploy.yaml</span></div>
+</div>
+<div class="doc">Files and folders from the project to put in the release. Globs allowed. Each keeps its path.</div>
+</div>
+</doc-figure>
+<doc-code lang="text" title="how an editor finds the schema">
+# 1. first line of every deploy.yaml (what shipdeck writes in examples)
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
+
+# 2. or once for the whole repo: .vscode/settings.json
+{ &quot;yaml.schemas&quot;: { &quot;https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json&quot;: &quot;**/deploy.yaml&quot; } }
+</doc-code>
+</doc-section>
+
+<doc-section title="Examples">
+  <doc-tabs>
+    <doc-tab label="Rust" active>
+<doc-code lang="yaml">
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
+name: My API (prod)
+project: ../../../my-api
+ssh: { host: prod, user: deploy }
+service:
+  name: my-api
+  dir: /opt/my-api
+  start: ./my-api -E=.env
+
+pipeline:
+  build:
+    run:
+      local: cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31
+  pack:
+    binary: target/x86_64-unknown-linux-gnu/release/my-api
+    files:
+      include:
+        deploy: [.env]
+  health:
+    url: http://127.0.0.1:8080/health
+</doc-code>
+    </doc-tab>
+    <doc-tab label="Go">
+<doc-code lang="yaml">
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
+name: Worker (prod)
+project: ../../../worker
+ssh: { host: prod }
+service:
+  name: worker
+  dir: /opt/worker
+  start: ./worker --config config.yaml
+  env_file: .env
+
+pipeline:
+  preflight:
+    run:
+      local: go vet ./...
+  build:
+    run:
+      local: CGO_ENABLED=0 go build -ldflags &quot;-X main.version=$SHIPDECK_VERSION&quot; -o dist/worker ./cmd/worker
+  pack:
+    binary: dist/worker
+    files:
+      include:
+        project: [templates]
+        deploy: [.env, config.yaml]
+  health:
+    check:
+      server: ./worker healthcheck
+    rollback: auto
+</doc-code>
+    </doc-tab>
+    <doc-tab label="Node.js">
+<doc-code lang="yaml">
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
+name: Web (prod)
+project: ../../../web
+ssh: { host: prod }
+service:
+  name: web
+  dir: /opt/web
+  start: node dist/main.js
+  env_file: .env
+
+pipeline:
+  preflight:
+    requires: [npm]
+    run:
+      local: npm test
+  build:
+    run:
+      local: [npm ci, npm run build]
+  pack:
+    files:
+      include:
+        project: [dist, package.json, package-lock.json]
+        deploy: [.env]
+      exclude:
+        project: [&quot;**/*.map&quot;]
+  setup:
+    run:
+      server: [npm ci --omit=dev, npm run migrate]
+  health:
+    url: http://127.0.0.1:3000/health
+  done:
+    run:
+      local: ./notify.sh &quot;web $SHIPDECK_VERSION is live&quot;
+</doc-code>
+    </doc-tab>
+    <doc-tab label="Python">
+<doc-code lang="yaml">
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
+name: Reports (prod)
+project: ../../../reports
+ssh: { host: prod, user: deploy }
+service:
+  name: reports
+  dir: /opt/reports
+  start: .venv/bin/python -m app
+  env_file: .env
+
+pipeline:
+  preflight:
+    requires: [python3]
+    run:
+      local: python3 -m pytest -q
+  pack:
+    files:
+      include:
+        project: [.]
+        deploy: [.env]
+      exclude:
+        project: [tests, &quot;**/__pycache__&quot;, .venv]
+  setup:
+    run:
+      server:
+        - python3 -m venv .venv
+        - .venv/bin/pip install -q -r requirements.txt
+    check:
+      server: .venv/bin/python -c &quot;import app&quot;
+</doc-code>
+    </doc-tab>
+  </doc-tabs>
+</doc-section>
+
+<doc-section title="Manual rollback">
+<doc-code lang="text" title="from the Releases screen">
+switch → restart → health → done   (SHIPDECK_ACTION=rollback)
+</doc-code>
+</doc-section>
+
+<doc-section title="Next">
+  <doc-choice question="Build shipdeck 0.3.0 from this spec?">
+    <doc-option recommended>Yes, build it<p slot="desc">Config, schema, coloured errors, TUI steps, docs, examples, then the container tests.</p></doc-option>
+    <doc-option>Not yet<p slot="desc">Comment on what should change.</p></doc-option>
+  </doc-choice>
+</doc-section>
+
+</doc-page>
+<script src="https://cdn.jsdelivr.net/npm/forgedoc@2.1.0/dist/forgedoc.iife.js" data-forgedoc="js" defer></script>
+</body>
+</html>

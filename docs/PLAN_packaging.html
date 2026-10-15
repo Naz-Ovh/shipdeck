@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Packaging shipdeck</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/forgedoc@2.1.0/dist/themes/default.css" data-forgedoc="css" data-forgedoc-theme="default">
+</head>
+<body>
+<doc-page doc-id="shipdeck-packaging" accent="teal" density="compact">
+
+<doc-header kicker="Plan · shipdeck distribution">
+  Packaging shipdeck
+  <p slot="lede">
+    Four ways in: cargo (install and binstall), <code>npx</code>,
+    <code>uvx</code>, and one <code>curl | sh</code> script for everyone else.
+    Linux gets the faster gnu build when its glibc is new enough, and a static
+    musl build when it isn't.
+  </p>
+</doc-header>
+
+<doc-chips>
+  <doc-chip kind="confirmed">Channels: cargo, npm, PyPI, curl script</doc-chip>
+  <doc-chip kind="confirmed">gnu first, musl fallback</doc-chip>
+  <doc-chip kind="confirmed">npm: @nhrs/shipdeck</doc-chip>
+  <doc-chip kind="confirmed">MIT OR Apache-2.0</doc-chip>
+  <doc-chip kind="confirmed">glibc 2.28 floor · dist</doc-chip>
+</doc-chips>
+
+<doc-note kind="success" title="Decided">
+  <ul>
+    <li>Four channels. crates.io covers <code>cargo install</code> and <code>cargo binstall</code>, npm covers <code>npx</code>, PyPI covers <code>uvx</code>, and the install script covers everyone else, macOS included. Homebrew, .deb/.rpm, AUR and AppImage are out.</li>
+    <li>Linux gets two builds per architecture: gnu as the default, because it is faster, and static musl as the fallback. Every channel picks gnu when the machine has glibc 2.28 or newer.</li>
+    <li>The npm package is <code>@nhrs/shipdeck</code>, under your own npm account <code>nhrs</code> (Nazmul Hasan Rakib).</li>
+    <li>The license is MIT OR Apache-2.0, and dist drives releases with two custom jobs.</li>
+    <li>musl builds use mimalloc as their allocator. All other builds keep the default.</li>
+    <li>Channels ship one at a time: the install script first, then cargo, then npm, then uvx.</li>
+  </ul>
+</doc-note>
+
+<doc-section title="Where it stands">
+  <p>
+    The README offers one install path: <code>cargo install --git …</code>. It
+    needs a Rust toolchain and a few minutes of compiling. The repo has no CI,
+    and the <code>v&lt;version&gt;</code> tags are pushed by hand for
+    <code>server-setup.sh</code>. The code uses <code>std::os::unix</code>, so
+    the targets are Linux and macOS. Windows users already run shipdeck inside
+    WSL.
+  </p>
+  <doc-table size="sm">
+    <table>
+      <thead><tr><th>Registry</th><th><code>shipdeck</code></th><th>What it means</th></tr></thead>
+      <tbody>
+        <tr><td>crates.io</td><td><doc-badge variant="success">free</doc-badge></td><td><code>shipdeck-engine</code> is free too. Both crates get published, engine first</td></tr>
+        <tr><td>PyPI</td><td><doc-badge variant="success">free</doc-badge></td><td><code>uvx shipdeck</code> works as is</td></tr>
+        <tr><td>npm</td><td><doc-badge variant="danger">taken</doc-badge></td><td>an unrelated project (shipdeckai, v0.7.0), so it ships as <code>@nhrs/shipdeck</code> under your account</td></tr>
+      </tbody>
+    </table>
+  </doc-table>
+</doc-section>
+
+<doc-section title="License: MIT OR Apache-2.0">
+  <p>
+    shipdeck ships under MIT OR Apache-2.0, the usual choice for Rust projects.
+    Every registry accepts it, and users may pick either license; Apache adds a
+    patent grant. Today <code>Cargo.toml</code> says
+    <code>license = "UNLICENSED"</code> and <code>publish = false</code>, and
+    crates.io refuses that. So stage 1 starts here: it adds
+    <code>LICENSE-MIT</code> and <code>LICENSE-APACHE</code>, sets
+    <code>license = "MIT OR Apache-2.0"</code>. <code>publish</code> stays off
+    until the cargo stage.
+  </p>
+</doc-section>
+
+<doc-section title="Build once, publish four ways">
+  <p>
+    A tag push builds six binaries once and attaches them to a GitHub Release
+    with checksums. The install script, the npm package and binstall all
+    download those same files, so an install of "0.4.0" is the same binary
+    whichever way it came. The <code>v&lt;version&gt;</code> tag you already
+    push becomes the release trigger, and nothing else starts it, pull requests
+    included.
+  </p>
+  <p>
+    Pushing the tag is the only step. You never make the release on GitHub:
+    dist creates it only after every binary is built and checked, so a release
+    is never public without its binaries, and a failed build makes no release
+    at all. The docs site and, later, the registries run only after the
+    release is published. dist writes the release notes; edit them afterwards
+    if you like.
+  </p>
+
+  <doc-figure type="svg" caption="One tag push, six binaries. Three channels download the release files; two build from source at the same tag." alt="A tag push feeds a CI build of six binaries into a GitHub Release, which feeds the install script, the npm package and cargo binstall. The tag also publishes source to crates.io and wheels to PyPI; binstall reads the version from crates.io.">
+<svg viewBox="0 36 780 308" width="100%" font-size="13" font-family="inherit" fill="none">
+<defs><marker id="pk-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor" fill-opacity="0.55"/></marker></defs>
+<rect x="10" y="118" width="120" height="56" rx="8" fill="currentColor" fill-opacity="0.04" stroke="currentColor" stroke-opacity="0.3"/>
+<text x="70" y="142" text-anchor="middle" fill="currentColor" font-weight="600">git push</text>
+<text x="70" y="160" text-anchor="middle" fill="currentColor" fill-opacity="0.6">tag v0.4.0</text>
+<path d="M130 146H163" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.3" marker-end="url(#pk-a)"/>
+<rect x="165" y="86" width="200" height="120" rx="8" fill="currentColor" fill-opacity="0.04" stroke="currentColor" stroke-opacity="0.3"/>
+<text x="265" y="114" text-anchor="middle" fill="currentColor" font-weight="600">CI builds 6 binaries</text>
+<text x="265" y="138" text-anchor="middle" fill="currentColor" fill-opacity="0.6">Linux gnu  x86_64 · arm64</text>
+<text x="265" y="158" text-anchor="middle" fill="currentColor" fill-opacity="0.6">Linux musl  x86_64 · arm64</text>
+<text x="265" y="178" text-anchor="middle" fill="currentColor" fill-opacity="0.6">macOS  x86_64 · arm64</text>
+<path d="M365 146H398" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.3" marker-end="url(#pk-a)"/>
+<rect x="400" y="106" width="150" height="80" rx="8" style="fill:var(--doc-accent-600, #0d9488);fill-opacity:.12;stroke:var(--doc-accent-600, #0d9488);stroke-width:1.5"/>
+<text x="475" y="140" text-anchor="middle" fill="currentColor" font-weight="600">GitHub Release</text>
+<text x="475" y="160" text-anchor="middle" fill="currentColor" fill-opacity="0.6">tar.xz + sha256</text>
+<text x="600" y="50" text-anchor="start" fill="currentColor" fill-opacity="0.6" font-size="11">DOWNLOAD THE RELEASE FILES</text>
+<path d="M550 146C575 146 575 78 598 78" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.3" marker-end="url(#pk-a)"/>
+<rect x="600" y="62" width="170" height="32" rx="8" fill="currentColor" fill-opacity="0.04" stroke="currentColor" stroke-opacity="0.3"/><text x="612" y="82.5" fill="currentColor"><tspan font-weight="600">install.sh</tspan><tspan fill-opacity="0.6" dx="8">curl &#124; sh</tspan></text>
+<path d="M550 146C575 146 575 146 598 146" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.3" marker-end="url(#pk-a)"/>
+<rect x="600" y="130" width="170" height="32" rx="8" fill="currentColor" fill-opacity="0.04" stroke="currentColor" stroke-opacity="0.3"/><text x="612" y="150.5" fill="currentColor"><tspan font-weight="600">npm package</tspan><tspan fill-opacity="0.6" dx="8">npx</tspan></text>
+<path d="M550 146C575 146 575 214 598 214" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.3" marker-end="url(#pk-a)"/>
+<rect x="600" y="198" width="170" height="32" rx="8" fill="currentColor" fill-opacity="0.04" stroke="currentColor" stroke-opacity="0.3"/><text x="612" y="218.5" fill="currentColor"><tspan font-weight="600">cargo binstall</tspan><tspan fill-opacity="0.6" dx="8">prebuilt</tspan></text>
+<text x="165" y="256" text-anchor="start" fill="currentColor" fill-opacity="0.6" font-size="11">BUILD FROM SOURCE AT THE SAME TAG</text>
+<path d="M70 174V282H163" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.3" marker-end="url(#pk-a)"/>
+<path d="M70 282V320H163" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.3" marker-end="url(#pk-a)"/>
+<rect x="165" y="266" width="220" height="32" rx="8" fill="currentColor" fill-opacity="0.04" stroke="currentColor" stroke-opacity="0.3"/><text x="177" y="286.5" fill="currentColor"><tspan font-weight="600">crates.io</tspan><tspan fill-opacity="0.6" dx="8">cargo install</tspan></text>
+<rect x="165" y="304" width="220" height="32" rx="8" fill="currentColor" fill-opacity="0.04" stroke="currentColor" stroke-opacity="0.3"/><text x="177" y="324.5" fill="currentColor"><tspan font-weight="600">maturin wheels</tspan><tspan fill-opacity="0.6" dx="8">PyPI · uvx</tspan></text>
+<path d="M385 282H685V233" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.3" stroke-dasharray="4 4" marker-end="url(#pk-a)"/>
+<text x="540" y="274" text-anchor="middle" fill="currentColor" fill-opacity="0.6" font-size="11">binstall finds the version here</text>
+</svg>
+  </doc-figure>
+
+  <p>
+    Two channels build their own copies from the same tag. crates.io takes the
+    source, because <code>cargo install</code> compiles on the user's machine.
+    PyPI needs wheels tagged for the platforms they run on, so maturin builds
+    them in the release job. binstall reads crates.io only to find the version,
+    then downloads the release archive.
+  </p>
+</doc-section>
+
+<doc-section title="Two Linux builds, one rule">
+  <p>
+    gnu is the default on Linux because it runs faster, mostly thanks to
+    glibc's memory allocator. A gnu binary only starts on a machine whose glibc
+    is at least as new as the one it was built against. Built on GitHub's
+    current Ubuntu runner, it would require glibc 2.39 or newer and refuse to start on
+    Debian 12 or Ubuntu 22.04. So the gnu builds are compiled inside an
+    old-glibc container on purpose. That container's version is the bottom of
+    the supported range. Anything below it, and any musl system, gets the
+    static musl build.
+  </p>
+
+  <doc-figure type="svg" caption="The same rule in every channel: gnu when glibc is in range, static musl otherwise." alt="Decision tree: a Linux machine with musl libc gets the static musl build. With glibc 2.28 or newer it gets the gnu build; with older glibc it gets the static musl build.">
+<svg viewBox="0 52 780 210" width="100%" font-size="13" font-family="inherit" fill="none">
+<defs><marker id="pk-b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor" fill-opacity="0.55"/></marker></defs>
+<rect x="10" y="97" width="130" height="56" rx="8" fill="currentColor" fill-opacity="0.04" stroke="currentColor" stroke-opacity="0.3"/>
+<text x="75" y="121" text-anchor="middle" fill="currentColor" font-weight="600">Linux machine</text>
+<text x="75" y="139" text-anchor="middle" fill="currentColor" fill-opacity="0.6">x86_64 or arm64</text>
+<path d="M140 125H173" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.3" marker-end="url(#pk-b)"/>
+<path d="M175 125L250 80L325 125L250 170Z" fill="currentColor" fill-opacity="0.04" stroke="currentColor" stroke-opacity="0.3"/>
+<text x="250" y="130" text-anchor="middle" fill="currentColor" font-weight="600">which libc?</text>
+<path d="M325 125H398" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.3" marker-end="url(#pk-b)"/>
+<text x="361" y="117" text-anchor="middle" fill="currentColor" fill-opacity="0.6" font-size="12">glibc</text>
+<path d="M400 125L475 80L550 125L475 170Z" fill="currentColor" fill-opacity="0.04" stroke="currentColor" stroke-opacity="0.3"/>
+<text x="475" y="130" text-anchor="middle" fill="currentColor" font-weight="600">glibc ≥ 2.28?</text>
+<rect x="600" y="60" width="170" height="56" rx="8" style="fill:var(--doc-accent-600, #0d9488);fill-opacity:.12;stroke:var(--doc-accent-600, #0d9488);stroke-width:1.5"/>
+<text x="685" y="84" text-anchor="middle" fill="currentColor" font-weight="600">gnu build</text>
+<text x="685" y="102" text-anchor="middle" fill="currentColor" fill-opacity="0.6">faster · the default</text>
+<rect x="600" y="170" width="170" height="56" rx="8" fill="currentColor" fill-opacity="0.04" stroke="currentColor" stroke-opacity="0.3"/>
+<text x="685" y="194" text-anchor="middle" fill="currentColor" font-weight="600">static musl build</text>
+<text x="685" y="212" text-anchor="middle" fill="currentColor" fill-opacity="0.6">runs anywhere</text>
+<path d="M550 125C575 125 575 88 598 88" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.3" marker-end="url(#pk-b)"/>
+<text x="562" y="100" text-anchor="middle" fill="currentColor" fill-opacity="0.6" font-size="12">yes</text>
+<path d="M550 125C575 125 575 198 598 198" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.3" marker-end="url(#pk-b)"/>
+<text x="562" y="166" text-anchor="middle" fill="currentColor" fill-opacity="0.6" font-size="12">no</text>
+<path d="M250 170V198H598" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.3" marker-end="url(#pk-b)"/>
+<text x="262" y="216" text-anchor="start" fill="currentColor" fill-opacity="0.6" font-size="12">musl (Alpine and friends)</text>
+<text x="10" y="252" text-anchor="start" fill="currentColor" fill-opacity="0.6" font-size="11">macOS has no libc choice: one build per architecture.</text>
+</svg>
+  </doc-figure>
+
+  <p>
+    The floor is glibc 2.28. The gnu builds compile in the manylinux_2_28
+    container, the route dist's own docs take. Every glibc distro from the last
+    seven years gets the gnu build: Debian 10, Ubuntu 20.04, RHEL 8 and
+    everything newer.
+  </p>
+  <p>
+    The plan first set the floor at 2.17, using the manylinux2014 container.
+    That broke during stage 1. GitHub runs actions such as checkout inside a
+    job's container with its own Node, and that Node needs glibc 2.28, so a
+    2.17 container fails at its first step. zig, the other way to link against
+    an older glibc, also defaults to 2.28, and dist never asks it for another
+    version. Holding 2.17 would have meant wrapping how dist calls cargo, so you
+    chose 2.28. What it gives up: CentOS and RHEL 7, Ubuntu 18.04 and Amazon
+    Linux 2, all past end of life, get the musl build instead.
+  </p>
+
+  <h3>Who does the check</h3>
+  <p>
+    I read dist 0.33's installer templates to see what is already there. Its
+    shell script tries the gnu archive first and runs <code>check_glibc</code>
+    against the floor. Its npm package does the same with
+    <code>detect-libc</code>. uv and pip do it through wheel tags. dist doesn't
+    read the floor from the binary: it assumes the glibc of the machine that
+    built it. So the floor is written into <code>dist-workspace.toml</code> as
+    <code>min-glibc-version</code>, and the CI check below proves the binaries
+    meet it. binstall is the gap: it checks that glibc exists, never which
+    version. Below 2.28 it hands over a gnu binary that refuses to start with
+    "GLIBC_2.28 not found". Those machines are all past end of life, and the
+    install script gives them musl.
+  </p>
+
+  <doc-matrix type="comparison">
+    <table>
+      <thead><tr><th>Channel</th><th>Who picks gnu or musl</th><th>How</th><th>glibc below the floor</th></tr></thead>
+      <tbody>
+        <tr><td>curl script</td><td>dist's installer</td><td><code>ldd --version</code> against the floor</td><td><doc-badge variant="success">musl</doc-badge></td></tr>
+        <tr><td>npx</td><td>dist's npm package</td><td><code>detect-libc</code> reads the running glibc</td><td><doc-badge variant="success">musl</doc-badge></td></tr>
+        <tr><td>uvx</td><td>uv or pip</td><td>gnu wheel tagged <code>manylinux_2_28</code>, musl wheel <code>musllinux_1_2</code></td><td><doc-badge variant="success">musl</doc-badge></td></tr>
+        <tr><td>cargo binstall</td><td>binstall</td><td>whether glibc exists, not its version</td><td><doc-badge variant="warn">gnu anyway</doc-badge> (won't start; the script gives them musl)</td></tr>
+        <tr><td>cargo install</td><td>nobody needs to</td><td>compiles against the machine's own libc</td><td><doc-badge variant="neutral">n/a</doc-badge></td></tr>
+      </tbody>
+    </table>
+  </doc-matrix>
+
+  <p>
+    A CI step guards the floor. It reads each gnu binary's required glibc with
+    the same ELF reader preflight already uses (<code>build::GlibcVersion</code>)
+    and fails the release if a binary needs more than the floor. It runs after
+    the builds and before the GitHub Release exists, so a binary that breaks
+    the promise is never published.
+  </p>
+
+  <h3>Why the musl build failed on your machine</h3>
+  <p>
+    Nothing is wrong with musl or with shipdeck's code. <code>aws-lc-sys</code>,
+    the crypto library under russh, compiles a C library while it builds, and C
+    code built for musl needs a musl C compiler. Your machine doesn't have one,
+    so the build stops before any Rust code is compiled. Setting an allocator
+    can't help with that, because the allocator only matters once the program
+    runs. Ubuntu's <code>musl-tools</code> package provides that compiler, and so
+    does cargo-zigbuild, and CI installs it with one line. Switching russh to
+    its <code>ring</code> backend wouldn't avoid it either, because ring
+    compiles C as well. (The first draft wrongly listed ring as the way out.)
+  </p>
+  <p>
+    The allocator matters for speed, not for building. musl's
+    <code>malloc</code> is the main reason musl builds run slower than gnu, so
+    musl builds use mimalloc instead. gnu and macOS builds keep their default
+    allocator. The fallback build then runs close to gnu speed. mimalloc's C
+    code builds with the same musl compiler we need anyway, and the dependency
+    exists only on musl targets:
+  </p>
+
+  <doc-code lang="toml" title="bin/shipdeck/Cargo.toml">
+[target.'cfg(target_env = "musl")'.dependencies]
+mimalloc = "0.1.52"
+  </doc-code>
+
+  <doc-code lang="rust" title="bin/shipdeck/src/main.rs">
+#[cfg(target_env = "musl")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+  </doc-code>
+
+
+</doc-section>
+
+<doc-section title="The release tool">
+  <p>
+    <a href="https://github.com/axodotdev/cargo-dist">dist</a> drives
+    releases. Its install script and npm package already do the gnu-or-musl
+    check above, so we write none of that logic ourselves. We own two small
+    custom jobs, one for crates.io and one for PyPI, and the release workflow is
+    regenerated whenever dist updates.
+  </p>
+
+  <doc-code lang="toml" title="dist-workspace.toml after all four stages (stage 1's version is in the repo)">
+[dist]
+ci = "github"
+targets = [
+  "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu",
+  "x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl",
+  "x86_64-apple-darwin", "aarch64-apple-darwin",
+]
+installers = ["shell", "npm"]
+npm-scope = "@nhrs"
+publish-jobs = ["npm", "./crates", "./pypi"]
+global-artifacts-jobs = ["./glibc-floor"]
+
+# the floor installers check; glibc-floor.yml proves the binaries meet it
+[dist.min-glibc-version]
+"*" = "2.28"
+
+# gnu builds run in an old-glibc container: that container sets the floor
+[dist.github-custom-runners.x86_64-unknown-linux-gnu]
+container = { image = "quay.io/pypa/manylinux_2_28_x86_64", host = "x86_64-unknown-linux-musl" }
+
+[dist.github-custom-runners.aarch64-unknown-linux-gnu]
+runner = "ubuntu-24.04-arm"
+container = { image = "quay.io/pypa/manylinux_2_28_aarch64", host = "aarch64-unknown-linux-musl" }
+
+[dist.github-custom-runners.aarch64-unknown-linux-musl]
+runner = "ubuntu-24.04-arm"
+  </doc-code>
+
+</doc-section>
+
+<doc-section title="What users type">
+  <doc-code lang="bash" title="README · Install">
+# Linux and macOS, anyone
+curl -LsSf https://shipdeck.naz.ovh/install.sh | sh
+
+# Rust users
+cargo binstall shipdeck          # prebuilt, no compiling
+cargo install shipdeck --locked  # from source
+
+# run it without installing
+npx @nhrs/shipdeck ./scripts/deploy
+uvx shipdeck ./scripts/deploy
+  </doc-code>
+
+  <p>
+    The npm package is <code>@nhrs/shipdeck</code>, because <code>shipdeck</code>
+    on npm belongs to someone else. The command after install is still
+    <code>shipdeck</code>; only the <code>npx</code> line shows the scope. dist's
+    npm package downloads the matching release archive on install. If the
+    install step was skipped, which pnpm does by default, it downloads on first
+    run instead.
+  </p>
+</doc-section>
+
+<doc-section title="Order of work">
+  <p>
+    Channels ship one at a time, in the order the README lists them. Each
+    stage ends with a tagged release that proves its channel works before the
+    next one starts. The release tooling and the builds come first, because the
+    install script needs them and everything after it reuses them.
+  </p>
+
+  <doc-roadmap>
+    <doc-stage title="Install script" subtitle="curl | sh · shipped in v0.3.1" open>
+      <ul>
+        <li>Add <code>LICENSE-MIT</code> and <code>LICENSE-APACHE</code> and set <code>license = "MIT OR Apache-2.0"</code>.</li>
+        <li>Add mimalloc for musl targets.</li>
+        <li>No CI workflow: lefthook runs fmt, check, clippy and test before every push, refuses a tag that doesn't match <code>Cargo.toml</code>, and checks every version mention before every commit. GitHub Actions only publish.</li>
+        <li><code>dist init</code> with the six targets and only the shell installer, installing to <code>~/.local/bin</code>. gnu builds run in the manylinux_2_28 container, and musl builds get <code>musl-tools</code>. The 2.28 floor check (<code>glibc-floor.yml</code>) fails the release if a gnu binary needs newer glibc.</li>
+        <li>A tag push builds and checks the binaries, then creates the GitHub Release with archives, sha256 files and <code>shipdeck-installer.sh</code>. Pull requests never run the release workflow (<code>pr-run-mode = "skip"</code>).</li>
+        <li>Checked before release, with the real script against locally built archives: gnu on Debian 13, musl on Alpine, and musl on CentOS 7, which is below the floor. The gnu binary runs on glibc 2.28.</li>
+        <li>Released as v0.3.1, and the real script checked again: gnu on Debian 13, static musl on Alpine and on CentOS 7.</li>
+        <li>The docs site serves <code>shipdeck.naz.ovh/install.sh</code>, a small fixed script that runs the latest release's installer from GitHub, or the one <code>-V=v0.3.1</code> names. It never changes per release.</li>
+      </ul>
+    </doc-stage>
+    <doc-stage title="cargo" subtitle="cargo install · cargo binstall · next" current>
+      <ul>
+        <li>Set <code>publish = true</code>, give the engine dependency a version, and add crates.io metadata: <code>readme</code>, <code>keywords</code>, <code>categories</code>, <code>homepage</code>, <code>rust-version</code>.</li>
+        <li>The <code>./crates</code> job publishes <code>shipdeck-engine</code>, then <code>shipdeck</code>.</li>
+        <li>Add <code>[package.metadata.binstall]</code> pointing at dist's archive names, so binstall downloads the release files instead of guessing.</li>
+        <li>Check: <code>cargo binstall shipdeck</code> installs without compiling, and <code>cargo install shipdeck --locked</code> builds.</li>
+      </ul>
+    </doc-stage>
+    <doc-stage title="npm" subtitle="npx @nhrs/shipdeck">
+      <ul>
+        <li>Add <code>"npm"</code> to dist's installers, with <code>npm-scope = "@nhrs"</code> and the npm publish job.</li>
+        <li>The first publish uses a token from your <code>nhrs</code> account; after that, trusted publishing.</li>
+        <li>Check: <code>npx @nhrs/shipdeck --help</code> picks gnu or musl correctly.</li>
+      </ul>
+    </doc-stage>
+    <doc-stage title="uvx" subtitle="uvx shipdeck">
+      <ul>
+        <li>The <code>./pypi</code> job runs maturin with <code>bindings = "bin"</code>. It builds gnu wheels tagged <code>manylinux_2_28</code>, static musl wheels tagged <code>musllinux_1_2</code> and macOS wheels, then publishes to PyPI.</li>
+        <li>Check: <code>uvx shipdeck --help</code> on a glibc distro and on Alpine.</li>
+        <li>Rewrite the README's install section to match the block above.</li>
+      </ul>
+    </doc-stage>
+    <doc-stage title="Later, only if asked" subtitle="no date">
+      <ul>
+        <li>Homebrew or distro packages, if people ask for them. The release files are already there to wrap.</li>
+        <li>A Windows build, if the code ever stops needing Unix.</li>
+      </ul>
+    </doc-stage>
+  </doc-roadmap>
+</doc-section>
+
+<doc-section title="What only you can set up">
+  <p>
+    Each registry needs an account in your name. We use trusted publishing
+    wherever it exists (GitHub proves the workflow's identity, so no token is
+    stored). crates.io and npm need one token for the very first publish, and
+    after that it can be deleted.
+  </p>
+  <p>The install script needs no account at all. Each of the others is needed only by the time its stage starts:</p>
+  <doc-checklist>
+    <li>Before cargo: sign in to crates.io with GitHub and make a token for the first publish. Then turn on trusted publishing for both crates.</li>
+    <li>Before npm: the <code>nhrs</code> account already exists. You'll need a token for the first publish, then trusted publishing.</li>
+    <li>Before uvx: a PyPI account and a pending trusted publisher for project <code>shipdeck</code>. No token at all.</li>
+  </doc-checklist>
+</doc-section>
+
+</doc-page>
+<script src="https://cdn.jsdelivr.net/npm/forgedoc@2.1.0/dist/forgedoc.iife.js" data-forgedoc="js" defer></script>
+</body>
+</html>
