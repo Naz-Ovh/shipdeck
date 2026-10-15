@@ -26,13 +26,15 @@ rolls back any release. Design and decisions: `docs/plan.md`. Usage: `README.md`
   tar.zst, unit), `ssh` (sessions,
   login, host keys, `~/.ssh/config` aliases), `remote` (server scripts),
   `release` (ids, release.json), `setup` (the server-setup.sh URL),
-  `deploy` (the deploy and rollback flows, `report` for progress).
+  `deploy` (the deploy and rollback flows, `report` for progress),
+  `init` (the presets and the new deployable folder).
 - `crates/tui/` (`shipdeck-tui`): the screens, dialogs and key handling.
 - `crates/headless/` (`shipdeck-headless`): the `deploy`, `rollback` and
   `releases` commands for scripts and CI: plain lines, no questions, exit
   codes.
 - `bin/shipdeck/`: the flags (clap lives only here), the login, the config
-  check, then hands over to the TUI or headless. The TUI and headless only
+  check, then hands over to the TUI or headless. `init`'s questions live
+  here too (`inquire`). The TUI and headless only
   show what the engine reports; neither depends on the other.
 
 ## Code

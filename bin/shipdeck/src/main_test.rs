@@ -1,6 +1,7 @@
 use clap::Parser;
 
-use super::{Cli, Command, OnFailureArg};
+use super::{Cli, Command, ManagerArg, OnFailureArg, ServerCommand};
+use shipdeck_engine::init::Preset;
 
 fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
     Cli::try_parse_from(std::iter::once("shipdeck").chain(args.iter().copied()))
@@ -17,12 +18,12 @@ fn a_root_alone_opens_the_tui() {
 #[test]
 fn deploy_takes_names_and_rolls_back_by_default() {
     let cli = parse(&["deploy", "./deploy", "my-api", "my-web"]).unwrap();
-    let Some(Command::Deploy {
+    let Some(Command::Server(ServerCommand::Deploy {
         names,
         on_failure,
         ssh,
         ..
-    }) = cli.command
+    })) = cli.command
     else {
         panic!("not a deploy");
     };
@@ -44,15 +45,15 @@ fn deploy_flags_go_after_the_command() {
         "/keys/deploy",
     ])
     .unwrap();
-    let Some(Command::Deploy {
+    let Some(Command::Server(ServerCommand::Deploy {
         on_failure, ssh, ..
-    }) = cli.command
+    })) = cli.command
     else {
         panic!("not a deploy");
     };
     assert_eq!(on_failure, OnFailureArg::Keep);
     assert!(ssh.trust_new_host);
-    assert_eq!(cli.login.key.unwrap().to_str(), Some("/keys/deploy"));
+    assert_eq!(ssh.login.key.unwrap().to_str(), Some("/keys/deploy"));
 }
 
 #[test]
@@ -73,7 +74,7 @@ fn rollback_needs_a_target() {
     .unwrap();
     assert!(matches!(
         cli.command,
-        Some(Command::Rollback { to, .. }) if to == "v0.3.0-9f8e7d6-20261012.091000"
+        Some(Command::Server(ServerCommand::Rollback { to, .. })) if to == "v0.3.0-9f8e7d6-20261012.091000"
     ));
 }
 
@@ -101,4 +102,35 @@ fn key_and_password_still_conflict() {
 #[test]
 fn the_schema_needs_no_root() {
     assert!(parse(&["--schema"]).unwrap().schema);
+}
+
+#[test]
+fn init_takes_a_preset_and_a_manager() {
+    let cli = parse(&[
+        "init",
+        "./deploy",
+        "my-api",
+        "--preset",
+        "kotlin",
+        "--manager",
+        "pm2",
+        "--host",
+        "prod",
+    ])
+    .unwrap();
+    let Some(Command::Init(args)) = cli.command else {
+        panic!("not init");
+    };
+    assert_eq!(args.name.as_deref(), Some("my-api"));
+    assert_eq!(args.preset, Some(Preset::Kotlin));
+    assert_eq!(args.manager, Some(ManagerArg::Pm2));
+    assert_eq!(args.host.as_deref(), Some("prod"));
+}
+
+#[test]
+fn init_asks_for_what_is_left_out_and_logs_in_nowhere() {
+    let cli = parse(&["init", "./deploy"]).unwrap();
+    assert!(matches!(cli.command, Some(Command::Init(ref args)) if args.preset.is_none()));
+    assert!(parse(&["init", "./deploy", "--preset", "go"]).is_err());
+    assert!(parse(&["init", "./deploy", "--key", "k"]).is_err());
 }

@@ -13,6 +13,7 @@ shipdeck-headless.workspace = true
 shipdeck-tui.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+inquire.workspace = true
 tokio.workspace = true
 
 # musl's own malloc is the main reason musl builds run slower than gnu ones;

@@ -9,6 +9,7 @@ You point shipdeck at a deploy root, it checks every `deploy.yaml` under it, and
 
 ```txt
 shipdeck [OPTIONS] <DEPLOY_ROOT>
+shipdeck init     <DEPLOY_ROOT> [NAME] [--preset <PRESET>] [--manager systemd|pm2] [--host <HOST>] [--user <USER>] [--project <PATH>]
 shipdeck deploy   <DEPLOY_ROOT> <NAME>... [--on-failure rollback|keep] [--trust-new-host]
 shipdeck rollback <DEPLOY_ROOT> <NAME> --to <RELEASE> [--trust-new-host]
 shipdeck releases <DEPLOY_ROOT> <NAME> [--trust-new-host]
@@ -176,6 +177,41 @@ Each file starts with a heading of its folder and file name. The path after `┌
 | `130` | A command only: stopped with Ctrl-C twice |
 
 A deploy or rollback that fails inside the screen does not change the exit code: quitting the screen exits with `0` whatever happened. You see the result on the [Operation screen](/docs/reference/screens#operation). The commands report it in the exit code instead.
+
+## Start a deployable
+
+### `init <DEPLOY_ROOT> [NAME]`
+
+Creates `<DEPLOY_ROOT>/<NAME>/` with a `deploy.yaml` written from a preset, an empty `.env` and a `.gitignore` that keeps `.env` out of git. It connects to nothing. In a terminal it asks for whatever the flags leave out (Esc stops without writing anything). With no terminal it asks nothing, and `NAME`, `--preset` and `--host` are required.
+
+```sh
+shipdeck init ./scripts/deploy
+shipdeck init ./scripts/deploy my-api --preset nodejs --manager pm2 --host prod
+```
+
+```txt
+? Name: my-api
+? Preset:
+  nodejs  built here; the server installs production dependencies
+  golang  one static binary, nothing to install on the server
+  java    built with Gradle; the server needs Java
+  kotlin  built with Gradle; the server needs Java
+> rust    one binary, nothing to install on the server
+  dart    compiled to one executable, nothing to install on the server
+  python  the source ships; the server builds its virtualenv
+  bun     compiled to one executable, nothing to install on the server
+```
+
+| Flag | When left out |
+| --- | --- |
+| `NAME` | Asked. The folder's name, also `name` and `service.name`. `service.dir` is `/opt/<NAME>`. |
+| `--preset <PRESET>` | Asked. `nodejs`, `golang`, `java`, `kotlin`, `rust`, `dart`, `python` or `bun`. |
+| `--manager <systemd\|pm2>` | Asked, else `systemd`. |
+| `--host <HOST>` | Asked. An address or an alias from `~/.ssh/config`. |
+| `--user <USER>` | Asked, offering the alias's `User`; else the alias's `User`. |
+| `--project <PATH>` | Asked, else the current folder. Written relative to the new folder. |
+
+What `init` writes passes the same checks as a launch; a problem is printed the [same way](#the-problem-report) and nothing is written. It never replaces an existing `deploy.yaml`, and it leaves an existing `.env` or `.gitignore` alone. The presets are a starting point: check the build command and paths against your project.
 
 ## Without the UI
 

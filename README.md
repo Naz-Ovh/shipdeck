@@ -17,7 +17,8 @@ its service. If that user lacks a [permission](#permissions) it needs, the
 deploy stops at preflight and says which, before anything changes.
 
 **2. Write a `deploy.yaml`** in one folder per deployable, such as
-`scripts/deploy/my-api/deploy.yaml`. Start from [`examples/`](examples); every
+`scripts/deploy/my-api/deploy.yaml`. `shipdeck init` writes one from a
+[preset](#start-a-deployable), or start from [`examples/`](examples); every
 field is under [deploy.yaml](#deployyaml).
 
 **3. Deploy.** Run `shipdeck ./scripts/deploy`, pick the deployable and press
@@ -55,6 +56,42 @@ shipdeck --schema > deploy.schema.json    # the JSON Schema, for offline editors
 | `--no-shell-env` | Server commands run without the login shell's startup files, on every server (see [Tools on the server](#tools-on-the-server)). |
 | `--password <value>` | Password. It lands in your shell history; in zsh with `HIST_IGNORE_SPACE`, start the command with a space. `SHIPDECK_PASSWORD` does the same without the history. |
 | neither | The host's `IdentityFile` from `~/.ssh/config` if it has one; if there is none or the server refuses it, the TUI asks for the password once per `user@host` and keeps it in memory for the run. |
+
+### Start a deployable
+
+`shipdeck init` creates a deployable's folder under the deploy root with a
+`deploy.yaml` from a preset, an empty `.env` and a `.gitignore` that keeps
+`.env` out of git. In a terminal it asks for whatever the flags leave out;
+with no terminal (a script, CI) it asks nothing, and NAME, `--preset` and
+`--host` are required.
+
+```sh
+shipdeck init ./scripts/deploy                      # asks for everything
+shipdeck init ./scripts/deploy my-api --preset rust --manager systemd --host prod
+```
+
+| Flag | Default |
+| --- | --- |
+| `NAME` | asked: the folder's name, also `name` and `service.name` |
+| `--preset` | asked: `nodejs`, `golang`, `java`, `kotlin`, `rust`, `dart`, `python` or `bun` |
+| `--manager` | asked, else `systemd`; or `pm2` |
+| `--host` | asked: an address or a `~/.ssh/config` alias |
+| `--user` | asked, offering the alias's `User`; else the alias's `User` |
+| `--project` | asked, else the current folder; written relative to the new folder |
+
+`service.dir` is `/opt/<NAME>`. What `init` writes passes the same checks as
+a launch, and it never replaces an existing `deploy.yaml`. Each preset is a
+start; check its build command and paths against your project:
+
+| Preset | Build here | Ships | Server needs |
+| --- | --- | --- | --- |
+| `nodejs` | `npm ci`, `npm run build` | `dist`, `package.json`, `package-lock.json` | npm (`npm ci --omit=dev` in setup) |
+| `golang` | `CGO_ENABLED=0 GOOS=linux go build` | the binary | nothing |
+| `rust` | `cargo build --release` | the binary | nothing |
+| `dart` | `dart compile exe bin/server.dart` | the executable | nothing |
+| `bun` | `bun build --compile --target=bun-linux-x64` | the executable | nothing |
+| `java`, `kotlin` | `./gradlew installDist` ([application plugin](https://docs.gradle.org/current/userguide/application_plugin.html)) | `build/install/<NAME>` | java |
+| `python` | nothing | the source | python3 (a virtualenv from `requirements.txt` in setup) |
 
 ### Without the TUI
 

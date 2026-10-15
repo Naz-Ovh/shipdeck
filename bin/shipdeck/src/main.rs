@@ -8,12 +8,16 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::builder::{PossibleValuesParser, TypedValueParser};
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
-use shipdeck_engine::config::{self, Discovery};
+use shipdeck_engine::config::{self, Discovery, Manager};
+use shipdeck_engine::init::Preset;
 use shipdeck_engine::ssh::{Login, Pool, Question};
 use shipdeck_headless::{Headless, OnFailure};
+
+mod init;
 
 #[cfg(target_env = "musl")]
 #[global_allocator]
@@ -35,7 +39,8 @@ const PASSPHRASE_ENV: &str = "SHIPDECK_KEY_PASSPHRASE";
                   Login, first found: --key, --key-text, --password, SHIPDECK_SSH_KEY,\n\
                   SHIPDECK_PASSWORD; else the host's ~/.ssh/config key, then the TUI asks\n\
                   for the password. SHIPDECK_KEY_PASSPHRASE unlocks an encrypted key.\n\
-                  deploy, rollback and releases run without the TUI and ask nothing.",
+                  deploy, rollback and releases run without the TUI and ask nothing.\n\
+                  init creates a deployable folder; it asks for what its flags leave out.",
     args_conflicts_with_subcommands = true,
     subcommand_negates_reqs = true
 )]
@@ -55,27 +60,36 @@ struct Cli {
     command: Option<Command>,
 }
 
-#[derive(Args)]
+#[derive(Args, Clone)]
 struct LoginArgs {
     /// Log in with this private key file
-    #[arg(long, value_name = "PATH", conflicts_with_all = ["password", "key_text"], global = true)]
+    #[arg(long, value_name = "PATH", conflicts_with_all = ["password", "key_text"])]
     key: Option<PathBuf>,
 
     /// Log in with this private key's text (it shows in `ps`; SHIPDECK_SSH_KEY does not)
-    #[arg(long, value_name = "TEXT", conflicts_with = "password", global = true)]
+    #[arg(long, value_name = "TEXT", conflicts_with = "password")]
     key_text: Option<String>,
 
     /// Log in with this password (it lands in your shell history; SHIPDECK_PASSWORD does not)
-    #[arg(long, value_name = "PASSWORD", global = true)]
+    #[arg(long, value_name = "PASSWORD")]
     password: Option<String>,
 
     /// Run server commands without the login shell's startup files (~/.bashrc, ~/.zshrc, ...), on every server
-    #[arg(long, global = true)]
+    #[arg(long)]
     no_shell_env: bool,
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// Create a deployable folder with a deploy.yaml from a preset; asks for what the flags leave out
+    Init(InitArgs),
+    #[command(flatten)]
+    Server(ServerCommand),
+}
+
+/// The commands that log in to a server.
+#[derive(Subcommand)]
+enum ServerCommand {
     /// Build and deploy one or more deployables, one after another, without the TUI
     Deploy {
         /// Folder whose subfolders each hold a deploy.yaml
@@ -125,6 +139,37 @@ enum Command {
     },
 }
 
+#[derive(Args)]
+struct InitArgs {
+    /// Folder whose subfolders each hold a deploy.yaml
+    #[arg(value_name = "DEPLOY_ROOT")]
+    root: PathBuf,
+
+    /// The new folder's name, also the service's name, such as my-api
+    #[arg(value_name = "NAME")]
+    name: Option<String>,
+
+    /// What the app is written in, which sets how it is built and run
+    #[arg(long, value_parser = preset_parser())]
+    preset: Option<Preset>,
+
+    /// What keeps the app running on the server [default: systemd]
+    #[arg(long, value_enum)]
+    manager: Option<ManagerArg>,
+
+    /// The server: an address, or an alias from ~/.ssh/config
+    #[arg(long)]
+    host: Option<String>,
+
+    /// The user to log in and deploy as [default: the alias's User]
+    #[arg(long)]
+    user: Option<String>,
+
+    /// Your source folder [default: the current folder]
+    #[arg(long, value_name = "PATH")]
+    project: Option<PathBuf>,
+}
+
 /// `--on-failure`, as the flag parser knows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum OnFailureArg {
@@ -143,8 +188,35 @@ impl From<OnFailureArg> for OnFailure {
     }
 }
 
+/// `--preset`: the engine's names, so the list is never kept twice.
+fn preset_parser() -> impl TypedValueParser<Value = Preset> {
+    PossibleValuesParser::new(Preset::ALL.map(Preset::name))
+        .map(|name| Preset::from_name(&name).expect("the parser only passes listed names"))
+}
+
+/// `--manager`, as the flag parser knows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ManagerArg {
+    /// A systemd unit, installed and restarted with sudo
+    Systemd,
+    /// PM2, run as the SSH user without sudo
+    Pm2,
+}
+
+impl From<ManagerArg> for Manager {
+    fn from(arg: ManagerArg) -> Self {
+        match arg {
+            ManagerArg::Systemd => Manager::Systemd,
+            ManagerArg::Pm2 => Manager::Pm2,
+        }
+    }
+}
+
 #[derive(Args)]
 struct SshArgs {
+    #[command(flatten)]
+    login: LoginArgs,
+
     /// Trust and record the host key of a server not yet in ~/.ssh/known_hosts; a changed key is still refused
     #[arg(long)]
     trust_new_host: bool,
@@ -152,25 +224,30 @@ struct SshArgs {
 
 #[tokio::main]
 async fn main() -> Result<ExitCode> {
-    let cli = Cli::parse();
+    let cli = Cli::from_arg_matches(&flags().get_matches()).unwrap_or_else(|err| err.exit());
     if cli.schema {
         print!("{}", config::schema::text());
         return Ok(ExitCode::SUCCESS);
     }
-    let shell_env = !cli.login.no_shell_env;
-    let login = login(cli.login)?;
-    let Some(command) = cli.command else {
-        let root = cli
-            .root
-            .expect("clap requires DEPLOY_ROOT without --schema or a command");
-        return run_tui(root, login, shell_env).await;
+    let command = match cli.command {
+        Some(Command::Init(args)) => return run_init(args),
+        Some(Command::Server(command)) => command,
+        None => {
+            let root = cli
+                .root
+                .expect("clap requires DEPLOY_ROOT without --schema or a command");
+            let shell_env = !cli.login.no_shell_env;
+            return run_tui(root, login(cli.login)?, shell_env).await;
+        }
     };
 
     let (root, ssh) = match &command {
-        Command::Deploy { root, ssh, .. }
-        | Command::Rollback { root, ssh, .. }
-        | Command::Releases { root, ssh, .. } => (root.as_path(), ssh),
+        ServerCommand::Deploy { root, ssh, .. }
+        | ServerCommand::Rollback { root, ssh, .. }
+        | ServerCommand::Releases { root, ssh, .. } => (root.as_path(), ssh),
     };
+    let shell_env = !ssh.login.no_shell_env;
+    let login = login(ssh.login.clone())?;
     let Some(discovery) = discover(root)? else {
         return Ok(ExitCode::FAILURE);
     };
@@ -178,14 +255,41 @@ async fn main() -> Result<ExitCode> {
     let pool = Arc::new(pool(login, questions_tx, shell_env));
     let mut headless = Headless::new(pool.clone(), questions, ssh.trust_new_host);
     let code = match command {
-        Command::Deploy {
+        ServerCommand::Deploy {
             names, on_failure, ..
         } => headless.deploy(&discovery, &names, on_failure.into()).await,
-        Command::Rollback { name, to, .. } => headless.rollback(&discovery, &name, to).await,
-        Command::Releases { name, .. } => headless.releases(&discovery, &name).await,
+        ServerCommand::Rollback { name, to, .. } => headless.rollback(&discovery, &name, to).await,
+        ServerCommand::Releases { name, .. } => headless.releases(&discovery, &name).await,
     };
     pool.close_all().await;
     Ok(code)
+}
+
+/// The flags. With no terminal to ask in, `init` needs on the command line
+/// what it would otherwise ask for.
+fn flags() -> clap::Command {
+    let can_ask = init::can_ask();
+    Cli::command().mut_subcommand("init", |command| {
+        ["name", "preset", "host"]
+            .into_iter()
+            .fold(command, |command, id| {
+                command.mut_arg(id, |arg| arg.required(!can_ask))
+            })
+    })
+}
+
+/// `init` logs in nowhere: it only writes files.
+fn run_init(args: InitArgs) -> Result<ExitCode> {
+    let given = init::Given {
+        root: args.root,
+        name: args.name,
+        preset: args.preset,
+        manager: args.manager.map(Into::into),
+        host: args.host,
+        user: args.user,
+        project: args.project,
+    };
+    init::run(given)
 }
 
 async fn run_tui(root: PathBuf, login: Login, shell_env: bool) -> Result<ExitCode> {
