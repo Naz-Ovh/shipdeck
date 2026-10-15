@@ -9,11 +9,9 @@ repository.workspace = true
 
 [dependencies]
 shipdeck-engine.workspace = true
+shipdeck-tui.workspace = true
 anyhow.workspace = true
 clap.workspace = true
-crossterm.workspace = true
-futures.workspace = true
-ratatui.workspace = true
 tokio.workspace = true
 
 # musl's own malloc is the main reason musl builds run slower than gnu ones;

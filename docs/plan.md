@@ -19,7 +19,7 @@ live.
 | Name | `shipdeck` |
 | Repository | `Naz-Ovh/shipdeck`, public, so servers can fetch `server-setup.sh` from it; projects add it as a git submodule |
 | Language and libraries | Rust: `ratatui` + `crossterm` for the TUI, `russh` + `russh-sftp` for SSH, `tar` + `zstd` for bundles, `clap` for flags, `granit-parser` for YAML (events with line and column), `schemars` for the JSON Schema, `fast-glob` for file patterns |
-| Code layout | A Cargo workspace: `crates/engine` does the work, `bin/shipdeck` is the TUI, so screen changes recompile only the small crate |
+| Code layout | A Cargo workspace: `crates/engine` does the work, `crates/tui` shows it, and `bin/shipdeck` only parses the flags, so screen changes recompile only the small crates |
 | SSH session | One session per deployable, opened once and reused for every command and upload |
 | SSH login | `--key <path>` or `--password <value>`; with neither flag, the alias's `IdentityFile` from `~/.ssh/config`, then a password asked in the TUI |
 | SSH host | `ssh.host` may be a `~/.ssh/config` alias (`host: prod`); its `HostName`, `Port`, `User` and `IdentityFile` apply, and `deploy.yaml` wins |
@@ -239,8 +239,8 @@ so the TUI recompiles on its own.
 
 ```
 bin/shipdeck/src/
-├── main.rs        flags, start the TUI
-└── tui/           app state, the three screens, dialogs, theme
+└── main.rs        flags, login, the config check, then the TUI
+crates/tui/src/    app state, the three screens, dialogs, theme
 crates/engine/src/
 ├── config/        the deploy.yaml types (= the JSON Schema), the YAML tree with line numbers,
 │                  the schema walk and value rules, the problem report, globs, discovery

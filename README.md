@@ -440,18 +440,20 @@ back now) or `n` (keep it live).
 ## Development
 
 ```
-bin/shipdeck/      the TUI: flags, screens, key handling
+bin/shipdeck/      the flags; starts the TUI
+crates/tui/        the TUI: screens, dialogs, key handling
 crates/engine/     everything else: config, build, bundle, ssh, remote, deploy flows
 docs/plan.md       the design and the decisions behind it
 ```
 
 The engine knows nothing about the screen; it reports through
-`deploy::report::Reporter`. Changes to the TUI recompile only `bin/shipdeck`.
+`deploy::report::Reporter`. Changes to the TUI recompile only `crates/tui` and
+the small bin.
 
 ```sh
 cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-SHIPDECK_DUMP=/tmp/frames cargo test -p shipdeck   # writes every screen as text
+SHIPDECK_DUMP=/tmp/frames cargo test -p shipdeck-tui   # writes every screen as text
 ```
 
 There is no CI for these: [lefthook](https://lefthook.dev) runs them on your

@@ -1,6 +1,5 @@
 //! shipdeck: build on this machine, deploy over SSH, roll back any release.
-
-mod tui;
+//! The flags, the login and the config check; the screen is `shipdeck-tui`.
 
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -84,10 +83,10 @@ async fn main() -> Result<ExitCode> {
     let (ops_tx, ops) = unbounded_channel();
     let (fetched_tx, fetched) = unbounded_channel();
     let pool = Arc::new(Pool::new(login, questions_tx));
-    let app = tui::App::new(root, discovery, pool, ops_tx, fetched_tx);
-    tui::run(
+    let app = shipdeck_tui::App::new(root, discovery, pool, ops_tx, fetched_tx);
+    shipdeck_tui::run(
         app,
-        tui::Inbox {
+        shipdeck_tui::Inbox {
             questions,
             ops,
             fetched,

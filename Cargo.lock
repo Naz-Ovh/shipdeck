@@ -2754,11 +2754,9 @@ version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
- "crossterm",
- "futures",
  "mimalloc",
- "ratatui",
  "shipdeck-engine",
+ "shipdeck-tui",
  "tokio",
 ]
 
@@ -2780,6 +2778,18 @@ dependencies = [
  "tokio",
  "toml",
  "zstd",
+]
+
+[[package]]
+name = "shipdeck-tui"
+version = "0.4.0"
+dependencies = [
+ "anyhow",
+ "crossterm",
+ "futures",
+ "ratatui",
+ "shipdeck-engine",
+ "tokio",
 ]
 
 [[package]]

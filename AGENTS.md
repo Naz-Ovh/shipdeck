@@ -19,7 +19,10 @@ rolls back any release. Design and decisions: `docs/plan.md`. Usage: `README.md`
   login, host keys, `~/.ssh/config` aliases), `remote` (server scripts),
   `release` (ids, release.json), `setup` (the server setup command),
   `deploy` (the deploy and rollback flows, `report` for progress).
-- `bin/shipdeck/`: flags and the TUI. It only shows what the engine reports.
+- `crates/tui/` (`shipdeck-tui`): the screens, dialogs and key handling. It
+  only shows what the engine reports.
+- `bin/shipdeck/`: the flags (clap lives only here), the login, the config
+  check, then hands over to the TUI.
 
 ## Code
 

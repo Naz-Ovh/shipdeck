@@ -1,0 +1,16 @@
+[package]
+name = "shipdeck-tui"
+description = "The shipdeck terminal UI: screens and dialogs over what the engine reports."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[dependencies]
+shipdeck-engine.workspace = true
+anyhow.workspace = true
+crossterm.workspace = true
+futures.workspace = true
+ratatui.workspace = true
+tokio.workspace = true
