@@ -7,7 +7,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{HighlightSpacing, List, ListItem, Paragraph, Wrap};
 
-use shipdeck_engine::bundle::unit;
+use shipdeck_engine::bundle;
 use shipdeck_engine::config::{Commands, Deployable, ROLLBACK_ANSWER_SECS, Rollback};
 use shipdeck_engine::release::ReleaseName;
 use shipdeck_engine::ssh::Login;
@@ -167,7 +167,10 @@ fn details(
         "folder",
         vec![Span::styled(service.dir.clone(), theme::text())],
     );
-    let mut unit = vec![Span::styled(service.name.clone(), theme::text())];
+    let mut unit = vec![Span::styled(
+        format!("{} · {}", service.name, service.manager.label()),
+        theme::text(),
+    )];
     if let Live::Ready(status) = live
         && !status.active.is_empty()
     {
@@ -187,7 +190,7 @@ fn details(
         &mut lines,
         "start",
         vec![Span::styled(
-            unit::exec_start(deployable, None),
+            bundle::start_line(deployable, None),
             theme::text(),
         )],
     );
@@ -234,7 +237,11 @@ fn details(
     let health = &pipeline.health;
     let waits = match &health.url {
         Some(url) => format!("{url} · {}s", health.timeout_secs),
-        None => format!("systemd active · {}s", health.timeout_secs),
+        None => format!(
+            "{} active · {}s",
+            config.service.manager.label(),
+            health.timeout_secs
+        ),
     };
     step.text("health", "waits", waits);
     step.commands("health", "server", &health.check.server);
