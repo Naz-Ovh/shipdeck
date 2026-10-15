@@ -229,6 +229,14 @@ impl Pool {
         }
     }
 
+    /// Unlocks an encrypted key with `passphrase` instead of asking.
+    pub fn with_passphrase(self, passphrase: Option<String>) -> Self {
+        if let Some(passphrase) = passphrase {
+            self.secrets.give_passphrase(&passphrase);
+        }
+        self
+    }
+
     pub fn login(&self) -> &Login {
         &self.login
     }

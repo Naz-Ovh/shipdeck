@@ -21,6 +21,10 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 /// The password, for runs where `--password` would land in a log.
 const PASSWORD_ENV: &str = "SHIPDECK_PASSWORD";
+/// A private key's text, such as a CI secret, kept out of `ps` and logs.
+const KEY_ENV: &str = "SHIPDECK_SSH_KEY";
+/// The passphrase of an encrypted key, so nothing is asked.
+const PASSPHRASE_ENV: &str = "SHIPDECK_KEY_PASSPHRASE";
 
 #[derive(Parser)]
 #[command(
@@ -28,8 +32,9 @@ const PASSWORD_ENV: &str = "SHIPDECK_PASSWORD";
     version,
     about = "Build locally, deploy over SSH as a systemd service or PM2 app, roll back any release.",
     after_help = "Each folder under DEPLOY_ROOT with a deploy.yaml is one deployable.\n\
-                  With neither --key nor --password (nor SHIPDECK_PASSWORD), the host's\n\
-                  ~/.ssh/config key is tried, then the TUI asks for the password.\n\
+                  Login, first found: --key, --key-text, --password, SHIPDECK_SSH_KEY,\n\
+                  SHIPDECK_PASSWORD; else the host's ~/.ssh/config key, then the TUI asks\n\
+                  for the password. SHIPDECK_KEY_PASSPHRASE unlocks an encrypted key.\n\
                   deploy, rollback and releases run without the TUI and ask nothing.",
     args_conflicts_with_subcommands = true,
     subcommand_negates_reqs = true
@@ -53,8 +58,12 @@ struct Cli {
 #[derive(Args)]
 struct LoginArgs {
     /// Log in with this private key file
-    #[arg(long, value_name = "PATH", conflicts_with = "password", global = true)]
+    #[arg(long, value_name = "PATH", conflicts_with_all = ["password", "key_text"], global = true)]
     key: Option<PathBuf>,
+
+    /// Log in with this private key's text (it shows in `ps`; SHIPDECK_SSH_KEY does not)
+    #[arg(long, value_name = "TEXT", conflicts_with = "password", global = true)]
+    key_text: Option<String>,
 
     /// Log in with this password (it lands in your shell history; SHIPDECK_PASSWORD does not)
     #[arg(long, value_name = "PASSWORD", global = true)]
@@ -161,7 +170,7 @@ async fn main() -> Result<ExitCode> {
         return Ok(ExitCode::FAILURE);
     };
     let (questions_tx, questions) = unbounded_channel();
-    let pool = Arc::new(Pool::new(login, questions_tx));
+    let pool = Arc::new(Pool::new(login, questions_tx).with_passphrase(passphrase()));
     let mut headless = Headless::new(pool.clone(), questions, ssh.trust_new_host);
     let code = match command {
         Command::Deploy {
@@ -181,7 +190,7 @@ async fn run_tui(root: PathBuf, login: Login) -> Result<ExitCode> {
     let (questions_tx, questions) = unbounded_channel();
     let (ops_tx, ops) = unbounded_channel();
     let (fetched_tx, fetched) = unbounded_channel();
-    let pool = Arc::new(Pool::new(login, questions_tx));
+    let pool = Arc::new(Pool::new(login, questions_tx).with_passphrase(passphrase()));
     let app = shipdeck_tui::App::new(root, discovery, pool, ops_tx, fetched_tx);
     shipdeck_tui::run(
         app,
@@ -203,13 +212,24 @@ fn login(args: LoginArgs) -> Result<Login> {
         }
         return Ok(Login::Key(key));
     }
-    let password = args
-        .password
-        .or_else(|| std::env::var(PASSWORD_ENV).ok().filter(|p| !p.is_empty()));
-    Ok(match password {
+    let env = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
+    if let Some(text) = args.key_text {
+        return Ok(Login::KeyText(text));
+    }
+    if let Some(password) = args.password {
+        return Ok(Login::Password(password));
+    }
+    if let Some(text) = env(KEY_ENV) {
+        return Ok(Login::KeyText(text));
+    }
+    Ok(match env(PASSWORD_ENV) {
         Some(password) => Login::Password(password),
         None => Login::Auto,
     })
+}
+
+fn passphrase() -> Option<String> {
+    std::env::var(PASSPHRASE_ENV).ok().filter(|p| !p.is_empty())
 }
 
 /// Every deployable under `root`, or `None` once every problem in every

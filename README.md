@@ -50,7 +50,9 @@ shipdeck --schema > deploy.schema.json    # the JSON Schema, for offline editors
 
 | Flag | Login |
 | --- | --- |
-| `--key <path>` | Private key file. An encrypted key asks for its passphrase in the TUI. |
+| `--key <path>` | Private key file. An encrypted key asks for its passphrase in the TUI, or takes it from `SHIPDECK_KEY_PASSPHRASE`. |
+| `--key-text <text>` | The private key itself, such as a CI secret. It shows in `ps`; `SHIPDECK_SSH_KEY` does the same without that. Store the key file's text exactly as it is. |
+| `--no-shell-env` | Server commands run without the login shell's startup files, on every server (see [Tools on the server](#tools-on-the-server)). |
 | `--password <value>` | Password. It lands in your shell history; in zsh with `HIST_IGNORE_SPACE`, start the command with a space. `SHIPDECK_PASSWORD` does the same without the history. |
 | neither | The host's `IdentityFile` from `~/.ssh/config` if it has one; if there is none or the server refuses it, the TUI asks for the password once per `user@host` and keeps it in memory for the run. |
 
@@ -69,6 +71,12 @@ A deployable is named by its folder or its `name`. `deploy` takes several and
 runs them one after another; the first that does not succeed stops the rest.
 Every `deploy.yaml` under the root is still checked first.
 
+In CI, keep the key in a secret:
+
+```sh
+SHIPDECK_SSH_KEY="$DEPLOY_KEY" shipdeck deploy ./scripts/deploy my-api --trust-new-host
+```
+
 What the TUI would ask comes from flags instead:
 
 | The TUI asks | Without the TUI |
@@ -76,7 +84,7 @@ What the TUI would ask comes from flags instead:
 | Deploy this? | Running the command is the yes. |
 | Roll back after a failed switch, restart or health check? | `--on-failure rollback` (the default) rolls back at once; `--on-failure keep` keeps the failed release live. Either overrides `pipeline.health.rollback`. |
 | Trust a server seen for the first time? | No, unless `--trust-new-host`. A changed host key is always refused. |
-| A password or key passphrase? | Never asked: use `--key` with a key without a passphrase, `--password` or `SHIPDECK_PASSWORD`. |
+| A password or key passphrase? | Never asked: use `--key` or `SHIPDECK_SSH_KEY` (with `SHIPDECK_KEY_PASSPHRASE` for an encrypted key), `--password` or `SHIPDECK_PASSWORD`. |
 
 The exit code says how it ended:
 

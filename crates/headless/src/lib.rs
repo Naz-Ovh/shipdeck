@@ -323,8 +323,8 @@ fn answer(paint: Paint, trust_new_host: bool, question: Question) {
             eprintln!(
                 "{}",
                 paint.error(&format!(
-                    "✘ {prompt}: nothing can be asked here. Use --key with a key without a \
-                     passphrase, or set SHIPDECK_PASSWORD"
+                    "✘ {prompt}: nothing can be asked here. Set SHIPDECK_KEY_PASSPHRASE, \
+                     use a key without a passphrase, or set SHIPDECK_PASSWORD"
                 ))
             );
             let _ = reply.send(None);

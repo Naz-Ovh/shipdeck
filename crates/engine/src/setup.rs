@@ -39,14 +39,18 @@ pub fn raw_url(file: &str) -> String {
     )
 }
 
-/// The command for one deployable. The key is the public half of `--key`,
-/// else of the alias's `IdentityFile`.
+/// The command for one deployable. The key is the public half of `--key`
+/// or the key text, else of the alias's `IdentityFile`.
 pub fn command(deployable: &Deployable, login: &Login) -> SetupCommand {
     let key = match login {
         Login::Key(path) => Some(path.clone()),
+        Login::KeyText(_) => None,
         Login::Password(_) | Login::Auto => deployable.endpoint.identity.clone(),
     };
-    let public = key.as_deref().and_then(public_key);
+    let public = match login {
+        Login::KeyText(text) => public_key_of(text),
+        _ => key.as_deref().and_then(public_key),
+    };
     let args = arguments(deployable, public.as_deref())
         .iter()
         .map(|arg| {
@@ -102,6 +106,12 @@ pub fn public_key(private_key: &Path) -> Option<String> {
             .map(str::to_string);
     }
     let key = russh::keys::ssh_key::PrivateKey::read_openssh_file(private_key).ok()?;
+    key.public_key().to_openssh().ok()
+}
+
+/// The public half of a private key given as text.
+pub fn public_key_of(text: &str) -> Option<String> {
+    let key = russh::keys::ssh_key::PrivateKey::from_openssh(text).ok()?;
     key.public_key().to_openssh().ok()
 }
 
