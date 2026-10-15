@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Status and logs</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/forgedoc@2.1.0/dist/themes/default.css" data-forgedoc="css" data-forgedoc-theme="default">
+</head>
+<body>
+<doc-page doc-id="shipdeck-status-logs" accent="teal" density="compact">
+
+<doc-header kicker="Plan · shipdeck status and logs">
+  Status and logs, for systemd and PM2
+  <p slot="lede">
+    See whether the app is up and read its log, from the TUI or a script,
+    the same way whichever manager runs it.
+  </p>
+</doc-header>
+
+<doc-chips>
+  <doc-chip kind="confirmed">systemd and PM2</doc-chip>
+  <doc-chip kind="confirmed">TUI and headless</doc-chip>
+  <doc-chip kind="confirmed">Stage 0: load the login environment</doc-chip>
+</doc-chips>
+
+<doc-note kind="success" title="Decided">
+  <ul>
+    <li>Status and logs work for both managers, in the TUI and in headless commands.</li>
+    <li>The engine reads them; the TUI and headless only show what it hands over, as with deploys.</li>
+    <li>Before anything else, remote scripts get the environment the login shell's startup files set (done).</li>
+  </ul>
+</doc-note>
+
+<doc-section title="Where it stands">
+  <ul>
+    <li><strong>Status</strong> is one word on the Deployables screen: <code>systemctl is-active</code>, or the PM2 state in the same words. It is fetched on <code>s</code>.</li>
+    <li><strong>Logs</strong> appear only after a failed release: the last 30 lines (<code>journalctl -n 30</code> through sudo, or <code>pm2 logs --nostream</code>). There is no way to follow them.</li>
+    <li><strong>Headless</strong> has <code>deploy</code>, <code>rollback</code> and <code>releases</code>, but no <code>status</code> or <code>logs</code>.</li>
+    <li><strong>PATH:</strong> a remote script is an SSH exec without a terminal, run with <code>sh -c</code>, so it reads no profile. A tool whose <code>PATH</code> is set in <code>~/.profile</code> or <code>~/.bashrc</code> (nvm, for one) is "not found", though a terminal finds it.</li>
+  </ul>
+</doc-section>
+
+<doc-section title="Stage 0: the login environment (done)">
+  <p>
+    Once per connection shipdeck starts the login shell the way
+    <code>ssh &lt;host&gt;</code> does for a terminal, <code>$SHELL -i -l</code>,
+    which runs <code>sh -c "export -p"</code>. POSIX prints the exported
+    variables in a form <code>sh</code> reads back, so that text goes in front
+    of every script as it is. Each shell reads its own files, so bash, zsh and
+    fish all work, and shipdeck names no tool.
+  </p>
+  <ul>
+    <li>Checked on two Ubuntu 24.04 servers with zsh and nvm in <code>~/.bashrc</code>: <code>pm2</code>, <code>node</code> and <code>npm</code> are found with it and not without.</li>
+    <li>Off with <code>ssh.shell_env: false</code> for one server, or <code>--no-shell-env</code> for a run.</li>
+    <li>A failing or slow (over 20 s) startup is a warning at preflight; commands then run without it.</li>
+  </ul>
+</doc-section>
+
+<doc-section title="What status shows">
+  <p>Neither manager needs sudo for this.</p>
+  <doc-matrix type="comparison">
+    <table>
+      <thead><tr><th></th><th>systemd</th><th>PM2</th></tr></thead>
+      <tbody>
+        <tr><td>Read with</td><td><code>systemctl show &lt;svc&gt; -p …</code></td><td><code>pm2 jlist</code></td></tr>
+        <tr><td>State</td><td><code>ActiveState</code> / <code>SubState</code></td><td><code>status</code> of each instance</td></tr>
+        <tr><td>Up since</td><td><code>ActiveEnterTimestamp</code></td><td><code>pm_uptime</code></td></tr>
+        <tr><td>PID</td><td><code>MainPID</code></td><td><code>pid</code> of each instance</td></tr>
+        <tr><td>Restarts</td><td><code>NRestarts</code></td><td><code>restart_time</code></td></tr>
+        <tr><td>Memory</td><td><code>MemoryCurrent</code></td><td><code>monit.memory</code></td></tr>
+        <tr><td>CPU</td><td><code>CPUUsageNSec</code>, two samples give a %</td><td><code>monit.cpu</code></td></tr>
+        <tr><td>Instances</td><td>1</td><td>1, or N in cluster mode</td></tr>
+        <tr><td>Release</td><td colspan="2"><code>current</code> → release id, for both</td></tr>
+      </tbody>
+    </table>
+  </doc-matrix>
+  <p>
+    The engine gets one <code>remote::ServiceStatus</code>: state, up since,
+    release, and a list of instances (pid, state, restarts, CPU, memory).
+    It replaces today's <code>Status</code>, which only has the state word.
+  </p>
+</doc-section>
+
+<doc-section title="What logs show">
+  <doc-matrix type="comparison">
+    <table>
+      <thead><tr><th></th><th>systemd</th><th>PM2</th></tr></thead>
+      <tbody>
+        <tr><td>Last N lines</td><td><code>journalctl -u &lt;svc&gt; -n 200 --no-pager -o short-iso</code></td><td><code>tail -n 200</code> on the out and error files <code>pm2 jlist</code> names</td></tr>
+        <tr><td>Follow</td><td>the same with <code>-f</code></td><td><code>tail -n 200 -F</code> on both files</td></tr>
+        <tr><td>stdout / stderr</td><td>one stream</td><td>kept apart, so errors can be coloured</td></tr>
+        <tr><td>Needs</td><td>journal access (below)</td><td>nothing: the deploy user owns <code>~/.pm2/logs</code></td></tr>
+      </tbody>
+    </table>
+  </doc-matrix>
+  <p>
+    The engine gets <code>Server::logs(n)</code> for the last lines and
+    <code>Server::follow_logs(n)</code>, which streams lines until it is
+    dropped; dropping it closes the SSH channel, which stops
+    <code>journalctl -f</code> or <code>tail -F</code> on the server. The
+    failed-release view keeps using <code>logs</code>, with more lines.
+  </p>
+  <p>
+    Writing systemd output to files (<code>StandardOutput=append:</code>)
+    is left out: it loses the journal's rotation, and the unit would need
+    a writable log folder.
+  </p>
+</doc-section>
+
+<doc-section title="Journal access for systemd">
+  <p>The deploy user cannot read another unit's journal on its own. Two ways:</p>
+  <doc-table size="sm">
+    <table>
+      <thead><tr><th>Way</th><th>Good</th><th>Costs</th></tr></thead>
+      <tbody>
+        <tr><td><doc-badge variant="success">recommended</doc-badge> Two more exact sudo commands: the <code>-n 200</code> and <code>-f -n 200</code> forms above</td><td>Same trust model as today: only this unit's log</td><td>The line count is fixed at 200; existing servers need <code>server-setup.sh</code> run again</td></tr>
+        <tr><td>The <code>systemd-journal</code> group</td><td>No sudo; any line count</td><td>The deploy user reads every log on the server</td></tr>
+      </tbody>
+    </table>
+  </doc-table>
+  <p>
+    With sudo, the two new commands go in their own list, not in
+    <code>remote::sudo_commands</code>: a server set up before this still
+    deploys, and only <code>logs</code> says "run server-setup.sh again".
+    The 30-line command stays as it is, so nothing already installed breaks.
+  </p>
+</doc-section>
+
+<doc-section title="Headless">
+  <doc-code lang="sh" title="new commands">
+shipdeck status ./scripts/deploy [my-api ...] [--json]
+shipdeck logs   ./scripts/deploy my-api [-n 200] [--follow]
+  </doc-code>
+  <ul>
+    <li><code>status</code> prints a table on stdout (or JSON with <code>--json</code>). Exit code 0 when every service is up, and a new code <strong>6</strong> when one is not. Codes are only added, never renumbered.</li>
+    <li><code>logs</code> prints lines on stdout. With <code>--follow</code> it runs until Ctrl-C, then exits 0. PM2 cluster lines are prefixed with the instance.</li>
+  </ul>
+</doc-section>
+
+<doc-section title="TUI">
+  <ul>
+    <li><strong>Deployables:</strong> the service line becomes <code>active · 4 instances · up 2h · 180 MB · 3% cpu · 0 restarts</code>.</li>
+    <li><strong>Logs screen</strong> (<code>l</code>, or tab <code>4</code>): the last 200 lines, then it follows. <code>↑</code> <code>↓</code> scroll and pause, <code>G</code> follows again, <code>esc</code> goes back and stops the follow.</li>
+    <li><strong>After a failure:</strong> the Operation screen says "<code>l</code> for logs".</li>
+  </ul>
+</doc-section>
+
+<doc-section title="Stages">
+  <doc-roadmap>
+    <doc-stage title="0 · Login environment" subtitle="done">
+      <ul>
+        <li><code>ssh::shell_env</code>, <code>ssh.shell_env</code>, <code>--no-shell-env</code>.</li>
+      </ul>
+    </doc-stage>
+    <doc-stage title="1 · Status in the engine" subtitle="both managers · next" current>
+      <ul>
+        <li><code>ServiceStatus</code> from <code>systemctl show</code> and <code>pm2 jlist</code>, tested on recorded outputs.</li>
+      </ul>
+    </doc-stage>
+    <doc-stage title="2 · Logs in the engine" subtitle="tail and follow">
+      <ul>
+        <li><code>logs</code> and <code>follow_logs</code>; a cancellable exec in <code>ssh</code>.</li>
+        <li>The two sudo commands in <code>server-setup.sh</code>, checked by <code>setup_test.rs</code>.</li>
+      </ul>
+    </doc-stage>
+    <doc-stage title="3 · Headless" subtitle="status and logs">
+      <ul>
+        <li>The two commands, exit code 6, README.</li>
+      </ul>
+    </doc-stage>
+    <doc-stage title="4 · TUI" subtitle="status line and Logs screen">
+      <ul>
+        <li>The richer status line and the Logs screen.</li>
+      </ul>
+    </doc-stage>
+    <doc-stage title="5 · End to end" subtitle="containers">
+      <ul>
+        <li>A systemd server and a PM2 server (node and pm2 through nvm): deploy, status, follow logs, a crash rolled back, and a reboot that brings the PM2 app back.</li>
+      </ul>
+    </doc-stage>
+  </doc-roadmap>
+</doc-section>
+
+<doc-section title="Your call">
+  <doc-checklist>
+    <li>Journal access: two exact sudo commands (recommended), or the <code>systemd-journal</code> group?</li>
+    <li>TUI status: refresh the selected deployable every 10 s, or only on <code>s</code>?</li>
+    <li>Headless <code>status --json</code>: now, or later?</li>
+  </doc-checklist>
+</doc-section>
+
+</doc-page>
+<script src="https://cdn.jsdelivr.net/npm/forgedoc@2.1.0/dist/forgedoc.iife.js" data-forgedoc="js" defer></script>
+</body>
+</html>
