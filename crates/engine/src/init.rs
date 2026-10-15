@@ -91,32 +91,107 @@ pub struct NewDeployable {
 }
 
 impl NewDeployable {
-    /// The `deploy.yaml` text.
+    /// The `deploy.yaml` text, with a short comment on each field.
     pub fn yaml(&self) -> String {
         let name = &self.name;
-        let mut out = format!(
-            "{modeline}\n# {comment}\nname: {q_name}\nproject: {project}\n\nssh:\n  host: {host}\n",
-            modeline = schema::modeline(),
-            comment = self.comment(),
-            q_name = quote(name),
-            project = quote(&self.project),
-            host = quote(&self.host),
+        let pm2 = self.manager == Manager::Pm2;
+        let mut y = Yaml::default();
+        y.raw(&schema::modeline());
+        y.raw(&format!("# {}", self.comment()));
+        y.raw(&format!("# Every field: {DOCS}"));
+        y.raw("");
+        y.line(
+            0,
+            &format!("name: {}", quote(name)),
+            "shown in shipdeck and as the service's description",
         );
-        if let Some(user) = &self.user {
-            out.push_str(&format!("  user: {}\n", quote(user)));
+        y.line(
+            0,
+            &format!("project: {}", quote(&self.project)),
+            "your source, relative to this file; local commands run there",
+        );
+        y.raw("");
+        y.raw("ssh:");
+        y.line(
+            2,
+            &format!("host: {}", quote(&self.host)),
+            "an address, or an alias from ~/.ssh/config",
+        );
+        match &self.user {
+            Some(user) => y.line(
+                2,
+                &format!("user: {}", quote(user)),
+                "logs in and deploys as this user",
+            ),
+            None => y.line(2, "# user: deploy", "default: the alias's User"),
         }
-        out.push_str(&format!(
-            "\nservice:\n  name: {}\n  dir: {}\n",
-            quote(name),
-            quote(&format!("/opt/{name}"))
+        y.line(2, "# port: 22", "default: the alias's Port, else 22");
+        y.raw("");
+        y.raw("service:");
+        let unit = if pm2 {
+            "the PM2 app's name".to_string()
+        } else {
+            format!("the unit: {name}.service")
+        };
+        y.line(2, &format!("name: {}", quote(name)), &unit);
+        y.line(
+            2,
+            &format!("dir: {}", quote(&format!("/opt/{name}"))),
+            "on the server: current/, releases/, backups/, shared/",
+        );
+        if pm2 {
+            y.line(
+                2,
+                "manager: pm2",
+                "runs as the SSH user, no sudo; the server needs pm2",
+            );
+        } else {
+            y.line(
+                2,
+                "manager: systemd",
+                "or pm2: runs as the SSH user, no sudo",
+            );
+        }
+        self.start(&mut y);
+        y.line(
+            2,
+            &format!("env_file: {ENV_FILE}"),
+            "the app's environment: fill in the .env next to this file",
+        );
+        y.line(
+            2,
+            "# shared: [uploads]",
+            "folders kept across releases, in shared/",
+        );
+        y.line(
+            2,
+            "# keep: { open: 5, compressed: 15 }",
+            "old releases kept for rollback",
+        );
+        if pm2 {
+            y.line(2, "# pm2:", "");
+            y.line(2, "#   options:", "PM2's own app properties:");
+            y.line(
+                2,
+                "#     max_memory_restart: 300M",
+                "https://pm2.keymetrics.io/docs/usage/application-declaration/",
+            );
+        }
+        y.raw("");
+        y.raw("pipeline:");
+        self.pipeline(&mut y);
+        y.raw("  # Waits for the service to be active; with a url, also until it answers 2xx.");
+        y.raw("  # health:");
+        y.raw(&format!(
+            "  #   url: http://127.0.0.1:{}/health",
+            self.port()
         ));
-        if self.manager == Manager::Pm2 {
-            out.push_str("  manager: pm2\n");
-        }
-        out.push_str(&self.service_lines());
-        out.push_str(&format!("  env_file: {ENV_FILE}\n\npipeline:\n"));
-        out.push_str(&self.pipeline());
-        out
+        y.line(
+            2,
+            "#   rollback: ask",
+            "or auto: roll back at once when it fails",
+        );
+        y.0
     }
 
     fn comment(&self) -> String {
@@ -130,58 +205,175 @@ impl NewDeployable {
             Preset::Python => "A Python app",
             Preset::Bun => "A Bun app",
         };
-        format!("{what}: {}.\n# Every field: {DOCS}", self.preset.summary())
+        format!("{what}: {}.", self.preset.summary())
     }
 
-    /// `start` and `env` under `service`, when the preset needs them.
-    fn service_lines(&self) -> String {
+    /// A port for the example health url.
+    fn port(&self) -> u16 {
+        match self.preset {
+            Preset::Node | Preset::Bun => 3000,
+            Preset::Python => 8000,
+            _ => 8080,
+        }
+    }
+
+    /// `start` and `env` under `service`.
+    fn start(&self, y: &mut Yaml) {
         let name = &self.name;
         match self.preset {
             Preset::Node => {
-                "  start: node dist/main.js\n  env: { NODE_ENV: production }\n".to_string()
+                y.line(
+                    2,
+                    "start: node dist/main.js",
+                    "run in the release; node is looked up on the server",
+                );
+                y.line(
+                    2,
+                    "env: { NODE_ENV: production }",
+                    "set for the app and server commands",
+                );
             }
-            Preset::Java | Preset::Kotlin => {
-                format!("  start: build/install/{name}/bin/{name}\n")
-            }
-            Preset::Python => "  start: .venv/bin/python main.py\n".to_string(),
-            // `./<binary>` is the default.
-            Preset::Go | Preset::Rust | Preset::Dart | Preset::Bun => String::new(),
+            Preset::Java | Preset::Kotlin => y.line(
+                2,
+                &format!("start: build/install/{name}/bin/{name}"),
+                "the script installDist writes; it runs java",
+            ),
+            Preset::Python => y.line(
+                2,
+                "start: .venv/bin/python main.py",
+                "run in the release; point it at your entry point",
+            ),
+            Preset::Go | Preset::Rust | Preset::Dart | Preset::Bun => y.line(
+                2,
+                &format!("# start: ./{name} --port {}", self.port()),
+                "default: the binary below, with no arguments",
+            ),
         }
     }
 
-    fn pipeline(&self) -> String {
+    fn pipeline(&self, y: &mut Yaml) {
         let name = &self.name;
-        let binary = |build: &str, path: &str| {
-            format!(
-                "  build:\n    run:\n      local: {build}\n  pack:\n    binary: {path}\n    files:\n      include:\n        deploy: [{ENV_FILE}]\n"
-            )
+        let requires = match self.preset {
+            Preset::Node => Some("npm"),
+            Preset::Java | Preset::Kotlin => Some("java"),
+            Preset::Python => Some("python3"),
+            _ => None,
         };
-        match self.preset {
-            Preset::Node => format!(
-                "  preflight:\n    requires: [npm]\n  build:\n    run:\n      local: [npm ci, npm run build]\n  pack:\n    files:\n      include:\n        project: [dist, package.json, package-lock.json]\n        deploy: [{ENV_FILE}]\n  setup:\n    run:\n      server: npm ci --omit=dev\n"
+        if let Some(tool) = requires {
+            y.raw("  preflight:");
+            y.line(
+                4,
+                &format!("requires: [{tool}]"),
+                "the server must have these; checked before the build",
+            );
+        }
+        let build = match self.preset {
+            Preset::Node => Some("[npm ci, npm run build]".to_string()),
+            Preset::Go => Some(format!(
+                "CGO_ENABLED=0 GOOS=linux go build -o dist/{name} ."
+            )),
+            Preset::Rust => Some("cargo build --release".to_string()),
+            Preset::Dart => Some(format!(
+                "[dart pub get, dart compile exe bin/server.dart -o dist/{name}]"
+            )),
+            Preset::Bun => Some(format!(
+                "[bun install, bun build ./src/index.ts --compile --target=bun-linux-x64 --outfile dist/{name}]"
+            )),
+            Preset::Java | Preset::Kotlin => Some("./gradlew installDist".to_string()),
+            Preset::Python => None,
+        };
+        if let Some(build) = build {
+            y.raw("  build:");
+            y.raw("    run:");
+            y.raw("      # Runs here, in project; $SHIPDECK_VERSION holds the release's version.");
+            y.raw(&format!("      local: {build}"));
+        }
+        y.raw("  pack:");
+        let binary = match self.preset {
+            Preset::Go | Preset::Dart | Preset::Bun => Some(format!("dist/{name}")),
+            Preset::Rust => Some(format!("target/release/{name}")),
+            _ => None,
+        };
+        if let Some(binary) = binary {
+            y.line(
+                4,
+                &format!("binary: {binary}"),
+                "what the build makes; checked against the server's CPU",
+            );
+        }
+        y.raw("    files:");
+        y.raw("      include:");
+        let project = match self.preset {
+            Preset::Node => Some("[dist, package.json, package-lock.json]".to_string()),
+            Preset::Java | Preset::Kotlin => Some(format!("[build/install/{name}]")),
+            Preset::Python => Some("[.]".to_string()),
+            _ => None,
+        };
+        match project {
+            Some(list) => y.line(
+                8,
+                &format!("project: {list}"),
+                "from project, at the same paths",
             ),
-            Preset::Go => binary(
-                &format!("CGO_ENABLED=0 GOOS=linux go build -o dist/{name} ."),
-                &format!("dist/{name}"),
-            ),
-            Preset::Rust => binary("cargo build --release", &format!("target/release/{name}")),
-            Preset::Dart => binary(
-                &format!("[dart pub get, dart compile exe bin/server.dart -o dist/{name}]"),
-                &format!("dist/{name}"),
-            ),
-            Preset::Bun => binary(
-                &format!(
-                    "[bun install, bun build ./src/index.ts --compile --target=bun-linux-x64 --outfile dist/{name}]"
-                ),
-                &format!("dist/{name}"),
-            ),
-            Preset::Java | Preset::Kotlin => format!(
-                "  preflight:\n    requires: [java]\n  build:\n    run:\n      local: ./gradlew installDist\n  pack:\n    files:\n      include:\n        project: [build/install/{name}]\n        deploy: [{ENV_FILE}]\n"
-            ),
-            Preset::Python => format!(
-                "  preflight:\n    requires: [python3]\n  pack:\n    files:\n      include:\n        project: [.]\n        deploy: [{ENV_FILE}]\n      exclude:\n        project: [.venv, \"**/__pycache__\", \"**/*.pyc\"]\n  setup:\n    run:\n      server:\n        - python3 -m venv .venv\n        - .venv/bin/pip install -q -r requirements.txt\n"
+            None => y.line(
+                8,
+                "# project: [templates]",
+                "files from project, at the same paths",
             ),
         }
+        y.line(
+            8,
+            &format!("deploy: [{ENV_FILE}]"),
+            "files next to this deploy.yaml",
+        );
+        if self.preset == Preset::Python {
+            y.raw("      exclude:");
+            y.line(
+                8,
+                "project: [.venv, \"**/__pycache__\", \"**/*.pyc\"]",
+                "left out of include",
+            );
+        }
+        let setup: &[&str] = match self.preset {
+            Preset::Node => &["npm ci --omit=dev"],
+            Preset::Python => &[
+                "python3 -m venv .venv",
+                ".venv/bin/pip install -q -r requirements.txt",
+            ],
+            _ => &[],
+        };
+        if !setup.is_empty() {
+            y.raw("  setup:");
+            y.raw("    run:");
+            y.raw("      # Runs on the server in the new release, before it goes live.");
+            y.raw("      server:");
+            for command in setup {
+                y.raw(&format!("        - {command}"));
+            }
+        }
+    }
+}
+
+/// Lines of YAML, with comments lined up after the values.
+#[derive(Default)]
+struct Yaml(String);
+
+impl Yaml {
+    /// The column comments start at, when the value leaves room.
+    const COMMENT_AT: usize = 36;
+
+    fn raw(&mut self, line: &str) {
+        self.0.push_str(line);
+        self.0.push('\n');
+    }
+
+    fn line(&mut self, indent: usize, text: &str, comment: &str) {
+        let text = format!("{:indent$}{text}", "");
+        if comment.is_empty() {
+            return self.raw(&text);
+        }
+        let width = Self::COMMENT_AT.max(text.len() + 2);
+        self.raw(&format!("{text:<width$}# {comment}"));
     }
 }
 

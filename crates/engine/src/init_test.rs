@@ -28,6 +28,14 @@ fn every_preset_passes_the_launch_checks_with_either_manager() {
                 .unwrap_or_else(|problems| panic!("{preset} {manager:?}: {problems:?}"));
             assert!(yaml.starts_with(&schema::modeline()), "{preset}");
             assert_eq!(yaml.contains("manager: pm2"), manager == Manager::Pm2);
+            // The fields the author is most likely to change say what they do.
+            for key in ["name:", "project:", "host:", "dir:", "env_file:"] {
+                let line = yaml
+                    .lines()
+                    .find(|l| l.trim_start().starts_with(key))
+                    .unwrap();
+                assert!(line.contains("  # "), "{preset}: {line}");
+            }
         }
     }
 }
@@ -48,13 +56,14 @@ fn presets_go_by_their_flag_names() {
 }
 
 #[test]
-fn values_are_quoted_and_a_missing_user_is_left_out() {
+fn values_are_quoted_and_a_missing_user_is_only_a_hint() {
     let mut new = new(Preset::Rust, Manager::Systemd);
     new.host = "prod # main".into();
     new.user = None;
     let yaml = new.yaml();
-    assert!(yaml.contains("  host: \"prod # main\"\n"), "{yaml}");
-    assert!(!yaml.contains("user:"), "{yaml}");
+    assert!(yaml.contains("  host: \"prod # main\"  "), "{yaml}");
+    assert!(yaml.contains("  # user: deploy  "), "{yaml}");
+    assert!(!yaml.contains("\n  user:"), "{yaml}");
     let config = crate::config::parse(&{
         let mut with_user = new.clone();
         with_user.user = Some("deploy".into());
