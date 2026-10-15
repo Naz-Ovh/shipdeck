@@ -1,13 +1,16 @@
 //! What shipdeck does on the server, as small `sh` scripts over one session.
 //!
 //! Layout under `service.dir`:
-//! `current -> releases/<id>`, `releases/<id>/`, `backups/<id>.tar.gz`, `shared/`.
+//! `current -> releases/<id>`, `releases/<id>/`, `backups/<id>.tar.zst`
+//! (`.tar.gz` from before backups), `shared/`.
 
+mod backup;
 mod health;
 mod pm2;
 mod preflight;
 mod releases;
 
+pub use backup::{Archive, Picked, ReleaseFile, pick};
 pub use health::{HttpCheck, Probe};
 pub use pm2::{PM2_NEWEST_MAJOR, app_state, check_version};
 pub use preflight::Facts;
@@ -162,11 +165,13 @@ echo \"unpacked $(find {id} -type f | wc -l) files into releases/{id}\"",
         Ok(())
     }
 
-    /// Removes every trace of a release that did not make it.
+    /// Removes every trace of a release that did not make it, its backup
+    /// included.
     pub async fn discard(&self, id: &str, report: &Reporter) -> Result<()> {
         ensure_id(id)?;
         let script = format!(
-            "cd {dir}/releases && rm -rf {id} .{id}.partial .{id}.tar.zst",
+            "cd {dir} && rm -rf releases/{id} releases/.{id}.partial releases/.{id}.tar.zst \
+backups/{id}.tar.zst backups/.{id}.tar.zst.part backups/.{id}.files",
             dir = self.q_dir()
         );
         self.run(&format!("remove releases/{id}"), &script, report)

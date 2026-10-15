@@ -13,7 +13,6 @@ service:
   env_file: .env                  # the service's environment; server commands load it too
   env:
     GOMAXPROCS: "2"
-  keep: { open: 3, compressed: 10 }
 
 pipeline:
   preflight:
@@ -29,7 +28,10 @@ pipeline:
       include:
         project: [templates]
         deploy: [.env, config.yaml]
+  backup:
+    keep: { open: 3, compressed: 10 }
   health:
     check:
       server: ./worker healthcheck  # runs in current/, retried until timeout_secs
+  failed:
     rollback: auto                  # no question: roll back at once

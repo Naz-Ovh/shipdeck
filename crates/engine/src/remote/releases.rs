@@ -1,9 +1,9 @@
-//! The releases on the server: listing them, keeping the newest `open`
-//! unpacked and the next `compressed` as tarballs, and unpacking a tarball
-//! again for a rollback.
+//! The releases on the server: listing them, and keeping the newest `open`
+//! unpacked and the next `compressed` only as their backup.
 
 use anyhow::Result;
 
+use super::backup::Archive;
 use super::{Server, ensure_id};
 use crate::config::{Keep, Manager};
 use crate::deploy::report::Reporter;
@@ -13,7 +13,7 @@ use crate::release::{Manifest, ReleaseName, is_safe_id};
 pub enum Kind {
     /// Unpacked in `releases/`, ready to switch to.
     Open,
-    /// A tarball in `backups/`.
+    /// Only its tarball in `backups/`.
     Compressed,
 }
 
@@ -24,7 +24,10 @@ pub struct ReleaseEntry {
     pub name: Option<ReleaseName>,
     pub kind: Kind,
     pub current: bool,
+    /// The folder's size when open, else the tarball's.
     pub size_bytes: Option<u64>,
+    /// What `backups/` holds for it.
+    pub backup: Option<Archive>,
     pub manifest: Option<Manifest>,
 }
 
@@ -45,68 +48,60 @@ pub struct Status {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RotationPlan {
-    /// Open releases to turn into tarballs.
+    /// Open releases whose folder goes; their backup stays.
+    pub close: Vec<String>,
+    /// Open releases from before backups, to turn whole into a `.tar.gz`.
     pub compress: Vec<String>,
-    /// Open releases to delete outright (too old to keep even as a tarball).
+    /// Open releases to delete outright (too old to keep even as a backup).
     pub drop_open: Vec<String>,
-    /// Tarballs to delete.
+    /// Backups to delete.
     pub drop_backup: Vec<String>,
 }
 
 impl RotationPlan {
     pub fn is_empty(&self) -> bool {
-        self.compress.is_empty() && self.drop_open.is_empty() && self.drop_backup.is_empty()
+        self.len() == 0
     }
 
     pub fn len(&self) -> usize {
-        self.compress.len() + self.drop_open.len() + self.drop_backup.len()
+        self.close.len() + self.compress.len() + self.drop_open.len() + self.drop_backup.len()
     }
 }
 
 /// Keeps `current` plus the newest releases up to `keep.open` unpacked, then
-/// the next `keep.compressed` as tarballs; everything older goes.
+/// the next `keep.compressed` only as their backup; everything older goes.
 pub fn plan_rotation(listing: &Listing, keep: Keep) -> RotationPlan {
-    let named = |kind: Kind| {
-        listing
-            .entries
-            .iter()
-            .filter(move |e| e.kind == kind && e.name.is_some())
-    };
-
+    let named: Vec<&ReleaseEntry> = listing
+        .entries
+        .iter()
+        .filter(|e| e.name.is_some())
+        .collect();
     let mut open_slots = keep.open;
-    if named(Kind::Open).any(|e| e.current) {
+    if named.iter().any(|e| e.current) {
         open_slots = open_slots.saturating_sub(1);
     }
-    let mut leaving_open = Vec::new();
-    for entry in named(Kind::Open).filter(|e| !e.current) {
-        if open_slots > 0 {
-            open_slots -= 1;
-        } else {
-            leaving_open.push(entry);
-        }
-    }
-
-    // Tarballs after this rotation, newest first.
-    let mut tarballs: Vec<(&ReleaseEntry, bool)> = named(Kind::Compressed)
-        .filter(|e| !leaving_open.iter().any(|o| o.id == e.id))
-        .map(|e| (e, false))
-        .chain(leaving_open.iter().map(|e| (*e, true)))
-        .collect();
-    tarballs.sort_by(|a, b| {
-        b.0.name
-            .as_ref()
-            .map(|n| n.stamp)
-            .cmp(&a.0.name.as_ref().map(|n| n.stamp))
-    });
-
+    let mut backup_slots = keep.compressed;
     let mut plan = RotationPlan::default();
-    for (index, (entry, from_open)) in tarballs.into_iter().enumerate() {
-        let keep_it = index < keep.compressed;
-        match (from_open, keep_it) {
-            (true, true) => plan.compress.push(entry.id.clone()),
-            (true, false) => plan.drop_open.push(entry.id.clone()),
-            (false, false) => plan.drop_backup.push(entry.id.clone()),
-            (false, true) => {}
+    // Newest first, as the listing is.
+    for entry in named.into_iter().filter(|e| !e.current) {
+        let id = entry.id.clone();
+        let open = entry.kind == Kind::Open;
+        if open && open_slots > 0 {
+            open_slots -= 1;
+        } else if backup_slots > 0 {
+            backup_slots -= 1;
+            match (open, entry.backup) {
+                (true, Some(_)) => plan.close.push(id),
+                (true, None) => plan.compress.push(id),
+                (false, _) => {}
+            }
+        } else {
+            if open {
+                plan.drop_open.push(id.clone());
+            }
+            if entry.backup.is_some() {
+                plan.drop_backup.push(id);
+            }
         }
     }
     plan
@@ -121,9 +116,12 @@ fn by_newest(entries: &mut [ReleaseEntry]) {
     });
 }
 
-/// Parses the tab-separated lines the listing script prints.
+/// Parses the tab-separated lines the listing script prints: `current`,
+/// `open` for each folder, `backup` for each tarball.
 pub(super) fn parse_listing(text: &str) -> Listing {
     let mut listing = Listing::default();
+    let mut backups: Vec<(&str, Option<u64>, Archive)> = Vec::new();
+    let kb = |text: &str| text.trim().parse::<u64>().ok().map(|kb| kb * 1024);
     for line in text.lines() {
         let fields: Vec<&str> = line.split('\t').collect();
         match fields.as_slice() {
@@ -133,23 +131,46 @@ pub(super) fn parse_listing(text: &str) -> Listing {
                     listing.current = Some(id.to_string());
                 }
             }
-            [kind @ ("open" | "compressed"), id, kb, rest @ ..] if is_safe_id(id) => {
+            ["open", id, size, rest @ ..] if is_safe_id(id) => {
                 listing.entries.push(ReleaseEntry {
                     id: id.to_string(),
                     name: ReleaseName::parse(id),
-                    kind: if *kind == "open" {
-                        Kind::Open
-                    } else {
-                        Kind::Compressed
-                    },
+                    kind: Kind::Open,
                     current: false,
-                    size_bytes: kb.trim().parse::<u64>().ok().map(|kb| kb * 1024),
+                    size_bytes: kb(size),
+                    backup: None,
                     manifest: rest
                         .first()
                         .and_then(|json| serde_json::from_str(json).ok()),
                 });
             }
+            ["backup", id, size, extension] if is_safe_id(id) => {
+                let archive = match *extension {
+                    "tar.zst" => Archive::Backup,
+                    "tar.gz" => Archive::Whole,
+                    _ => continue,
+                };
+                backups.push((id, kb(size), archive));
+            }
             _ => {}
+        }
+    }
+    // A backup made after setup wins over an old whole-release tarball.
+    backups.sort_by_key(|(_, _, archive)| *archive != Archive::Backup);
+    for (id, size, archive) in backups {
+        match listing.entries.iter_mut().find(|e| e.id == id) {
+            Some(entry) => {
+                entry.backup.get_or_insert(archive);
+            }
+            None => listing.entries.push(ReleaseEntry {
+                id: id.to_string(),
+                name: ReleaseName::parse(id),
+                kind: Kind::Compressed,
+                current: false,
+                size_bytes: size,
+                backup: Some(archive),
+                manifest: None,
+            }),
         }
     }
     for entry in &mut listing.entries {
@@ -201,11 +222,13 @@ for d in releases/*/; do
   js=$(tr -d '\\n\\t' < \"$d/release.json\" 2>/dev/null)
   printf 'open\\t%s\\t%s\\t%s\\n' \"$id\" \"$kb\" \"$js\"
 done
-for f in backups/*.tar.gz; do
-  [ -f \"$f\" ] || continue
-  id=$(basename \"$f\" .tar.gz)
-  kb=$(du -k \"$f\" 2>/dev/null | cut -f1)
-  printf 'compressed\\t%s\\t%s\\n' \"$id\" \"$kb\"
+for ext in tar.zst tar.gz; do
+  for f in backups/*.$ext; do
+    [ -f \"$f\" ] || continue
+    id=$(basename \"$f\" .$ext)
+    kb=$(du -k \"$f\" 2>/dev/null | cut -f1)
+    printf 'backup\\t%s\\t%s\\t%s\\n' \"$id\" \"$kb\" \"$ext\"
+  done
 done",
             dir = self.q_dir()
         );
@@ -217,7 +240,8 @@ done",
         Ok(parse_listing(&out.stdout))
     }
 
-    /// `releases/<id>/` → `backups/<id>.tar.gz`
+    /// `releases/<id>/` → `backups/<id>.tar.gz`, whole, for a release from
+    /// before shipdeck made backups.
     pub async fn compress(&self, id: &str, report: &Reporter) -> Result<()> {
         ensure_id(id)?;
         let script = format!(
@@ -242,29 +266,11 @@ rm -rf releases/{id}",
 
     pub async fn drop_backup(&self, id: &str, report: &Reporter) -> Result<()> {
         ensure_id(id)?;
-        let script = format!("cd {dir} && rm -f backups/{id}.tar.gz", dir = self.q_dir());
-        self.run(&format!("delete backups/{id}.tar.gz"), &script, report)
-            .await?;
-        Ok(())
-    }
-
-    /// `backups/<id>.tar.gz` → `releases/<id>/`, so it can be switched to.
-    pub async fn restore(&self, id: &str, report: &Reporter) -> Result<()> {
-        ensure_id(id)?;
         let script = format!(
-            "set -e
-cd {dir}
-if [ -d releases/{id} ]; then echo 'releases/{id} is already unpacked'; exit 0; fi
-rm -rf releases/.{id}.partial
-mkdir -p releases/.{id}.partial
-tar -xzpf backups/{id}.tar.gz -C releases/.{id}.partial
-mv releases/.{id}.partial/{id} releases/{id}
-rmdir releases/.{id}.partial
-rm -f backups/{id}.tar.gz
-echo 'unpacked backups/{id}.tar.gz into releases/{id}'",
+            "cd {dir} && rm -f backups/{id}.tar.zst backups/{id}.tar.gz",
             dir = self.q_dir()
         );
-        self.run(&format!("unpack backups/{id}.tar.gz"), &script, report)
+        self.run(&format!("delete the backup of {id}"), &script, report)
             .await?;
         Ok(())
     }

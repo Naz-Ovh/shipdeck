@@ -55,7 +55,7 @@ fn reporter() -> (Reporter, UnboundedReceiver<OpUpdate>) {
 }
 
 #[test]
-fn every_deploy_has_the_ten_steps_and_failed_only_with_commands() {
+fn every_deploy_has_the_eleven_steps_and_failed_only_with_commands() {
     let plain = deployable(NODE);
     assert_eq!(
         deploy_step_names(&plain.config),
@@ -66,6 +66,7 @@ fn every_deploy_has_the_ten_steps_and_failed_only_with_commands() {
             "Upload",
             "Unpack",
             "Setup",
+            "Backup",
             "Switch",
             "Restart",
             "Health",
@@ -74,13 +75,15 @@ fn every_deploy_has_the_ten_steps_and_failed_only_with_commands() {
     );
     assert_eq!(
         rollback_step_names(&plain.config),
-        ["Connect", "Unpack", "Switch", "Restart", "Health", "Done"]
+        [
+            "Connect", "Unpack", "Setup", "Switch", "Restart", "Health", "Done"
+        ]
     );
     let alerting = deployable(&format!(
         "{NODE}  failed: {{ run: {{ local: ./alert }} }}\n"
     ));
     assert_eq!(deploy_steps(&alerting.config).last(), Some(&Step::Failed));
-    assert_eq!(rollback_steps(&alerting.config).len(), 7);
+    assert_eq!(rollback_steps(&alerting.config).len(), 8);
 }
 
 #[test]
@@ -123,8 +126,8 @@ fn skipping_the_rest_leaves_failed_to_run() {
             skipped.push(step);
         }
     }
-    // Done (index 9) is skipped; Failed (index 10) is not.
-    assert_eq!(skipped, [9]);
+    // Done (index 10) is skipped; Failed (index 11) is not.
+    assert_eq!(skipped, [10]);
 }
 
 #[tokio::test]
@@ -167,7 +170,7 @@ async fn with_nobody_to_ask_or_auto_it_rolls_back() {
             .await
     );
 
-    let auto = deployable(&format!("{NODE}  health: {{ rollback: auto }}\n"));
+    let auto = deployable(&format!("{NODE}  failed: {{ rollback: auto }}\n"));
     let (report, mut rx) = reporter();
     let run = Run::new(&auto, &report, deploy_steps(&auto.config), Action::Deploy);
     assert!(

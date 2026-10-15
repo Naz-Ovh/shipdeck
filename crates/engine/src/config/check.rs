@@ -526,7 +526,7 @@ const MOVED: [(&str, &str, &str); 14] = [
         "bundle",
         "it is `pipeline.pack.files.include.deploy` now",
     ),
-    ("", "releases", "it is `service.keep` now"),
+    ("", "releases", "it is `pipeline.backup.keep` now"),
     ("", "health", "it is `pipeline.health` now"),
     ("service", "service", "the unit's name is `service.name`"),
     (
@@ -562,7 +562,18 @@ const MOVED: [(&str, &str, &str); 14] = [
     (
         "pipeline",
         "rotate",
-        "old releases are tidied in done; `service.keep` says how many stay",
+        "old releases are tidied in done; `pipeline.backup.keep` says how many stay",
+    ),
+];
+
+/// Keys that moved after 0.3. Only the key is in the wrong place, so the
+/// rest of the file is still checked.
+const RENAMED: [(&str, &str, &str); 2] = [
+    ("service", "keep", "it is `pipeline.backup.keep` now"),
+    (
+        "pipeline.health",
+        "rollback",
+        "it is `pipeline.failed.rollback` now; it covers a failed switch or restart too",
     ),
 ];
 
@@ -583,6 +594,12 @@ fn unknown_key(path: &[String], known: &[&str], at: Span) -> Problem {
         return Problem::new(format!("`{full}` moved in shipdeck 0.3"))
             .at(Some(at))
             .label("a 0.2 key")
+            .help(*help);
+    }
+    if let Some((_, _, help)) = RENAMED.iter().find(|(p, k, _)| *p == parent && *k == key) {
+        return Problem::new(format!("`{full}` moved"))
+            .at(Some(at))
+            .label("moved")
             .help(*help);
     }
 

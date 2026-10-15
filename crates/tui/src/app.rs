@@ -16,7 +16,7 @@ use shipdeck_engine::deploy;
 use shipdeck_engine::deploy::report::{
     LogKind, OpEvent, OpId, OpUpdate, Outcome, Reporter, RollbackQuestion, StepState, Unit,
 };
-use shipdeck_engine::remote::{Kind, Listing, Server, Status};
+use shipdeck_engine::remote::{Archive, Kind, Listing, Server, Status};
 use shipdeck_engine::ssh::{Pool, Question};
 
 /// Log lines kept per operation; older ones scroll away.
@@ -261,7 +261,8 @@ pub enum Modal {
     ConfirmRollback {
         deployable: usize,
         target: String,
-        kind: Kind,
+        /// What it is unpacked from first; `None` when it is open.
+        from: Option<Archive>,
         current: Option<String>,
     },
     ConfirmQuit,
@@ -803,7 +804,7 @@ impl App {
         let modal = Modal::ConfirmRollback {
             deployable: view.deployable,
             target: entry.id.clone(),
-            kind: entry.kind,
+            from: entry.backup.filter(|_| entry.kind == Kind::Compressed),
             current: listing.current.clone(),
         };
         self.modals.push_back(modal);

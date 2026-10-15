@@ -235,6 +235,21 @@ fn details(
     }
     step.commands("setup", "server", &pipeline.setup.run.server);
     step.commands("setup", "check", &pipeline.setup.check.server);
+    let backup = &pipeline.backup;
+    if backup.keep.compressed == 0 {
+        step.faint("backup", "none: keep.compressed is 0");
+    } else {
+        let files = &backup.files;
+        let mut takes: Vec<&str> = Vec::new();
+        if files.deployed {
+            takes.push("deployed files");
+        }
+        takes.extend(files.include.iter().map(String::as_str));
+        step.text("backup", "takes", takes.join(", "));
+        if !files.exclude.is_empty() {
+            step.text("backup", "leaves", files.exclude.join(", "));
+        }
+    }
     let health = &pipeline.health;
     let waits = match &health.url {
         Some(url) => format!("{url} · {}s", health.timeout_secs),
@@ -247,13 +262,13 @@ fn details(
     step.text("health", "waits", waits);
     step.commands("health", "server", &health.check.server);
     step.commands("health", "local", &health.check.local);
-    let rollback = match health.rollback {
+    step.commands("done", "server", &pipeline.done.run.server);
+    step.commands("done", "local", &pipeline.done.run.local);
+    let rollback = match pipeline.failed.rollback {
         Rollback::Ask => format!("asks, then rolls back after {ROLLBACK_ANSWER_SECS}s"),
         Rollback::Auto => "rolls back at once".to_string(),
     };
-    step.text("health", "failing", rollback);
-    step.commands("done", "server", &pipeline.done.run.server);
-    step.commands("done", "local", &pipeline.done.run.local);
+    step.text("failed", "policy", rollback);
     step.commands("failed", "local", &pipeline.failed.run.local);
 
     section(&mut lines, "Policy");
@@ -263,7 +278,7 @@ fn details(
         vec![Span::styled(
             format!(
                 "{} unpacked + {} compressed",
-                service.keep.open, service.keep.compressed
+                pipeline.backup.keep.open, pipeline.backup.keep.compressed
             ),
             theme::text(),
         )],

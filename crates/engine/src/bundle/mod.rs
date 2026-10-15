@@ -27,6 +27,8 @@ const LEVEL: i32 = 9;
 pub struct Bundle {
     pub data: Vec<u8>,
     pub files: usize,
+    /// Every path in it, as it lands in the release.
+    pub paths: Vec<String>,
     /// Size before compression.
     pub input_bytes: u64,
     /// Project files a file from the deploy folder replaced.
@@ -113,6 +115,7 @@ pub fn pack(
         Vec::new()
     };
     let entries = collect(deployable, manifest, own, selection)?;
+    let paths = entries.iter().map(|e| e.path.clone()).collect();
     let total: u64 = entries.iter().map(|e| e.size).sum();
     let files = entries
         .iter()
@@ -174,6 +177,7 @@ pub fn pack(
     Ok(Bundle {
         data,
         files,
+        paths,
         input_bytes: total,
         replaced,
         unused_ecosystem,

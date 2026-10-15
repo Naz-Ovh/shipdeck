@@ -22,6 +22,7 @@ pub fn check(config: &DeployConfig, root: &Node) -> Vec<Problem> {
     rules.service(config);
     rules.pm2(config);
     rules.pipeline(config);
+    rules.backup(config);
     rules.files(config);
     rules.problems
 }
@@ -234,14 +235,6 @@ impl Rules<'_> {
                 seen.push(stored);
             }
         }
-        if service.keep.open < 1 {
-            self.fail(
-                &["service", "keep", "open"],
-                "`service.keep.open` must be at least 1",
-                "the live release counts",
-                "",
-            );
-        }
     }
 
     fn pm2(&mut self, config: &DeployConfig) {
@@ -440,6 +433,77 @@ impl Rules<'_> {
                 "`pipeline.health.timeout_secs` must be at least 3",
                 "too short",
                 "a release counts as up after 3 healthy seconds",
+            );
+        }
+    }
+
+    fn backup(&mut self, config: &DeployConfig) {
+        let backup = &config.pipeline.backup;
+        if backup.keep.open < 1 {
+            self.fail(
+                &["pipeline", "backup", "keep", "open"],
+                "`pipeline.backup.keep.open` must be at least 1",
+                "the live release counts",
+                "",
+            );
+        }
+        let files = &backup.files;
+        let shared: Vec<String> = config
+            .service
+            .shared
+            .iter()
+            .map(|s| release_path(s))
+            .collect();
+        for (list, entries) in [("include", &files.include), ("exclude", &files.exclude)] {
+            let mut literals: Vec<String> = Vec::new();
+            for (index, text) in entries.iter().enumerate() {
+                let index = index.to_string();
+                let at = ["pipeline", "backup", "files", list, &index];
+                let pattern = match Pattern::parse(text) {
+                    Ok(pattern) => pattern,
+                    Err(why) => {
+                        let help = if why.contains("..") {
+                            "a pattern stays inside the release"
+                        } else {
+                            ""
+                        };
+                        self.fail(&at, format!("{text:?} {why}"), "not a usable pattern", help);
+                        continue;
+                    }
+                };
+                let Some(literal) = pattern.literal() else {
+                    continue;
+                };
+                if literals.contains(&literal) {
+                    self.fail(
+                        &at,
+                        format!("{text:?} is listed twice"),
+                        "again",
+                        "remove one",
+                    );
+                } else if list == "include"
+                    && let Some(shared) = shared
+                        .iter()
+                        .find(|shared| !literal.is_empty() && overlaps(shared, &literal))
+                {
+                    self.fail(
+                        &at,
+                        format!("{literal:?} is in `service.shared`, so no backup holds it"),
+                        "shared across releases",
+                        &format!("{shared} lives in shared/{shared}, outside every release"),
+                    );
+                } else {
+                    literals.push(literal);
+                }
+            }
+        }
+        let brings_something = files.deployed || files.include.iter().any(|p| !p.starts_with('!'));
+        if !brings_something && backup.keep.compressed > 0 {
+            self.fail(
+                &["pipeline", "backup", "files"],
+                "the backup would hold nothing but release.json and the service file",
+                "nothing to back up",
+                "set `deployed: true`, list paths in `include`, or keep no backups with `keep.compressed: 0`",
             );
         }
     }

@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Cell, Paragraph, Row, Table, Wrap};
 
 use shipdeck_engine::human;
-use shipdeck_engine::remote::{Kind, Listing, ReleaseEntry};
+use shipdeck_engine::remote::{Archive, Kind, Listing, ReleaseEntry};
 
 use super::app::{App, Fetch};
 use super::theme::{self, ACCENT, ERR, OK, SURFACE, TEXT, VIOLET};
@@ -109,7 +109,13 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     }
 
     let selected = view.table.selected().and_then(|i| listing.entries.get(i));
-    detail(frame, detail_area, listing, selected, config.service.keep);
+    detail(
+        frame,
+        detail_area,
+        listing,
+        selected,
+        config.pipeline.backup.keep,
+    );
 }
 
 fn row(entry: &ReleaseEntry) -> Row<'static> {
@@ -130,7 +136,13 @@ fn row(entry: &ReleaseEntry) -> Row<'static> {
         (true, _, _) => theme::badge("LIVE", OK),
         (_, _, false) => Span::styled("not ours", theme::faint()),
         (_, Kind::Open, _) => Span::styled("unpacked", Style::new().fg(ACCENT)),
-        (_, Kind::Compressed, _) => Span::styled("tar.gz", Style::new().fg(VIOLET)),
+        (_, Kind::Compressed, _) => Span::styled(
+            match entry.backup {
+                Some(Archive::Whole) => "tar.gz",
+                _ => "backup",
+            },
+            Style::new().fg(VIOLET),
+        ),
     };
     let marker = if entry.current {
         Span::styled("●", theme::bold(OK))
@@ -217,7 +229,12 @@ fn detail(
                 theme::bold(ACCENT),
             ),
             (_, Kind::Compressed, _) => Span::styled(
-                "⏎  roll back to this release (unpack, switch + restart)",
+                match entry.backup {
+                    Some(Archive::Whole) => {
+                        "⏎  roll back to this release (unpack, switch + restart)"
+                    }
+                    _ => "⏎  roll back to this release (unpack, setup, switch + restart)",
+                },
                 theme::bold(ACCENT),
             ),
         };

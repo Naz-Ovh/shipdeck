@@ -163,11 +163,6 @@ impl NewDeployable {
             "# shared: [uploads]",
             "folders kept across releases, in shared/",
         );
-        y.line(
-            2,
-            "# keep: { open: 5, compressed: 15 }",
-            "old releases kept for rollback",
-        );
         if pm2 {
             y.line(2, "# pm2:", "");
             y.line(2, "#   options:", "PM2's own app properties:");
@@ -180,12 +175,26 @@ impl NewDeployable {
         y.raw("");
         y.raw("pipeline:");
         self.pipeline(&mut y);
+        y.raw("  # What of each release stays for rollback once its folder goes.");
+        y.raw("  # backup:");
+        y.raw("  #   files:");
+        y.line(
+            2,
+            "#     include: [data]",
+            "files setup made that it cannot make again",
+        );
+        y.line(
+            2,
+            "#   keep: { open: 5, compressed: 15 }",
+            "releases kept unpacked, then as backups",
+        );
         y.raw("  # Waits for the service to be active; with a url, also until it answers 2xx.");
         y.raw("  # health:");
         y.raw(&format!(
             "  #   url: http://127.0.0.1:{}/health",
             self.port()
         ));
+        y.raw("  # failed:");
         y.line(
             2,
             "#   rollback: ask",

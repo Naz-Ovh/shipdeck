@@ -16,7 +16,7 @@ use shipdeck_engine::deploy::report::{
     LogKind, OpEvent, OpUpdate, Outcome, RollbackQuestion, StepState, Unit,
 };
 use shipdeck_engine::release::ReleaseName;
-use shipdeck_engine::remote::{Kind, Listing, ReleaseEntry, Status};
+use shipdeck_engine::remote::{Archive, Kind, Listing, ReleaseEntry, Status};
 use shipdeck_engine::ssh::ssh_config::HostConfig;
 use shipdeck_engine::ssh::{Endpoint, Login, Pool};
 
@@ -267,6 +267,11 @@ fn listing() -> Listing {
             kind: if i < 2 { Kind::Open } else { Kind::Compressed },
             current: i == 0,
             size_bytes: Some(if i < 2 { 31_000_000 } else { 11_000_000 }),
+            backup: Some(if i < 3 {
+                Archive::Backup
+            } else {
+                Archive::Whole
+            }),
             manifest: None,
         })
         .collect();
@@ -355,7 +360,7 @@ async fn draws_every_screen_at_common_and_small_sizes() {
         app.modals.push_back(Modal::ConfirmRollback {
             deployable: 0,
             target: RELEASES[2].into(),
-            kind: Kind::Compressed,
+            from: Some(Archive::Backup),
             current: Some(RELEASES[0].into()),
         });
         render(&mut app, width, height, "confirm-rollback");
@@ -407,6 +412,7 @@ async fn draws_a_node_pipeline_and_the_rollback_question() {
                 "Upload",
                 "Unpack",
                 "Setup",
+                "Backup",
                 "Switch",
                 "Restart",
                 "Health",

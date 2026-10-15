@@ -5,16 +5,32 @@ fn id(day: u32) -> String {
     format!("v0.1.{day}-abc{day:04}-202610{day:02}.120000")
 }
 
-fn listing(open: &[u32], compressed: &[u32], current: Option<u32>) -> Listing {
+/// `open` days have a folder and a backup; `backups`
+/// days have only their tarball.
+fn listing(open: &[u32], backups: &[u32], current: Option<u32>) -> Listing {
+    listing_of(open, backups, current, &[])
+}
+
+/// Like [`listing`]; `before_backups` are open releases from before
+/// shipdeck made backups, so they have none.
+fn listing_of(
+    open: &[u32],
+    backups: &[u32],
+    current: Option<u32>,
+    before_backups: &[u32],
+) -> Listing {
     let mut text = String::new();
     if let Some(day) = current {
         text.push_str(&format!("current\treleases/{}\n", id(day)));
     }
     for day in open {
         text.push_str(&format!("open\t{}\t100\t\n", id(*day)));
+        if !before_backups.contains(day) {
+            text.push_str(&format!("backup\t{}\t4\ttar.zst\n", id(*day)));
+        }
     }
-    for day in compressed {
-        text.push_str(&format!("compressed\t{}\t40\n", id(*day)));
+    for day in backups {
+        text.push_str(&format!("backup\t{}\t40\ttar.zst\n", id(*day)));
     }
     parse_listing(&text)
 }
@@ -31,7 +47,25 @@ fn parses_and_sorts_newest_first() {
     assert_eq!(listing.current, Some(id(7)));
     assert!(listing.entries[1].current);
     assert_eq!(listing.entries[0].size_bytes, Some(100 * 1024));
+    assert_eq!(listing.entries[0].backup, Some(Archive::Backup));
     assert_eq!(listing.entries[3].kind, Kind::Compressed);
+    assert_eq!(listing.entries[3].size_bytes, Some(40 * 1024));
+}
+
+#[test]
+fn reads_whole_release_tarballs_from_before_backups() {
+    let text = format!(
+        "backup\t{}\t40\ttar.gz\nopen\t{}\t100\t\nbackup\t{}\t9\ttar.zst\nbackup\t{}\t40\ttar.gz\n",
+        id(1),
+        id(2),
+        id(2),
+        id(2)
+    );
+    let listing = parse_listing(&text);
+    assert_eq!(listing.entries.len(), 2);
+    assert_eq!(listing.entries[0].kind, Kind::Open);
+    assert_eq!(listing.entries[0].backup, Some(Archive::Backup));
+    assert_eq!(listing.entries[1].backup, Some(Archive::Whole));
 }
 
 #[test]
@@ -60,24 +94,41 @@ fn nothing_to_do_within_limits() {
 }
 
 #[test]
-fn compresses_beyond_open_and_drops_beyond_compressed() {
-    // 7 open (current = newest), 2 tarballs, keep 5 + 3.
+fn closes_beyond_open_and_drops_beyond_compressed() {
+    // 7 open (current = newest), 2 backups only, keep 5 + 3.
     let listing = listing(&[3, 4, 5, 6, 7, 8, 9], &[1, 2], Some(9));
     let plan = plan_rotation(&listing, keep(5, 3));
-    assert_eq!(plan.compress, [id(4), id(3)]);
-    assert_eq!(plan.drop_open, Vec::<String>::new());
-    // Tarballs afterwards, newest first: 4, 3, 2 kept; 1 dropped.
+    // 4 and 3 leave the open tier; their backups stay.
+    assert_eq!(plan.close, [id(4), id(3)]);
+    assert!(plan.compress.is_empty() && plan.drop_open.is_empty());
+    // Backups afterwards, newest first: 4, 3, 2 kept; 1 dropped.
     assert_eq!(plan.drop_backup, [id(1)]);
 }
 
 #[test]
-fn deletes_open_release_that_is_too_old_even_for_a_tarball() {
+fn an_open_release_too_old_for_a_backup_goes_with_its_backup() {
     let listing = listing(&[1, 5, 6], &[2, 3, 4], Some(6));
     let plan = plan_rotation(&listing, keep(2, 3));
-    // Open 1 leaves; tarballs would be 4, 3, 2, 1 → 1 is past the limit.
-    assert_eq!(plan.compress, Vec::<String>::new());
+    // Open 1 leaves; backups would be 4, 3, 2, 1 → 1 is past the limit.
+    assert!(plan.close.is_empty());
     assert_eq!(plan.drop_open, [id(1)]);
-    assert!(plan.drop_backup.is_empty());
+    assert_eq!(plan.drop_backup, [id(1)]);
+}
+
+#[test]
+fn a_release_from_before_backups_is_compressed_whole() {
+    let listing = listing_of(&[1, 2, 3], &[], Some(3), &[1]);
+    let plan = plan_rotation(&listing, keep(1, 5));
+    assert_eq!(plan.close, [id(2)]);
+    assert_eq!(plan.compress, [id(1)]);
+}
+
+#[test]
+fn keeping_no_backups_deletes_what_leaves_the_open_tier() {
+    let listing = listing_of(&[1, 2, 3], &[], Some(3), &[1, 2, 3]);
+    let plan = plan_rotation(&listing, keep(2, 0));
+    assert_eq!(plan.drop_open, [id(1)]);
+    assert!(plan.drop_backup.is_empty() && plan.close.is_empty());
 }
 
 #[test]
@@ -85,6 +136,6 @@ fn current_is_kept_after_rolling_back_to_an_older_release() {
     let listing = listing(&[1, 2, 3, 4], &[], Some(1));
     let plan = plan_rotation(&listing, keep(2, 10));
     // Current (1) plus the newest other one (4) stay open.
-    assert_eq!(plan.compress, [id(3), id(2)]);
-    assert!(!plan.compress.contains(&id(1)));
+    assert_eq!(plan.close, [id(3), id(2)]);
+    assert!(!plan.close.contains(&id(1)));
 }

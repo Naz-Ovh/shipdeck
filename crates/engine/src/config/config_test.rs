@@ -26,7 +26,6 @@ service:
   env_file: .env
   env: { NODE_ENV: production }
   shared: [uploads]
-  keep: { open: 3, compressed: 7 }
 pipeline:
   preflight:
     requires: [node, npm]
@@ -51,18 +50,23 @@ pipeline:
         - npm run migrate
     check:
       server: node --check dist/main.js
+  backup:
+    files:
+      include: [data/keys]
+      exclude: [\"**/*.map\"]
+    keep: { open: 3, compressed: 7 }
   health:
     url: http://127.0.0.1:3000/health
     check:
       server: ./bin/smoke-test
       local: curl -fsS https://web.example.com/health
     timeout_secs: 30
-    rollback: auto
   done:
     run:
       server: ./bin/warm-cache
       local: ./notify.sh \"web $SHIPDECK_VERSION is live\"
   failed:
+    rollback: auto
     run:
       local: ./notify.sh \"failed at $SHIPDECK_STEP\"
 ";
@@ -108,16 +112,18 @@ fn fills_in_defaults() {
     let config = sample();
     assert_eq!(config.project, ".");
     assert_eq!(config.ssh.port, None);
+    let pipeline = &config.pipeline;
     assert_eq!(
-        config.service.keep,
+        pipeline.backup.keep,
         Keep {
             open: 5,
             compressed: 15
         }
     );
-    let pipeline = &config.pipeline;
+    assert!(pipeline.backup.files.deployed);
+    assert!(pipeline.backup.files.include.is_empty());
     assert_eq!(pipeline.health.timeout_secs, 20);
-    assert_eq!(pipeline.health.rollback, Rollback::Ask);
+    assert_eq!(pipeline.failed.rollback, Rollback::Ask);
     assert!(pipeline.preflight.run.local.is_empty() && pipeline.done.run.server.is_empty());
     assert_eq!(pipeline.build.run.local.0, ["cargo build --release"]);
 }
@@ -127,14 +133,16 @@ fn reads_every_step_of_the_full_example() {
     let config = parse(NODE).unwrap();
     assert_eq!(config.project, "../../../web");
     assert_eq!(config.service.shared, ["uploads"]);
+    let p = &config.pipeline;
     assert_eq!(
-        config.service.keep,
+        p.backup.keep,
         Keep {
             open: 3,
             compressed: 7
         }
     );
-    let p = &config.pipeline;
+    assert_eq!(p.backup.files.include, ["data/keys"]);
+    assert_eq!(p.backup.files.exclude, ["**/*.map"]);
     assert_eq!(p.preflight.requires, ["node", "npm"]);
     assert_eq!(p.preflight.run.server.0, ["pg_isready -q"]);
     assert_eq!(p.build.run.local.0, ["npm ci", "npm run build"]);
@@ -143,7 +151,7 @@ fn reads_every_step_of_the_full_example() {
     assert_eq!(p.setup.run.server.len(), 2);
     assert_eq!(p.setup.check.server.0, ["node --check dist/main.js"]);
     assert_eq!(p.health.timeout_secs, 30);
-    assert_eq!(p.health.rollback, Rollback::Auto);
+    assert_eq!(p.failed.rollback, Rollback::Auto);
     assert_eq!(p.health.check.local.len(), 1);
     assert_eq!(
         p.done.run.local.0,
@@ -199,6 +207,7 @@ pipeline:
     binary: target/release/demo
   health:
     timeout_secs: 1
+  failed:
     rollback: later
 ",
     );
@@ -213,7 +222,7 @@ pipeline:
             (3, "`service.dir` must be an absolute path"),
             (5, "unpack does not take commands"),
             (10, "`pipeline.health.timeout_secs` must be at least 3"),
-            (11, "`pipeline.health.rollback` must be ask or auto"),
+            (12, "`pipeline.failed.rollback` must be ask or auto"),
         ]
     );
 }
@@ -425,8 +434,59 @@ fn rejects_unsafe_service_values() {
         "dir: /opt/demo, shared: [data, data/cache] }",
     );
     assert!(messages(&yaml)[0].contains("overlap"));
-    let yaml = SAMPLE.replace("dir: /opt/demo }", "dir: /opt/demo, keep: { open: 0 } }");
-    assert_eq!(messages(&yaml), ["`service.keep.open` must be at least 1"]);
+}
+
+#[test]
+fn a_backup_keeps_at_least_the_live_release_and_holds_something() {
+    let backup = |yaml: &str| messages(&format!("{SAMPLE}  backup:\n{yaml}"));
+    assert_eq!(
+        backup("    keep: { open: 0 }\n"),
+        ["`pipeline.backup.keep.open` must be at least 1"]
+    );
+    assert_eq!(
+        backup("    files: { deployed: false }\n"),
+        ["the backup would hold nothing but release.json and the service file"]
+    );
+    assert!(
+        parse(&format!(
+            "{SAMPLE}  backup:\n    files: {{ deployed: false }}\n    keep: {{ compressed: 0 }}\n"
+        ))
+        .is_ok()
+    );
+    assert_eq!(
+        backup("    files: { include: [\"../x\", data, data] }\n"),
+        ["\"../x\" climbs out with `..`", "\"data\" is listed twice"]
+    );
+    let shared = SAMPLE.replace("dir: /opt/demo }", "dir: /opt/demo, shared: [uploads] }");
+    assert_eq!(
+        messages(&format!(
+            "{shared}  backup:\n    files: {{ include: [uploads/a] }}\n"
+        )),
+        ["\"uploads/a\" is in `service.shared`, so no backup holds it"]
+    );
+}
+
+#[test]
+fn keys_moved_since_point_to_their_new_place() {
+    let keep = SAMPLE.replace("dir: /opt/demo }", "dir: /opt/demo, keep: { open: 3 } }");
+    let found = problems(&keep);
+    assert_eq!(found[0].message, "`service.keep` moved");
+    assert!(
+        found[0]
+            .help
+            .as_deref()
+            .unwrap()
+            .contains("pipeline.backup.keep")
+    );
+    let found = problems(&format!("{SAMPLE}  health:\n    rollback: auto\n"));
+    assert_eq!(found[0].message, "`pipeline.health.rollback` moved");
+    assert!(
+        found[0]
+            .help
+            .as_deref()
+            .unwrap()
+            .contains("pipeline.failed.rollback")
+    );
 }
 
 /// SAMPLE with PM2 and `extra` in `service`.

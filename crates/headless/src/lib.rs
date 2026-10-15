@@ -35,10 +35,10 @@ pub enum OnFailure {
 }
 
 impl OnFailure {
-    /// Overrides `pipeline.health.rollback`. `keep` stays a question so
+    /// Overrides `pipeline.failed.rollback`. `keep` stays a question so
     /// the answer can be no; `rollback` needs no question at all.
     fn apply(self, config: &mut DeployConfig) {
-        config.pipeline.health.rollback = match self {
+        config.pipeline.failed.rollback = match self {
             OnFailure::Rollback => Rollback::Auto,
             OnFailure::Keep => Rollback::Ask,
         };

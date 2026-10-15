@@ -1,6 +1,6 @@
-//! Manual rollback to any release on the server, open or compressed. It
-//! ends like a deploy: health, then `pipeline.done` with
-//! SHIPDECK_ACTION=rollback.
+//! Manual rollback to any release on the server, open or compressed. A
+//! backup is unpacked and set up again with `pipeline.setup`. It ends like a
+//! deploy: health, then `pipeline.done`, all with SHIPDECK_ACTION=rollback.
 
 use std::sync::Arc;
 
@@ -10,7 +10,7 @@ use super::report::{LogKind, Reporter};
 use super::{Action, Ended, Run, Step, restore};
 use crate::config::{DeployConfig, Deployable};
 use crate::release::ReleaseName;
-use crate::remote::{Kind, Server};
+use crate::remote::{Archive, Kind, ReleaseEntry, Server};
 use crate::ssh::Pool;
 
 /// The steps a rollback goes through.
@@ -18,6 +18,7 @@ pub fn rollback_steps(config: &DeployConfig) -> Vec<Step> {
     let mut steps = vec![
         Step::Connect,
         Step::Unpack,
+        Step::Setup,
         Step::Switch,
         Step::Restart,
         Step::Health,
@@ -54,7 +55,7 @@ impl Run<'_> {
         let report = self.report;
 
         self.start(Step::Connect, "checking the server");
-        let (server, kind, previous) = match connect(self.deployable, target, pool, report).await {
+        let (server, entry, previous) = match connect(self.deployable, target, pool, report).await {
             Ok(found) => found,
             Err(err) => return self.stop(Step::Connect, err),
         };
@@ -64,14 +65,53 @@ impl Run<'_> {
             format!("live: {}", previous.as_deref().unwrap_or("nothing")),
         );
 
-        if kind == Kind::Compressed {
-            self.start(Step::Unpack, "unpacking it from backups/");
-            if let Err(err) = server.restore(target, report).await {
-                return self.stop(Step::Unpack, err);
+        // A backup holds only what was picked: it gets its shared folders
+        // and setup again. A whole tarball comes back as it was.
+        let from_backup = match (entry.kind, entry.backup) {
+            (Kind::Compressed, Some(archive)) => {
+                let file = format!("backups/{target}.{}", archive.extension());
+                self.start(Step::Unpack, &format!("unpacking {file}"));
+                let shared = &self.config().service.shared;
+                let unpacked = async {
+                    server.restore(target, archive, report).await?;
+                    if archive == Archive::Backup {
+                        server.link_shared(target, shared, report).await?;
+                    }
+                    Ok::<_, anyhow::Error>(())
+                }
+                .await;
+                if let Err(err) = unpacked {
+                    if archive == Archive::Backup {
+                        let _ = server.drop_open(target, report).await;
+                    }
+                    return self.stop(Step::Unpack, err);
+                }
+                self.finish(Step::Unpack, format!("from {file}"));
+                archive == Archive::Backup
             }
-            self.finish(Step::Unpack, "unpacked from backups/");
+            _ => {
+                self.skip(Step::Unpack, "already unpacked");
+                false
+            }
+        };
+
+        if !from_backup {
+            self.skip(Step::Setup, "already set up");
+        } else if !self.has_setup() {
+            self.skip(Step::Setup, "nothing to run");
         } else {
-            self.skip(Step::Unpack, "already unpacked");
+            self.start(Step::Setup, &format!("setting up releases/{target}"));
+            match self.set_up(&server, target).await {
+                Ok(summary) => self.finish(Step::Setup, summary),
+                Err(err) => {
+                    let _ = server.drop_open(target, report).await;
+                    report.log(
+                        LogKind::Info,
+                        format!("releases/{target} was removed; its backup stays"),
+                    );
+                    return self.stop(Step::Setup, err);
+                }
+            }
         }
 
         self.start(Step::Switch, "making it the current release");
@@ -103,7 +143,7 @@ async fn connect(
     target: &str,
     pool: &Pool,
     report: &Reporter,
-) -> Result<(Server, Kind, Option<String>)> {
+) -> Result<(Server, ReleaseEntry, Option<String>)> {
     let config = &deployable.config;
     let endpoint = &deployable.endpoint;
     report.log(LogKind::Command, format!("connect {}", endpoint.label()));
@@ -133,5 +173,5 @@ async fn connect(
     if entry.name.is_none() {
         bail!("shipdeck did not create {target}, so it will not switch to it");
     }
-    Ok((server, entry.kind, listing.current.clone()))
+    Ok((server, entry.clone(), listing.current.clone()))
 }

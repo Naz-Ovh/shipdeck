@@ -51,8 +51,8 @@ pub struct DeployConfig {
     /// its releases live.
     pub service: Service,
     /// The steps of a deploy, in order: preflight, build, pack, setup,
-    /// health, done, and failed when a step fails. upload, unpack, switch and
-    /// restart are done by shipdeck and take no settings.
+    /// backup, health, done, and failed when a step fails. upload, unpack,
+    /// switch and restart are done by shipdeck and take no settings.
     #[serde(default)]
     pub pipeline: Pipeline,
 }
@@ -115,9 +115,6 @@ pub struct Service {
     /// `shared/` and is linked into every release.
     #[serde(default)]
     pub shared: Vec<String>,
-    /// How many old releases stay on the server, for rollback.
-    #[serde(default)]
-    pub keep: Keep,
 }
 
 impl Service {
@@ -196,7 +193,8 @@ pub struct Keep {
     /// Default: 5.
     #[serde(default = "default_open")]
     pub open: usize,
-    /// Older releases kept as `.tar.gz` in `backups/`. Default: 15.
+    /// Older releases kept only as their backup in `backups/`. 0 keeps none,
+    /// and then no backup is made. Default: 15.
     #[serde(default = "default_compressed")]
     pub compressed: usize,
 }
@@ -230,13 +228,19 @@ pub struct Pipeline {
     /// `run.server`, then `check.server`. A failure removes the new release.
     #[serde(default)]
     pub setup: Setup,
-    /// Step 9, after shipdeck switches `current` and restarts the service.
+    /// Step 7: shipdeck packs the set-up release into
+    /// `backups/<id>.tar.zst`, which stays when the release folder goes. A
+    /// rollback to it unpacks it and runs setup again, so what setup makes,
+    /// such as node_modules, can stay out. A failure removes the new release.
+    #[serde(default)]
+    pub backup: Backup,
+    /// Step 10, after shipdeck switches `current` and restarts the service.
     /// Waits until the service is active, `url` answers and every check
-    /// passes; when it does not, see `rollback`.
+    /// passes; when it does not, see `failed.rollback`.
     #[serde(default)]
     pub health: Health,
-    /// Step 10: the new release is live. shipdeck tidies old releases (see
-    /// `service.keep`), then runs `run.server` in `current`, then `run.local`.
+    /// Step 11: the new release is live. shipdeck tidies old releases (see
+    /// `backup.keep`), then runs `run.server` in `current`, then `run.local`.
     /// A failure is only a warning. A manual rollback runs it too, with
     /// SHIPDECK_ACTION=rollback.
     #[serde(default)]
@@ -329,6 +333,48 @@ pub struct Setup {
     pub check: ServerOnly,
 }
 
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Backup {
+    /// What of the release goes into the backup.
+    #[serde(default)]
+    pub files: BackupFiles,
+    /// How many releases stay on the server.
+    #[serde(default)]
+    pub keep: Keep,
+}
+
+/// Paths in the release, in the syntax of `pipeline.pack.files`. The
+/// release's own `release.json` and service file are always in;
+/// `service.shared` folders never are.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BackupFiles {
+    /// The files shipdeck shipped: the binary and what `pipeline.pack.files`
+    /// picked. Default: true.
+    #[serde(default = "default_true")]
+    pub deployed: bool,
+    /// More from the release, such as a file setup made that it cannot make
+    /// again. A folder brings everything in it; `"!pattern"` leaves out what
+    /// it matches.
+    #[serde(default)]
+    pub include: Vec<String>,
+    /// What to leave out, shipped or not. A folder leaves out everything in
+    /// it; `"!pattern"` keeps what it matches.
+    #[serde(default)]
+    pub exclude: Vec<String>,
+}
+
+impl Default for BackupFiles {
+    fn default() -> Self {
+        Self {
+            deployed: true,
+            include: Vec::new(),
+            exclude: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Health {
@@ -343,10 +389,6 @@ pub struct Health {
     /// Seconds the release has to become healthy. Default: 20.
     #[serde(default = "default_timeout")]
     pub timeout_secs: u64,
-    /// What happens when the new release is not healthy, or the switch or
-    /// restart fails. Default: ask.
-    #[serde(default)]
-    pub rollback: Rollback,
 }
 
 impl Default for Health {
@@ -355,7 +397,6 @@ impl Default for Health {
             url: None,
             check: LocalAndServer::default(),
             timeout_secs: default_timeout(),
-            rollback: Rollback::default(),
         }
     }
 }
@@ -385,6 +426,10 @@ pub struct Done {
 #[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Failed {
+    /// What happens when the switch, the restart or the health check fails:
+    /// put back the release that was live before. Default: ask.
+    #[serde(default)]
+    pub rollback: Rollback,
     /// Runs on your PC, in `project`. The server may be out of reach when a
     /// step fails, so there is no `server` here.
     #[serde(default)]

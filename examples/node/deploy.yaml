@@ -35,6 +35,8 @@ pipeline:
       server: [npm ci --omit=dev, npm run migrate]
     check:
       server: node --check dist/main.js
+  backup:                         # the shipped files, kept for rollback; setup remakes node_modules
+    keep: { open: 3, compressed: 20 }
   health:
     url: http://127.0.0.1:3000/health
   done:

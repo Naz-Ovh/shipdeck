@@ -1,12 +1,14 @@
 //! A deploy runs the pipeline: preflight, build, pack, upload, unpack,
-//! setup, switch, restart, health and done, then failed if a step failed.
-//! A failure after the switch asks whether to put the previous release back.
+//! setup, backup, switch, restart, health and done, then failed if a step
+//! failed. A failure after the switch asks whether to put the previous
+//! release back.
 
 pub mod report;
 mod rollback;
 
 pub use rollback::{rollback, rollback_step_names, rollback_steps};
 
+use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -21,8 +23,10 @@ use crate::config::{
     release_path,
 };
 use crate::human;
-use crate::release::{Manifest, ReleaseName};
-use crate::remote::{CommandEnv, Facts, HttpCheck, Place, Server, check_version, plan_rotation};
+use crate::release::{MANIFEST_FILE, Manifest, ReleaseName};
+use crate::remote::{
+    CommandEnv, Facts, HttpCheck, Place, Server, check_version, pick, plan_rotation,
+};
 use crate::ssh::{Pool, ShellEnv};
 use report::{LogKind, Outcome, Reporter, Unit};
 
@@ -36,6 +40,7 @@ pub enum Step {
     Upload,
     Unpack,
     Setup,
+    Backup,
     Switch,
     Restart,
     Health,
@@ -53,6 +58,7 @@ impl Step {
             Self::Upload => "Upload",
             Self::Unpack => "Unpack",
             Self::Setup => "Setup",
+            Self::Backup => "Backup",
             Self::Switch => "Switch",
             Self::Restart => "Restart",
             Self::Health => "Health",
@@ -71,6 +77,7 @@ impl Step {
             Self::Upload => "upload",
             Self::Unpack => "unpack",
             Self::Setup => "setup",
+            Self::Backup => "backup",
             Self::Switch => "switch",
             Self::Restart => "restart",
             Self::Health => "health",
@@ -90,6 +97,7 @@ pub fn deploy_steps(config: &DeployConfig) -> Vec<Step> {
         Step::Upload,
         Step::Unpack,
         Step::Setup,
+        Step::Backup,
         Step::Switch,
         Step::Restart,
         Step::Health,
@@ -565,39 +573,31 @@ impl<'a> Run<'a> {
         );
 
         // Setup: in the new release, while the old one still serves.
-        let setup = &pipeline.setup;
-        if setup.run.server.is_empty() && setup.check.server.is_empty() {
-            self.skip(Step::Setup, "nothing to run");
-        } else {
+        if self.has_setup() {
             self.start(Step::Setup, &format!("setting up releases/{id}"));
-            let started = Instant::now();
-            let place = Place::Release(id.clone());
-            let mut done = self
-                .remote(&server, place.clone(), Step::Setup, &setup.run.server)
-                .await;
-            if done.is_ok() {
-                done = self
-                    .remote(&server, place, Step::Setup, &setup.check.server)
-                    .await
-                    .map_err(|err| err.context("a setup check failed"));
+            match self.set_up(&server, &id).await {
+                Ok(summary) => self.finish(Step::Setup, summary),
+                Err(err) => {
+                    self.remove_new(&server, &id).await;
+                    return self.stop(Step::Setup, err);
+                }
             }
-            if let Err(err) = done {
-                let _ = server.discard(&id, report).await;
-                let live = match &self.previous {
-                    Some(previous) => format!("; {previous} is still live"),
-                    None => String::new(),
-                };
-                report.log(LogKind::Info, format!("releases/{id} was removed{live}"));
-                return self.stop(Step::Setup, err);
+        } else {
+            self.skip(Step::Setup, "nothing to run");
+        }
+
+        // Backup: what stays of the release once its folder goes.
+        if pipeline.backup.keep.compressed == 0 {
+            self.skip(Step::Backup, "keep.compressed is 0");
+        } else {
+            self.start(Step::Backup, &format!("packing backups/{id}.tar.zst"));
+            match self.back_up(&server, &id, &bundle.paths).await {
+                Ok(summary) => self.finish(Step::Backup, summary),
+                Err(err) => {
+                    self.remove_new(&server, &id).await;
+                    return self.stop(Step::Backup, err);
+                }
             }
-            self.finish(
-                Step::Setup,
-                format!(
-                    "{} · {}",
-                    count(setup.run.server.len() + setup.check.server.len(), "command"),
-                    human::duration(started.elapsed())
-                ),
-            );
         }
 
         // Switch
@@ -628,6 +628,96 @@ impl<'a> Run<'a> {
 
         self.done(&server).await;
         Ended::ok(&id)
+    }
+
+    /// Whether `pipeline.setup` has anything to run.
+    fn has_setup(&self) -> bool {
+        let setup = &self.config().pipeline.setup;
+        !(setup.run.server.is_empty() && setup.check.server.is_empty())
+    }
+
+    /// Runs `pipeline.setup` in `releases/<id>`: `run.server`, then
+    /// `check.server`. Returns the step's summary.
+    async fn set_up(&self, server: &Server, id: &str) -> Result<String> {
+        let setup = &self.config().pipeline.setup;
+        let started = Instant::now();
+        let place = Place::Release(id.to_string());
+        self.remote(server, place.clone(), Step::Setup, &setup.run.server)
+            .await?;
+        self.remote(server, place, Step::Setup, &setup.check.server)
+            .await
+            .map_err(|err| err.context("a setup check failed"))?;
+        Ok(format!(
+            "{} · {}",
+            count(setup.run.server.len() + setup.check.server.len(), "command"),
+            human::duration(started.elapsed())
+        ))
+    }
+
+    /// Packs what `pipeline.backup.files` picks from `releases/<id>` into
+    /// `backups/<id>.tar.zst`. `deployed` is every path the bundle had.
+    async fn back_up(&self, server: &Server, id: &str, deployed: &[String]) -> Result<String> {
+        let config = self.config();
+        let report = self.report;
+        let listing = server.release_files(id).await?;
+        let own: Vec<String> = std::iter::once(MANIFEST_FILE.to_string())
+            .chain(config.service.own_file())
+            .collect();
+        let shared: Vec<String> = config
+            .service
+            .shared
+            .iter()
+            .map(|s| release_path(s))
+            .collect();
+        let deployed: BTreeSet<String> = deployed.iter().cloned().collect();
+        let picked = pick(
+            &listing,
+            &deployed,
+            &own,
+            &shared,
+            &config.pipeline.backup.files,
+        )?;
+        for pattern in &picked.unmatched {
+            report.log(
+                LogKind::Warn,
+                format!(
+                    "pipeline.backup.files.include: {pattern} matched nothing in releases/{id}"
+                ),
+            );
+        }
+        let folders: HashSet<&str> = listing
+            .iter()
+            .filter(|f| f.is_dir)
+            .map(|f| f.path.as_str())
+            .collect();
+        let kept = picked
+            .paths
+            .iter()
+            .filter(|p| !folders.contains(p.as_str()))
+            .count();
+        let all = listing.iter().filter(|f| !f.is_dir).count();
+        let bytes = server.back_up(id, &picked.paths, report).await?;
+        report.log(
+            LogKind::Info,
+            format!(
+                "backups/{id}.tar.zst holds {kept} of the release's {} ({})",
+                count(all, "file"),
+                human::bytes(bytes)
+            ),
+        );
+        Ok(format!("{} · {}", count(kept, "file"), human::bytes(bytes)))
+    }
+
+    /// Removes a deploy's new release before the switch; the live one is
+    /// untouched.
+    async fn remove_new(&self, server: &Server, id: &str) {
+        let _ = server.discard(id, self.report).await;
+        let live = match &self.previous {
+            Some(previous) => format!("; {previous} is still live"),
+            None => String::new(),
+        };
+        self.report
+            .log(LogKind::Info, format!("releases/{id} was removed{live}"));
     }
 
     /// Waits until the service is up, then runs the health checks, trying
@@ -853,11 +943,11 @@ impl<'a> Run<'a> {
         }
     }
 
-    /// `pipeline.health.rollback`: auto rolls back; ask waits for an answer
+    /// `pipeline.failed.rollback`: auto rolls back; ask waits for an answer
     /// and rolls back when none comes in time.
     async fn should_roll_back(&self, step: Step, err: &anyhow::Error, previous: &str) -> bool {
         let report = self.report;
-        if self.config().pipeline.health.rollback == Rollback::Auto {
+        if self.config().pipeline.failed.rollback == Rollback::Auto {
             return true;
         }
         let id = self.release.clone().unwrap_or_default();
@@ -1255,7 +1345,7 @@ async fn rotate(
     report: &Reporter,
     step: usize,
 ) -> Result<String> {
-    let keep = deployable.config.service.keep;
+    let keep = deployable.config.pipeline.backup.keep;
     let listing = server.list().await?;
     let plan = plan_rotation(&listing, keep);
     if plan.is_empty() {
@@ -1268,6 +1358,17 @@ async fn rotate(
     }
     let total = plan.len() as u64;
     let mut done = 0;
+    for id in &plan.close {
+        report.progress(
+            step,
+            done,
+            total,
+            Unit::Items,
+            format!("deleting releases/{id}; its backup stays"),
+        );
+        server.drop_open(id, report).await?;
+        done += 1;
+    }
     for id in &plan.compress {
         report.progress(step, done, total, Unit::Items, format!("compressing {id}"));
         server.compress(id, report).await?;
@@ -1284,16 +1385,17 @@ async fn rotate(
             done,
             total,
             Unit::Items,
-            format!("deleting {id}.tar.gz"),
+            format!("deleting the backup of {id}"),
         );
         server.drop_backup(id, report).await?;
         done += 1;
     }
     report.progress(step, done, total, Unit::Items, "tidied");
+    let deleted: BTreeSet<&String> = plan.drop_open.iter().chain(&plan.drop_backup).collect();
     Ok(format!(
-        "{} compressed · {} deleted",
-        plan.compress.len(),
-        plan.drop_open.len() + plan.drop_backup.len()
+        "{} backed up only · {} deleted",
+        plan.close.len() + plan.compress.len(),
+        deleted.len()
     ))
 }
 

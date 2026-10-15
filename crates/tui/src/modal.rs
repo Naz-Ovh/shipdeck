@@ -8,7 +8,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph, Wrap};
 
 use shipdeck_engine::release::ReleaseName;
-use shipdeck_engine::remote::Kind;
+use shipdeck_engine::remote::Archive;
 
 use std::time::Instant;
 
@@ -36,9 +36,9 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
         Modal::ConfirmRollback {
             deployable,
             target,
-            kind,
+            from,
             current,
-        } => confirm_rollback(app, *deployable, target, *kind, current.as_deref()),
+        } => confirm_rollback(app, *deployable, target, *from, current.as_deref()),
         Modal::ConfirmQuit => (
             "Quit now?".to_string(),
             WARN,
@@ -187,7 +187,7 @@ fn confirm_deploy(app: &App, index: usize, missing: Option<&str>) -> Dialog {
         [one] => one.trim().to_string(),
         [first, rest @ ..] => format!("{} (+{} more)", first.trim(), rest.len()),
     };
-    let failing = match pipeline.health.rollback {
+    let failing = match pipeline.failed.rollback {
         Rollback::Ask => format!(
             "If it fails after the switch, shipdeck asks before putting the previous release back, \
              and does so on its own after {ROLLBACK_ANSWER_SECS} s."
@@ -292,7 +292,7 @@ fn confirm_rollback(
     app: &App,
     index: usize,
     target: &str,
-    kind: Kind,
+    from: Option<Archive>,
     current: Option<&str>,
 ) -> Dialog {
     let config = &app.deployables[index].config;
@@ -309,11 +309,15 @@ fn confirm_rollback(
         ),
         Line::default(),
     ];
-    if kind == Kind::Compressed {
-        lines.push(Line::from(Span::styled(
-            "This release is compressed; it is unpacked first.",
-            Style::new().fg(VIOLET),
-        )));
+    let first = match from {
+        Some(Archive::Backup) => Some(
+            "This release is a backup: it is unpacked and set up again with pipeline.setup first.",
+        ),
+        Some(Archive::Whole) => Some("This release is compressed; it is unpacked first."),
+        None => None,
+    };
+    if let Some(first) = first {
+        lines.push(Line::from(Span::styled(first, Style::new().fg(VIOLET))));
     }
     lines.push(Line::from(Span::styled(
         "The service restarts on that release. If it fails its health check, the current \

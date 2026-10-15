@@ -1,4 +1,4 @@
-//! Globs for `pipeline.pack.files`, matched by the `fast-glob` crate, the
+//! Globs for `pipeline.pack.files` and `pipeline.backup.files`, matched by the `fast-glob` crate, the
 //! syntax of fast-glob and Tailwind: `*` and `?` stay inside one folder,
 //! `**` is zero or more folders, `[a-z]` and `[!x]`, `{js,ts}` (nested),
 //! and `\` escapes. Names starting with a dot match like any other.
@@ -168,7 +168,17 @@ pub struct Verdict {
 
 impl Verdict {
     pub fn ships(&self) -> bool {
-        self.included && !self.unincluded && !(self.excluded && !self.kept)
+        self.included() && !self.excluded()
+    }
+
+    /// An include pattern names it, and no `!` include leaves it out.
+    pub fn included(&self) -> bool {
+        self.included && !self.unincluded
+    }
+
+    /// An exclude pattern names it, and no `!` exclude keeps it.
+    pub fn excluded(&self) -> bool {
+        self.excluded && !self.kept
     }
 }
 

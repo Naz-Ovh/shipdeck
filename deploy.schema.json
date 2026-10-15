@@ -3,6 +3,56 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "additionalProperties": false,
   "definitions": {
+    "Backup": {
+      "additionalProperties": false,
+      "properties": {
+        "files": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/BackupFiles"
+            }
+          ],
+          "description": "What of the release goes into the backup."
+        },
+        "keep": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Keep"
+            }
+          ],
+          "description": "How many releases stay on the server."
+        }
+      },
+      "type": "object"
+    },
+    "BackupFiles": {
+      "additionalProperties": false,
+      "description": "Paths in the release, in the syntax of `pipeline.pack.files`. The release's own `release.json` and service file are always in; `service.shared` folders never are.",
+      "properties": {
+        "deployed": {
+          "default": true,
+          "description": "The files shipdeck shipped: the binary and what `pipeline.pack.files` picked. Default: true.",
+          "type": "boolean"
+        },
+        "exclude": {
+          "default": [],
+          "description": "What to leave out, shipped or not. A folder leaves out everything in it; `\"!pattern\"` keeps what it matches.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "include": {
+          "default": [],
+          "description": "More from the release, such as a file setup made that it cannot make again. A folder brings everything in it; `\"!pattern\"` leaves out what it matches.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "Build": {
       "additionalProperties": false,
       "properties": {
@@ -56,6 +106,14 @@
     "Failed": {
       "additionalProperties": false,
       "properties": {
+        "rollback": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Rollback"
+            }
+          ],
+          "description": "What happens when the switch, the restart or the health check fails: put back the release that was live before. Default: ask."
+        },
         "run": {
           "allOf": [
             {
@@ -101,14 +159,6 @@
           ],
           "description": "Commands that must pass: `server` in `current`, then `local` in `project`. Retried until `timeout_secs`."
         },
-        "rollback": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/Rollback"
-            }
-          ],
-          "description": "What happens when the new release is not healthy, or the switch or restart fails. Default: ask."
-        },
         "timeout_secs": {
           "default": 20,
           "description": "Seconds the release has to become healthy. Default: 20.",
@@ -133,7 +183,7 @@
       "properties": {
         "compressed": {
           "default": 15,
-          "description": "Older releases kept as `.tar.gz` in `backups/`. Default: 15.",
+          "description": "Older releases kept only as their backup in `backups/`. 0 keeps none, and then no backup is made. Default: 15.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
@@ -225,6 +275,14 @@
       "additionalProperties": false,
       "description": "The steps of a deploy that take settings.",
       "properties": {
+        "backup": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Backup"
+            }
+          ],
+          "description": "Step 7: shipdeck packs the set-up release into `backups/<id>.tar.zst`, which stays when the release folder goes. A rollback to it unpacks it and runs setup again, so what setup makes, such as node_modules, can stay out. A failure removes the new release."
+        },
         "build": {
           "allOf": [
             {
@@ -239,7 +297,7 @@
               "$ref": "#/definitions/Done"
             }
           ],
-          "description": "Step 10: the new release is live. shipdeck tidies old releases (see `service.keep`), then runs `run.server` in `current`, then `run.local`. A failure is only a warning. A manual rollback runs it too, with SHIPDECK_ACTION=rollback."
+          "description": "Step 11: the new release is live. shipdeck tidies old releases (see `backup.keep`), then runs `run.server` in `current`, then `run.local`. A failure is only a warning. A manual rollback runs it too, with SHIPDECK_ACTION=rollback."
         },
         "failed": {
           "allOf": [
@@ -255,7 +313,7 @@
               "$ref": "#/definitions/Health"
             }
           ],
-          "description": "Step 9, after shipdeck switches `current` and restarts the service. Waits until the service is active, `url` answers and every check passes; when it does not, see `rollback`."
+          "description": "Step 10, after shipdeck switches `current` and restarts the service. Waits until the service is active, `url` answers and every check passes; when it does not, see `failed.rollback`."
         },
         "pack": {
           "allOf": [
@@ -386,14 +444,6 @@
             "string",
             "null"
           ]
-        },
-        "keep": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/Keep"
-            }
-          ],
-          "description": "How many old releases stay on the server, for rollback."
         },
         "manager": {
           "allOf": [
@@ -542,7 +592,7 @@
           "$ref": "#/definitions/Pipeline"
         }
       ],
-      "description": "The steps of a deploy, in order: preflight, build, pack, setup, health, done, and failed when a step fails. upload, unpack, switch and restart are done by shipdeck and take no settings."
+      "description": "The steps of a deploy, in order: preflight, build, pack, setup, backup, health, done, and failed when a step fails. upload, unpack, switch and restart are done by shipdeck and take no settings."
     },
     "project": {
       "default": ".",

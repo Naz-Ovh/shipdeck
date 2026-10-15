@@ -100,7 +100,7 @@ enum ServerCommand {
         #[arg(value_name = "NAME", required = true)]
         names: Vec<String>,
 
-        /// What to do when the new release fails after the switch; overrides `pipeline.health.rollback`
+        /// What to do when the new release fails after the switch; overrides `pipeline.failed.rollback`
         #[arg(long, value_enum, default_value_t = OnFailureArg::Rollback)]
         on_failure: OnFailureArg,
 
