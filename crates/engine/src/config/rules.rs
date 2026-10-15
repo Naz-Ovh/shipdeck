@@ -7,7 +7,10 @@ use std::path::Path;
 use super::glob::Pattern;
 use super::problem::{Problem, Span};
 use super::yaml::Node;
-use super::{Commands, DeployConfig, file_name, is_plain_name, is_program, release_path};
+use super::{
+    Commands, DeployConfig, Manager, file_name, is_ecosystem_file, is_plain_name, is_program,
+    release_path, split_args,
+};
 use crate::release::MANIFEST_FILE;
 
 pub fn check(config: &DeployConfig, root: &Node) -> Vec<Problem> {
@@ -17,6 +20,7 @@ pub fn check(config: &DeployConfig, root: &Node) -> Vec<Problem> {
     };
     rules.top(config);
     rules.service(config);
+    rules.pm2(config);
     rules.pipeline(config);
     rules.files(config);
     rules.problems
@@ -121,14 +125,21 @@ impl Rules<'_> {
             );
         }
 
+        let ecosystem = service.manager == Manager::Pm2 && service.pm2.ecosystem.is_some();
         match &service.start {
-            None if config.pipeline.pack.binary.is_none() => self.fail(
+            None if config.pipeline.pack.binary.is_none() && !ecosystem => self.fail(
                 &["service"],
                 "`service.start` is needed when there is no `pipeline.pack.binary`",
                 "what does the service run?",
-                "such as `start: node dist/main.js`",
+                "such as `start: node dist/main.js`, or `pm2.ecosystem` with `manager: pm2`",
             ),
             None => {}
+            Some(_) if ecosystem => self.fail(
+                &["service", "start"],
+                "`service.start` and `pm2.ecosystem` both say what runs",
+                "pick one",
+                "keep `pm2.ecosystem` (your file runs the app), or `service.start` (shipdeck writes the file)",
+            ),
             Some(start) => {
                 let program = start.split_whitespace().next().unwrap_or_default();
                 if start.trim().is_empty() {
@@ -144,6 +155,13 @@ impl Rules<'_> {
                         "`service.start` must be one line without backslashes",
                         "not allowed",
                         "",
+                    );
+                } else if split_args(start).is_none() {
+                    self.fail(
+                        &["service", "start"],
+                        "`service.start` has a quote that is never closed",
+                        "unclosed quote",
+                        "quote an argument with spaces like `--title \"my api\"`",
                     );
                 } else if !is_program(program) {
                     self.fail(
@@ -206,7 +224,7 @@ impl Rules<'_> {
                     "not allowed",
                     "such as `uploads` or `data/cache`",
                 );
-            } else if [MANIFEST_FILE.to_string(), format!("{name}.service")].contains(&stored) {
+            } else if reserved(config).contains(&stored) {
                 self.fail(&at, format!("{stored} belongs to shipdeck"), "reserved", "");
             } else if let Some(other) = seen.iter().find(|other| overlaps(other, &stored)).cloned()
             {
@@ -227,6 +245,89 @@ impl Rules<'_> {
                 "the live release counts",
                 "",
             );
+        }
+    }
+
+    fn pm2(&mut self, config: &DeployConfig) {
+        let service = &config.service;
+        let pm2 = &service.pm2;
+        if service.manager != Manager::Pm2 {
+            if self.root.span_of(&["service", "pm2"]).is_some() {
+                self.fail(
+                    &["service", "pm2"],
+                    "`service.pm2` is only read with `manager: pm2`",
+                    "not used",
+                    "add `manager: pm2` to `service`, or remove this",
+                );
+            }
+            return;
+        }
+        if let Some(user) = &service.run_as
+            && *user != config.ssh.user.clone().unwrap_or_default()
+        {
+            self.fail(
+                &["service", "run_as"],
+                "PM2 runs the app as the SSH user, so `service.run_as` cannot apply",
+                "not with PM2",
+                "remove it, or log in as that user with `ssh.user`",
+            );
+        }
+        let app = service.pm2_app();
+        let at: &[&str] = if pm2.app.is_some() {
+            &["service", "pm2", "app"]
+        } else {
+            &["service", "name"]
+        };
+        if !is_plain_name(app) {
+            self.fail(
+                at,
+                format!("{app:?} is not a PM2 app name"),
+                "not allowed",
+                "letters, digits, `.`, `_` and `-` only",
+            );
+        } else if app.chars().all(|c| c.is_ascii_digit()) {
+            self.fail(
+                at,
+                format!("{app:?} is not a PM2 app name"),
+                "PM2 reads a number as a process id",
+                "use a name with a letter in it",
+            );
+        }
+        if let Some(file) = &pm2.ecosystem {
+            let at = ["service", "pm2", "ecosystem"];
+            if file.starts_with('/') || !is_program(file) || release_path(file).is_empty() {
+                self.fail(
+                    &at,
+                    "`pm2.ecosystem` must be a file inside the release",
+                    "not inside the release",
+                    "such as `ecosystem.config.js`, shipped with `pipeline.pack.files`",
+                );
+            } else if !is_ecosystem_file(file) {
+                self.fail(
+                    &at,
+                    format!("PM2 does not read {file:?} as an ecosystem file"),
+                    "not an ecosystem file",
+                    "its name must end in .config.js, .config.cjs, .json, .yml or .yaml",
+                );
+            }
+            if !pm2.options.is_empty() {
+                self.fail(
+                    &["service", "pm2", "options"],
+                    "`pm2.options` and `pm2.ecosystem` are both set",
+                    "pick one",
+                    "keep `pm2.ecosystem` (your file, deploy.yaml settings ignored), or `pm2.options` (shipdeck writes the file)",
+                );
+            }
+        }
+        for key in pm2.options.keys() {
+            if let Some((_, help)) = PM2_OWN_OPTIONS.iter().find(|(own, _)| own == key) {
+                self.fail(
+                    &["service", "pm2", "options", key],
+                    format!("shipdeck sets the PM2 `{key}` itself"),
+                    "set by shipdeck",
+                    help,
+                );
+            }
         }
     }
 
@@ -336,10 +437,7 @@ impl Rules<'_> {
     fn files(&mut self, config: &DeployConfig) {
         let pack = &config.pipeline.pack;
         let files = &pack.files;
-        let reserved = [
-            MANIFEST_FILE.to_string(),
-            format!("{}.service", config.service.name),
-        ];
+        let reserved = reserved(config);
         if let Some(binary) = &pack.binary {
             if binary.trim().is_empty() {
                 self.fail(
@@ -432,6 +530,20 @@ impl Rules<'_> {
         }
     }
 }
+
+/// The files shipdeck writes into every release.
+fn reserved(config: &DeployConfig) -> Vec<String> {
+    let mut files = vec![MANIFEST_FILE.to_string()];
+    files.extend(config.service.own_file());
+    files
+}
+
+/// The settings shipdeck writes into the PM2 app itself.
+const PM2_OWN_OPTIONS: [(&str, &str); 3] = [
+    ("name", "set `service.pm2.app`"),
+    ("cwd", "the app runs in `current`"),
+    ("env", "set `service.env` or `service.env_file`"),
+];
 
 /// `a` and `a/b` overlap; `a` and `ab` do not.
 fn overlaps(a: &str, b: &str) -> bool {

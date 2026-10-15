@@ -81,11 +81,18 @@ fn unpack(data: &[u8]) -> Entries {
     files
 }
 
+fn unit_file() -> ServiceFile {
+    ServiceFile {
+        name: "demo.service".into(),
+        text: "[Unit]\n".into(),
+    }
+}
+
 fn packed(deployable: &Deployable) -> (Bundle, Entries) {
     let bundle = pack(
         deployable,
         &Manifest::new(&release(), "tester"),
-        "[Unit]\n",
+        Some(&unit_file()),
         |_, _| {},
     )
     .unwrap();
@@ -94,7 +101,14 @@ fn packed(deployable: &Deployable) -> (Bundle, Entries) {
 }
 
 fn pack_error(deployable: &Deployable) -> String {
-    let err = pack(deployable, &Manifest::new(&release(), "t"), "", |_, _| {}).unwrap_err();
+    let own = service_file(deployable, &release(), None).unwrap();
+    let err = pack(
+        deployable,
+        &Manifest::new(&release(), "t"),
+        own.as_ref(),
+        |_, _| {},
+    )
+    .unwrap_err();
     format!("{err:#}")
 }
 
@@ -111,7 +125,7 @@ fn packs_binary_files_manifest_and_unit_with_modes() {
     );
     let manifest = Manifest::new(&release(), "tester");
     let mut last = (0, 0);
-    let bundle = pack(&deployable, &manifest, "[Unit]\n", |done, total| {
+    let bundle = pack(&deployable, &manifest, Some(&unit_file()), |done, total| {
         last = (done, total)
     })
     .unwrap();
@@ -358,4 +372,141 @@ fn exec_start_uses_where_the_server_has_the_program() {
         "/opt/demo/current/.venv/bin/python -m app"
     );
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn pm2_runs_node_scripts_through_node_and_the_rest_as_they_are() {
+    let dir = scratch("pm2-launch");
+    let pack = "    files:\n      include:\n        project: [dist]";
+    let node = deployable(
+        &dir,
+        "manager: pm2, start: node --enable-source-maps -r dotenv/config dist/main.js --port 3000",
+        pack,
+    );
+    assert_eq!(
+        pm2::launch(&node, Some("/usr/bin/node")),
+        pm2::Launch {
+            script: "dist/main.js".into(),
+            args: vec!["--port".into(), "3000".into()],
+            interpreter: "/usr/bin/node".into(),
+            node_args: vec![
+                "--enable-source-maps".into(),
+                "-r".into(),
+                "dotenv/config".into()
+            ],
+        }
+    );
+    let binary = deployable(
+        &dir,
+        "manager: pm2, start: './demo -E=.env --title \"my api\"'",
+        pack,
+    );
+    assert_eq!(
+        pm2::launch(&binary, None),
+        pm2::Launch {
+            script: "/opt/demo/current/demo".into(),
+            args: vec!["-E=.env".into(), "--title".into(), "my api".into()],
+            interpreter: "none".into(),
+            node_args: Vec::new(),
+        }
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn pm2_file_runs_from_current_with_the_options() {
+    let dir = scratch("pm2-file");
+    let deployable = deployable(
+        &dir,
+        "manager: pm2, start: node dist/main.js, env: { NODE_ENV: production }, \
+         pm2: { app: web, options: { instances: max, exec_mode: cluster } }",
+        "    files:\n      include:\n        project: [dist]",
+    );
+    let own = service_file(&deployable, &release(), Some("/usr/bin/node"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(own.name, "demo.pm2.json");
+    let file: serde_json::Value = serde_json::from_str(&own.text).unwrap();
+    assert_eq!(
+        file,
+        serde_json::json!({ "apps": [{
+            "name": "web",
+            "cwd": "/opt/demo/current",
+            "script": "dist/main.js",
+            "args": [],
+            "interpreter": "/usr/bin/node",
+            "instances": "max",
+            "exec_mode": "cluster",
+        }]})
+    );
+    assert_eq!(
+        start_line(&deployable, Some("/usr/bin/node")),
+        "pm2 app web: /usr/bin/node dist/main.js"
+    );
+    write(dir.join("app/dist/main.js"), "");
+    let (bundle, files) = packed_with(&deployable, &own);
+    assert!(files.contains_key("demo.pm2.json"));
+    assert!(bundle.unused_ecosystem.is_empty());
+
+    // An ecosystem file shipped by mistake is named, since PM2 never reads it.
+    write(dir.join("app/ecosystem.config.js"), "module.exports = {}");
+    let shipped = self::deployable(
+        &dir,
+        "manager: pm2, start: node dist/main.js",
+        "    files:\n      include:\n        project: [dist, ecosystem.config.js]",
+    );
+    let own = service_file(&shipped, &release(), None).unwrap().unwrap();
+    let (bundle, _) = packed_with(&shipped, &own);
+    assert_eq!(bundle.unused_ecosystem, ["ecosystem.config.js"]);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn pm2_ecosystem_must_ship_and_needs_no_file_of_ours() {
+    let dir = scratch("pm2-ecosystem");
+    let deployable = deployable(
+        &dir,
+        "manager: pm2, pm2: { ecosystem: ecosystem.config.js }",
+        "    files:\n      include:\n        project: [dist, ecosystem.config.js]",
+    );
+    assert_eq!(service_file(&deployable, &release(), None).unwrap(), None);
+    assert_eq!(
+        start_line(&deployable, None),
+        "pm2 app demo from ecosystem.config.js"
+    );
+    write(dir.join("app/dist/main.js"), "");
+    write(dir.join("app/ecosystem.config.js"), "module.exports = {}");
+    let left_out = self::deployable(
+        &dir,
+        "manager: pm2, pm2: { ecosystem: ecosystem.config.js }",
+        "    files:\n      include:\n        project: [dist]",
+    );
+    let err = pack_error(&left_out);
+    assert!(
+        err.contains("the release has no ecosystem.config.js"),
+        "{err}"
+    );
+    let bundle = pack(
+        &deployable,
+        &Manifest::new(&release(), "t"),
+        None,
+        |_, _| {},
+    )
+    .unwrap();
+    let files = unpack(&bundle.data);
+    assert!(files.contains_key("ecosystem.config.js"));
+    assert!(!files.keys().any(|path| path.ends_with(".service")));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+fn packed_with(deployable: &Deployable, own: &ServiceFile) -> (Bundle, Entries) {
+    let bundle = pack(
+        deployable,
+        &Manifest::new(&release(), "tester"),
+        Some(own),
+        |_, _| {},
+    )
+    .unwrap();
+    let files = unpack(&bundle.data);
+    (bundle, files)
 }

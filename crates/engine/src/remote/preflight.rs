@@ -4,6 +4,7 @@ use anyhow::Result;
 
 use super::{Server, pairs};
 use crate::build::{GlibcVersion, normalize_arch};
+use crate::config::Manager;
 use crate::ssh::sh_quote;
 
 #[derive(Debug, Clone)]
@@ -17,8 +18,14 @@ pub struct Facts {
     pub free_bytes: Option<u64>,
     /// The release `current` points to.
     pub current: Option<String>,
-    /// `systemctl is-active` output.
+    /// The service's state: `systemctl is-active` output, or PM2's state
+    /// in the same words.
     pub active: String,
+    /// `systemctl is-active` for `service.name`, whichever the manager: a
+    /// unit still running holds the app's port when moving to PM2.
+    pub systemd: String,
+    /// `pm2 -v` output, with PM2 as the manager.
+    pub pm2_version: Option<String>,
     /// The commands the user may not run with sudo (never any for root).
     pub sudo_missing: Vec<String>,
     /// Each program asked for, with where `command -v` found it.
@@ -72,9 +79,14 @@ p=\"$dir\"; while [ ! -d \"$p\" ]; do p=$(dirname \"$p\"); done
 echo \"free_kb=$(df -Pk \"$p\" | awk 'NR==2 {{print $4}}')\"
 echo \"current=$(readlink \"$dir/current\" 2>/dev/null)\"
 echo \"active=$(systemctl is-active {svc} 2>&1 | head -n1)\"
-{lookups}{checks}",
+{pm2}{lookups}{checks}",
             dir = self.q_dir(),
             svc = self.q_service(),
+            pm2 = if self.manager == Manager::Pm2 {
+                "echo \"pm2=$(pm2 -v 2>/dev/null | tail -n1)\"\n"
+            } else {
+                ""
+            },
         );
         let out = self
             .session
@@ -90,6 +102,11 @@ echo \"active=$(systemctl is-active {svc} 2>&1 | head -n1)\"
                 .unwrap_or_default()
         };
 
+        let systemd = get("active");
+        let active = match self.manager {
+            Manager::Systemd => systemd.clone(),
+            Manager::Pm2 => self.pm2_state().await?.0,
+        };
         Ok(Facts {
             arch: normalize_arch(&get("arch")),
             glibc: GlibcVersion::parse(&get("glibc")),
@@ -99,7 +116,9 @@ echo \"active=$(systemctl is-active {svc} 2>&1 | head -n1)\"
             current: Some(get("current"))
                 .filter(|c| !c.is_empty())
                 .map(|c| c.rsplit('/').next().unwrap_or(&c).to_string()),
-            active: get("active"),
+            active,
+            systemd,
+            pm2_version: (self.manager == Manager::Pm2).then(|| get("pm2")),
             sudo_missing: values
                 .iter()
                 .filter(|(k, _)| *k == "sudo_missing")

@@ -5,7 +5,7 @@
 use anyhow::Result;
 
 use super::{Server, ensure_id};
-use crate::config::Keep;
+use crate::config::{Keep, Manager};
 use crate::deploy::report::Reporter;
 use crate::release::{Manifest, ReleaseName, is_safe_id};
 
@@ -178,11 +178,15 @@ echo \"active=$(systemctl is-active {svc} 2>&1 | head -n1)\"",
                 .unwrap_or_default()
         };
         let current = get("current");
+        let active = match self.manager {
+            Manager::Systemd => get("active"),
+            Manager::Pm2 => self.pm2_state().await?.0,
+        };
         Ok(Status {
             dir_exists: get("dir") == "yes",
             current: (!current.is_empty())
                 .then(|| current.rsplit('/').next().unwrap_or(&current).to_string()),
-            active: get("active"),
+            active,
         })
     }
 

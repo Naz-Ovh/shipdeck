@@ -1,7 +1,9 @@
 //! Packing a release into one `.tar.zst` in memory: the binary, the files
-//! `pipeline.pack.files` picks, `release.json` and the systemd unit.
+//! `pipeline.pack.files` picks, `release.json` and the service's own file
+//! (the systemd unit or the PM2 app file).
 
 pub mod files;
+pub mod pm2;
 pub mod unit;
 
 use std::io::{self, Read};
@@ -11,8 +13,8 @@ use std::thread;
 use anyhow::{Context, Result, bail};
 use zstd::stream::write::Encoder;
 
-use crate::config::{Deployable, release_path};
-use crate::release::{MANIFEST_FILE, Manifest};
+use crate::config::{Deployable, Manager, is_ecosystem_file, release_path};
+use crate::release::{MANIFEST_FILE, Manifest, ReleaseName};
 use files::{Kind, Selection};
 
 /// zstd level for the bundle. On a 25 MB Rust binary, 9 packs to 8.6 MB in
@@ -29,6 +31,9 @@ pub struct Bundle {
     pub input_bytes: u64,
     /// Project files a file from the deploy folder replaced.
     pub replaced: Vec<String>,
+    /// Ecosystem files in the release PM2 never reads, because shipdeck
+    /// writes the app file from `pm2.options`.
+    pub unused_ecosystem: Vec<String>,
 }
 
 enum Source {
@@ -46,17 +51,68 @@ struct Entry {
     size: u64,
 }
 
+/// The file shipdeck writes into a release for its manager.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceFile {
+    /// Its path in the release: `<service>.service` or `<service>.pm2.json`.
+    pub name: String,
+    pub text: String,
+}
+
+/// Renders the release's service file; `None` when `pm2.ecosystem` names
+/// the user's own. `start_path` is where preflight found the start program.
+pub fn service_file(
+    deployable: &Deployable,
+    release: &ReleaseName,
+    start_path: Option<&str>,
+) -> Result<Option<ServiceFile>> {
+    let service = &deployable.config.service;
+    let Some(name) = service.own_file() else {
+        return Ok(None);
+    };
+    let text = match service.manager {
+        Manager::Systemd => unit::render_for(deployable, release, start_path)?,
+        Manager::Pm2 => pm2::render(deployable, start_path)?,
+    };
+    Ok(Some(ServiceFile { name, text }))
+}
+
+/// What the service runs, in one line for the screen and the log.
+pub fn start_line(deployable: &Deployable, start_path: Option<&str>) -> String {
+    let service = &deployable.config.service;
+    match (service.manager, &service.pm2.ecosystem) {
+        (Manager::Systemd, _) => unit::exec_start(deployable, start_path),
+        (Manager::Pm2, Some(file)) => format!("pm2 app {} from {file}", service.pm2_app()),
+        (Manager::Pm2, None) => format!(
+            "pm2 app {}: {}",
+            service.pm2_app(),
+            unit::exec_start(deployable, start_path)
+        ),
+    }
+}
+
 /// Packs the release. `progress(done, total)` is called as input bytes are
 /// compressed.
 pub fn pack(
     deployable: &Deployable,
     manifest: &Manifest,
-    unit: &str,
+    own: Option<&ServiceFile>,
     mut progress: impl FnMut(u64, u64),
 ) -> Result<Bundle> {
     let selection = files::select(deployable)?;
     let replaced = selection.replaced.clone();
-    let entries = collect(deployable, manifest, unit, selection)?;
+    let service = &deployable.config.service;
+    let unused_ecosystem = if service.manager == Manager::Pm2 && service.pm2.ecosystem.is_none() {
+        selection
+            .items
+            .keys()
+            .filter(|path| path.starts_with("ecosystem.") && is_ecosystem_file(path))
+            .cloned()
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let entries = collect(deployable, manifest, own, selection)?;
     let total: u64 = entries.iter().map(|e| e.size).sum();
     let files = entries
         .iter()
@@ -120,6 +176,7 @@ pub fn pack(
         files,
         input_bytes: total,
         replaced,
+        unused_ecosystem,
     })
 }
 
@@ -137,11 +194,10 @@ fn encoder() -> Result<Encoder<'static, Vec<u8>>> {
 fn collect(
     deployable: &Deployable,
     manifest: &Manifest,
-    unit: &str,
+    own: Option<&ServiceFile>,
     selection: Selection,
 ) -> Result<Vec<Entry>> {
     let service = &deployable.config.service;
-    let unit_name = format!("{}.service", service.name);
     let manifest_json = serde_json::to_vec_pretty(manifest)?;
 
     let mut entries = Vec::new();
@@ -163,7 +219,17 @@ fn collect(
             size,
         });
     }
-    for reserved in [MANIFEST_FILE, unit_name.as_str()] {
+    if let Some(file) = &service.pm2.ecosystem {
+        let file = release_path(file);
+        if !selection.items.contains_key(&file) {
+            bail!(
+                "pm2.ecosystem names {file}, but the release has no {file}; \
+                 add it to pipeline.pack.files.include"
+            );
+        }
+    }
+    let own_name = own.map(|file| file.name.as_str());
+    for reserved in [Some(MANIFEST_FILE), own_name].into_iter().flatten() {
         if let Some(item) = selection.items.get(reserved) {
             bail!(
                 "{} would replace the release's own {reserved}; leave it out of pipeline.pack.files",
@@ -189,12 +255,14 @@ fn collect(
         source: Source::Bytes(manifest_json),
         mode: 0o644,
     });
-    entries.push(Entry {
-        path: unit_name,
-        size: unit.len() as u64,
-        source: Source::Bytes(unit.as_bytes().to_vec()),
-        mode: 0o644,
-    });
+    if let Some(own) = own {
+        entries.push(Entry {
+            path: own.name.clone(),
+            size: own.text.len() as u64,
+            source: Source::Bytes(own.text.as_bytes().to_vec()),
+            mode: 0o644,
+        });
+    }
 
     for (path, item) in selection.items {
         entries.push(match item.kind {

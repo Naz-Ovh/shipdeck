@@ -429,6 +429,117 @@ fn rejects_unsafe_service_values() {
     assert_eq!(messages(&yaml), ["`service.keep.open` must be at least 1"]);
 }
 
+/// SAMPLE with PM2 and `extra` in `service`.
+fn pm2(extra: &str) -> String {
+    SAMPLE.replace(
+        "dir: /opt/demo }",
+        &format!("dir: /opt/demo, manager: pm2{extra} }}"),
+    )
+}
+
+#[test]
+fn pm2_reads_its_settings_with_their_types() {
+    let config = parse(&pm2(
+        ", pm2: { app: demo-api, options: { instances: 2, exec_mode: cluster, autorestart: false, max_memory_restart: 300M, quoted: \"4\" } }",
+    ))
+    .unwrap();
+    let service = &config.service;
+    assert_eq!(service.manager, Manager::Pm2);
+    assert_eq!(service.pm2_app(), "demo-api");
+    assert_eq!(service.own_file().as_deref(), Some("demo.pm2.json"));
+    let options = &service.pm2.options;
+    assert_eq!(options["instances"], serde_json::json!(2));
+    assert_eq!(options["exec_mode"], serde_json::json!("cluster"));
+    assert_eq!(options["autorestart"], serde_json::json!(false));
+    assert_eq!(options["max_memory_restart"], serde_json::json!("300M"));
+    assert_eq!(options["quoted"], serde_json::json!("4"));
+
+    let config = parse(&pm2(", pm2: { ecosystem: ecosystem.config.js }")).unwrap();
+    assert_eq!(config.service.pm2_app(), "demo");
+    assert_eq!(config.service.own_file(), None);
+    assert_eq!(config.service.pm2_file(), "ecosystem.config.js");
+    assert_eq!(sample().service.manager, Manager::Systemd);
+    assert_eq!(sample().service.own_file().as_deref(), Some("demo.service"));
+}
+
+#[test]
+fn pm2_settings_that_cannot_work_are_named() {
+    for (extra, why) in [
+        (", pm2: { app: \"a b\" }", "not a PM2 app name"),
+        (", pm2: { app: \"42\" }", "not a PM2 app name"),
+        (", pm2: { ecosystem: /etc/app.json }", "inside the release"),
+        (", pm2: { ecosystem: ../app.json }", "inside the release"),
+        (", pm2: { ecosystem: app.js }", "does not read"),
+        (", pm2: { options: { name: x } }", "sets the PM2 `name`"),
+        (", pm2: { options: { env: {} } }", "sets the PM2 `env`"),
+        (", run_as: www", "runs the app as the SSH user"),
+        (
+            ", start: node a.js, pm2: { ecosystem: app.config.js }",
+            "both say what runs",
+        ),
+        (
+            ", pm2: { ecosystem: app.config.js, options: { instances: 2 } }",
+            "are both set",
+        ),
+    ] {
+        let found = messages(&pm2(extra));
+        assert!(found.iter().any(|m| m.contains(why)), "{extra}: {found:?}");
+    }
+    let yaml = SAMPLE.replace("dir: /opt/demo }", "dir: /opt/demo, pm2: { app: x } }");
+    assert!(messages(&yaml)[0].contains("only read with `manager: pm2`"));
+    let yaml = pm2(", shared: [demo.pm2.json]");
+    assert!(messages(&yaml)[0].contains("belongs to shipdeck"));
+}
+
+#[test]
+fn start_arguments_split_like_systemd() {
+    assert_eq!(
+        split_args("dist/main.js --port 3000 --title \"my api\" -m 'a b'"),
+        Some(
+            [
+                "dist/main.js",
+                "--port",
+                "3000",
+                "--title",
+                "my api",
+                "-m",
+                "a b"
+            ]
+            .map(String::from)
+            .to_vec()
+        )
+    );
+    assert_eq!(split_args("  "), Some(Vec::new()));
+    assert_eq!(
+        split_args("--empty \"\""),
+        Some(vec!["--empty".into(), String::new()])
+    );
+    assert_eq!(split_args("--title \"my api"), None);
+    let yaml = SAMPLE.replace(
+        "dir: /opt/demo }",
+        "dir: /opt/demo, start: './demo --title \"oops' }",
+    );
+    assert!(messages(&yaml)[0].contains("never closed"));
+}
+
+#[test]
+fn pm2_needs_pm2_on_the_server_and_no_start_with_an_ecosystem() {
+    let dir = scratch("pm2-tools");
+    let yaml = pm2(", start: node dist/main.js").replace(
+        "binary: target/release/demo",
+        "files: { include: { project: [dist] } }",
+    );
+    let found = deployable(&dir, parse(&yaml).unwrap());
+    assert_eq!(found.required_tools(), ["node", "pm2"]);
+    let yaml = pm2(", pm2: { ecosystem: ecosystem.config.js }").replace(
+        "binary: target/release/demo",
+        "files: { include: { project: [dist, ecosystem.config.js] } }",
+    );
+    let found = deployable(&dir, parse(&yaml).unwrap());
+    assert_eq!(found.required_tools(), ["pm2"]);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn rejects_unsafe_pipeline_values() {
     let found = messages(&format!(

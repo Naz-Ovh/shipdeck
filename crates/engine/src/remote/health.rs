@@ -1,9 +1,10 @@
-//! One look at whether the service is up: systemd's state, its restart
-//! count and, if configured, the health URL.
+//! One look at whether the service is up: systemd's or PM2's state, its
+//! restart count and, if configured, the health URL.
 
 use anyhow::Result;
 
 use super::{Server, pairs};
+use crate::config::Manager;
 use crate::ssh::sh_quote;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,8 +20,9 @@ pub enum HttpCheck {
 #[derive(Debug, Clone)]
 pub struct Probe {
     /// `systemctl is-active` output: `active`, `activating`, `failed`, ...
+    /// PM2's state is put in the same words.
     pub state: String,
-    /// systemd's automatic restart counter; a rising count means a crash loop.
+    /// The manager's restart counter; a rising count means a crash loop.
     pub restarts: Option<u64>,
     pub http: HttpCheck,
 }
@@ -49,11 +51,17 @@ fi"
                 )
             }
         };
-        let script = format!(
-            "echo \"state=$(systemctl is-active {svc} 2>&1 | head -n1)\"
+        let (script, pm2) = match self.manager {
+            Manager::Systemd => (
+                format!(
+                    "echo \"state=$(systemctl is-active {svc} 2>&1 | head -n1)\"
 echo \"restarts=$(systemctl show -p NRestarts --value {svc} 2>/dev/null)\"
 {http}"
-        );
+                ),
+                None,
+            ),
+            Manager::Pm2 => (http, Some(self.pm2_state().await?)),
+        };
         let out = self.session.exec(&script).await?;
         let values = pairs(&out.stdout);
         let get = |key: &str| {
@@ -69,9 +77,13 @@ echo \"restarts=$(systemctl show -p NRestarts --value {svc} 2>/dev/null)\"
             "skipped" | "" => HttpCheck::Skipped,
             other => HttpCheck::Failed(other.strip_prefix("fail:").unwrap_or(other).to_string()),
         };
+        let (state, restarts) = match pm2 {
+            Some(found) => found,
+            None => (get("state").to_string(), get("restarts").parse().ok()),
+        };
         Ok(Probe {
-            state: get("state").to_string(),
-            restarts: get("restarts").parse().ok(),
+            state,
+            restarts,
             http,
         })
     }

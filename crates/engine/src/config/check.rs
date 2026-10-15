@@ -378,10 +378,31 @@ fn kind_of(node: &Node) -> &'static str {
     }
 }
 
-/// Plain YAML as JSON, for parts the schema leaves open.
+/// Plain YAML as JSON, for parts the schema leaves open: an unquoted
+/// `true`, `false` or number keeps its type, so `instances: 2` stays a number.
 fn plain_json(node: &Node) -> Json {
     match &node.value {
         _ if node.is_null() => Json::Null,
+        Value::Scalar {
+            text,
+            plain: true,
+            tag: None,
+        } => match text.as_str() {
+            "true" => Json::Bool(true),
+            "false" => Json::Bool(false),
+            _ => text
+                .parse::<i64>()
+                .map(Json::from)
+                .ok()
+                .or_else(|| {
+                    text.parse::<f64>()
+                        .ok()
+                        .filter(|n| n.is_finite() && text.contains('.'))
+                        .and_then(serde_json::Number::from_f64)
+                        .map(Json::Number)
+                })
+                .unwrap_or_else(|| Json::String(text.clone())),
+        },
         Value::Scalar { text, .. } => Json::String(text.clone()),
         Value::Seq(items) => Json::Array(items.iter().map(plain_json).collect()),
         Value::Map(entries) => Json::Object(

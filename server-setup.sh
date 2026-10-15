@@ -9,38 +9,44 @@
 #
 # It creates the deploy user, authorizes its key, creates the app folder
 # owned by that user, and installs the sudo rule shipdeck needs (checked by
-# visudo first). Running it again changes nothing that is already in place.
+# visudo first). With --manager pm2 there is no sudo rule: it starts that
+# user's PM2 at boot instead. Running it again changes nothing that is
+# already in place.
 set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: server-setup.sh --user NAME --dir PATH --service NAME [--key 'PUBLIC KEY']
+Usage: server-setup.sh --user NAME --dir PATH --service NAME [--manager systemd|pm2] [--key 'PUBLIC KEY']
 
   --user     the user shipdeck logs in as, e.g. deploy
   --dir      the app folder, e.g. /opt/my-api
   --service  the systemd service name, without .service
+  --manager  what keeps the app running: systemd (default) or pm2
   --key      an SSH public key to authorize for that user (one line)
 EOF
 }
 
 say()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 skip() { printf '\033[2m  - %s\033[0m\n' "$*"; }
+warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
 DEPLOY_USER=""
 APP_DIR=""
 SERVICE=""
+MANAGER="systemd"
 PUBLIC_KEY=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
-    --user|--dir|--service|--key) [ $# -ge 2 ] || die "$1 needs a value" ;;
+    --user|--dir|--service|--manager|--key) [ $# -ge 2 ] || die "$1 needs a value" ;;
     *) usage >&2; die "unknown argument: $1" ;;
   esac
   case "$1" in
     --user)    DEPLOY_USER=$2 ;;
     --dir)     APP_DIR=$2 ;;
     --service) SERVICE=$2 ;;
+    --manager) MANAGER=$2 ;;
     --key)     PUBLIC_KEY=$2 ;;
   esac
   shift 2
@@ -54,6 +60,7 @@ done
 [[ "/$APP_DIR/" != *"/../"* ]] || die "--dir must not contain '..'"
 [[ "$SERVICE" =~ ^[A-Za-z0-9._@-]+$ ]] || die "--service may only use letters, digits, '.', '_', '@' and '-'"
 [[ "$SERVICE" != *.service ]] || die "--service is the name without .service"
+[[ "$MANAGER" == systemd || "$MANAGER" == pm2 ]] || die "--manager must be systemd or pm2"
 if [ -n "$PUBLIC_KEY" ]; then
   [[ "$PUBLIC_KEY" != *$'\n'* && "$PUBLIC_KEY" != *$'\r'* ]] || die "--key must be a single line"
   [[ "$PUBLIC_KEY" =~ ^(ssh-|ecdsa-|sk-)[A-Za-z0-9@.-]+\ [A-Za-z0-9+/=]+(\ .*)?$ ]] \
@@ -61,9 +68,11 @@ if [ -n "$PUBLIC_KEY" ]; then
 fi
 
 [ "$(id -u)" -eq 0 ] || die "run this as root (put sudo before bash)"
-command -v systemctl >/dev/null || die "systemd is required"
-command -v sudo >/dev/null || die "sudo is required (apt install sudo, or dnf install sudo)"
-command -v visudo >/dev/null || die "visudo is required (it comes with sudo)"
+if [ "$MANAGER" = systemd ]; then
+  command -v systemctl >/dev/null || die "systemd is required"
+  command -v sudo >/dev/null || die "sudo is required (apt install sudo, or dnf install sudo)"
+  command -v visudo >/dev/null || die "visudo is required (it comes with sudo)"
+fi
 command -v zstd >/dev/null || die "zstd is required to unpack releases (apt install zstd, or dnf install zstd)"
 
 # sudo skips files in /etc/sudoers.d whose names contain a dot.
@@ -118,24 +127,41 @@ if [ "$(stat -c %U "$APP_DIR")" != "$DEPLOY_USER" ]; then
   chown "$DEPLOY_USER:$group" "$APP_DIR"
 fi
 
-# 4. The sudo rule: only these commands, checked by visudo before it is installed.
-rule="$DEPLOY_USER ALL=(root) NOPASSWD: "
-sep=""
-for entry in "${SUDO_COMMANDS[@]}"; do
-  tool=${entry%% *}
-  path=$(command -v "$tool") || die "$tool is not installed"
-  rule+="$sep$path ${entry#* }"
-  sep=", "
-done
-tmp=$(mktemp)
-trap 'rm -f "$tmp"' EXIT
-printf '# Written by shipdeck server-setup.sh for %s.\n%s\n' "$SERVICE" "$rule" > "$tmp"
-visudo -cq -f "$tmp" || die "the sudo rule did not pass visudo; nothing was installed"
-if [ -f "$SUDOERS_FILE" ] && cmp -s "$tmp" "$SUDOERS_FILE"; then
-  skip "sudo rule already installed"
-else
-  say "installing $SUDOERS_FILE"
-  install -m 0440 -o root -g root "$tmp" "$SUDOERS_FILE"
+# 4. With PM2: no sudo rule; that user's PM2 starts at boot and brings back
+# what shipdeck saved with `pm2 save`.
+if [ "$MANAGER" = pm2 ]; then
+  pm2_bin=$(su - "$DEPLOY_USER" -c 'command -v pm2' 2>/dev/null || true)
+  if [ -z "$pm2_bin" ]; then
+    warn "pm2 is not installed for $DEPLOY_USER; install it (npm install -g pm2), then run this again"
+  elif command -v systemctl >/dev/null && systemctl is-enabled "pm2-$DEPLOY_USER" >/dev/null 2>&1; then
+    skip "pm2 already starts at boot for $DEPLOY_USER"
+  else
+    say "starting pm2 at boot for $DEPLOY_USER"
+    env PATH="$PATH:$(dirname "$pm2_bin")" "$pm2_bin" startup -u "$DEPLOY_USER" --hp "$home"
+  fi
+fi
+
+# 4. With systemd: the sudo rule, only these commands, checked by visudo
+# before it is installed.
+if [ "$MANAGER" = systemd ]; then
+  rule="$DEPLOY_USER ALL=(root) NOPASSWD: "
+  sep=""
+  for entry in "${SUDO_COMMANDS[@]}"; do
+    tool=${entry%% *}
+    path=$(command -v "$tool") || die "$tool is not installed"
+    rule+="$sep$path ${entry#* }"
+    sep=", "
+  done
+  tmp=$(mktemp)
+  trap 'rm -f "$tmp"' EXIT
+  printf '# Written by shipdeck server-setup.sh for %s.\n%s\n' "$SERVICE" "$rule" > "$tmp"
+  visudo -cq -f "$tmp" || die "the sudo rule did not pass visudo; nothing was installed"
+  if [ -f "$SUDOERS_FILE" ] && cmp -s "$tmp" "$SUDOERS_FILE"; then
+    skip "sudo rule already installed"
+  else
+    say "installing $SUDOERS_FILE"
+    install -m 0440 -o root -g root "$tmp" "$SUDOERS_FILE"
+  fi
 fi
 
 # 5. sshd may only let listed users in.
@@ -145,4 +171,4 @@ if command -v sshd >/dev/null && allowed=$(sshd -T 2>/dev/null | grep -i '^allow
   printf '         add %s to AllowUsers in /etc/ssh/sshd_config and reload sshd\n' "$DEPLOY_USER"
 fi
 
-say "done: $DEPLOY_USER can deploy $SERVICE to $APP_DIR"
+say "done: $DEPLOY_USER can deploy $SERVICE to $APP_DIR with $MANAGER"

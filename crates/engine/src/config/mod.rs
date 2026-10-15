@@ -47,7 +47,8 @@ pub struct DeployConfig {
     pub project: String,
     /// How to log in to the server.
     pub ssh: SshTarget,
-    /// The systemd service on the server, and where its releases live.
+    /// The service on the server (a systemd unit or a PM2 app), and where
+    /// its releases live.
     pub service: Service,
     /// The steps of a deploy, in order: preflight, build, pack, setup,
     /// health, done, and failed when a step fails. upload, unpack, switch and
@@ -71,22 +72,31 @@ pub struct SshTarget {
     pub user: Option<String>,
 }
 
-/// The systemd service shipdeck installs, and where its releases live.
+/// The service shipdeck runs, and where its releases live.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Service {
     /// The unit's name without `.service`: `my-api` becomes my-api.service.
+    /// With PM2, also the app's name unless `pm2.app` is set.
     pub name: String,
     /// An absolute folder on the server, such as `/opt/my-api`. It holds
     /// `current` (the live release), `releases/`, `backups/` and `shared/`.
     pub dir: String,
+    /// What keeps the app running: `systemd`, a unit shipdeck installs with
+    /// sudo, or `pm2`, run as the SSH user without sudo. Default: systemd.
+    #[serde(default)]
+    pub manager: Manager,
+    /// How PM2 runs the app, with `manager: pm2`.
+    #[serde(default)]
+    pub pm2: Pm2,
     /// The command the service runs, from the release folder:
     /// `./my-api -E=.env` or `node dist/main.js`. A bare program name such as
     /// `node` is looked up on the server. Default: `./<binary>` from
     /// `pipeline.pack.binary`.
     #[serde(default)]
     pub start: Option<String>,
-    /// The user the service runs as. Default: the SSH user.
+    /// The user the service runs as. Default: the SSH user. PM2 always runs
+    /// the app as the SSH user.
     #[serde(default)]
     pub run_as: Option<String>,
     /// A `KEY=value` file in the release, such as `.env`. The service gets it
@@ -103,6 +113,74 @@ pub struct Service {
     /// How many old releases stay on the server, for rollback.
     #[serde(default)]
     pub keep: Keep,
+}
+
+impl Service {
+    /// The file shipdeck writes into each release for the manager:
+    /// `<name>.service`, or `<name>.pm2.json` when there is no
+    /// `pm2.ecosystem`.
+    pub fn own_file(&self) -> Option<String> {
+        match self.manager {
+            Manager::Systemd => Some(format!("{}.service", self.name)),
+            Manager::Pm2 if self.pm2.ecosystem.is_some() => None,
+            Manager::Pm2 => Some(format!("{}.pm2.json", self.name)),
+        }
+    }
+
+    /// The PM2 app's name.
+    pub fn pm2_app(&self) -> &str {
+        self.pm2.app.as_deref().unwrap_or(&self.name)
+    }
+
+    /// The file in the release PM2 starts the app from.
+    pub fn pm2_file(&self) -> String {
+        match &self.pm2.ecosystem {
+            Some(file) => release_path(file),
+            None => format!("{}.pm2.json", self.name),
+        }
+    }
+}
+
+/// What keeps the app running on the server.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Manager {
+    /// A systemd unit, installed and restarted with sudo.
+    #[default]
+    Systemd,
+    /// PM2, run as the SSH user: no sudo. Reloaded with
+    /// `pm2 startOrReload`, then saved with `pm2 save`.
+    Pm2,
+}
+
+impl Manager {
+    /// As messages name it.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Systemd => "systemd",
+            Self::Pm2 => "PM2",
+        }
+    }
+}
+
+/// How PM2 runs the app. Either shipdeck writes the app file from
+/// `service.start`, `service.env` and `options`, or `ecosystem` names your own.
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Pm2 {
+    /// The app's name in PM2, as `pm2 list` shows it. Default: `service.name`.
+    #[serde(default)]
+    pub app: Option<String>,
+    /// Your own PM2 file in the release, such as `ecosystem.config.js`.
+    /// shipdeck reloads the app `app` from it; `service.start` and `options`
+    /// are not used. Ship it with `pipeline.pack.files`.
+    #[serde(default)]
+    pub ecosystem: Option<String>,
+    /// More PM2 app settings for the file shipdeck writes, such as
+    /// `instances: max`, `exec_mode: cluster` or `max_memory_restart: 300M`.
+    /// shipdeck sets `name`, `cwd` and the environment itself.
+    #[serde(default)]
+    pub options: BTreeMap<String, serde_json::Value>,
 }
 
 /// Old releases kept on the server, for rollback.
@@ -591,11 +669,18 @@ impl Deployable {
     }
 
     /// Programs preflight must find on the server: the start program when
-    /// it lives outside the release, then `preflight.requires`.
+    /// it lives outside the release, `pm2` with PM2, then
+    /// `preflight.requires`.
     pub fn required_tools(&self) -> Vec<String> {
+        let service = &self.config.service;
         let mut tools = Vec::new();
-        if let (Program::Tool(name) | Program::Absolute(name), _) = self.start() {
+        if service.pm2.ecosystem.is_none()
+            && let (Program::Tool(name) | Program::Absolute(name), _) = self.start()
+        {
             tools.push(name);
+        }
+        if service.manager == Manager::Pm2 {
+            tools.push("pm2".into());
         }
         for tool in &self.config.pipeline.preflight.requires {
             if !tools.contains(tool) {
@@ -624,6 +709,40 @@ fn file_name(path: &str) -> String {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.to_string())
+}
+
+/// The endings PM2 reads as an ecosystem file rather than a script.
+pub const ECOSYSTEM_ENDINGS: [&str; 5] = [".config.js", ".config.cjs", ".json", ".yml", ".yaml"];
+
+/// A name PM2 reads as an ecosystem file.
+pub fn is_ecosystem_file(path: &str) -> bool {
+    ECOSYSTEM_ENDINGS.iter().any(|end| path.ends_with(end))
+}
+
+/// The arguments in `service.start` after the program, split the way
+/// systemd splits `ExecStart=`: at spaces, with `"..."` or `'...'` kept as
+/// one argument. `None` when a quote is never closed.
+pub fn split_args(text: &str) -> Option<Vec<String>> {
+    let mut args = Vec::new();
+    let mut word: Option<String> = None;
+    let mut quote = None;
+    for c in text.chars() {
+        match (quote, c) {
+            (Some(open), c) if c == open => quote = None,
+            (Some(_), c) => word.get_or_insert_default().push(c),
+            (None, '"' | '\'') => {
+                quote = Some(c);
+                word.get_or_insert_default();
+            }
+            (None, c) if c.is_whitespace() => args.extend(word.take()),
+            (None, c) => word.get_or_insert_default().push(c),
+        }
+    }
+    if quote.is_some() {
+        return None;
+    }
+    args.extend(word);
+    Some(args)
 }
 
 /// `node`, `/usr/bin/node` or `bin/server`: safe in a shell word and a unit

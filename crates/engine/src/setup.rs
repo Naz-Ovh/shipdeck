@@ -2,11 +2,11 @@
 //! shipdeck repository; a server fetches it at the release tag of this build
 //! and runs it once as root with one deployable's values. It creates the
 //! deploy user, authorizes its key, creates the app folder and installs the
-//! sudo rule shipdeck needs.
+//! sudo rule shipdeck needs, or with PM2 starts PM2 at boot instead.
 
 use std::path::{Path, PathBuf};
 
-use crate::config::Deployable;
+use crate::config::{Deployable, Manager};
 use crate::ssh::{Login, sh_quote};
 
 pub const SCRIPT_NAME: &str = "server-setup.sh";
@@ -14,7 +14,7 @@ pub const SCRIPT_NAME: &str = "server-setup.sh";
 /// What to run on the server, and what it was built from.
 #[derive(Debug, Clone)]
 pub struct SetupCommand {
-    /// `curl -fsSL <url> | bash -s -- --user ... --dir ... --service ... [--key ...]`
+    /// `curl -fsSL <url> | bash -s -- --user ... --dir ... --service ... [--manager pm2] [--key ...]`
     pub command: String,
     pub url: String,
     /// The private key whose public half the command authorizes, if any.
@@ -79,6 +79,10 @@ pub fn arguments(deployable: &Deployable, public_key: Option<&str>) -> Vec<Strin
         "--service".to_string(),
         deployable.config.service.name.clone(),
     ];
+    if deployable.config.service.manager == Manager::Pm2 {
+        args.push("--manager".to_string());
+        args.push("pm2".to_string());
+    }
     if let Some(key) = public_key {
         args.push("--key".to_string());
         args.push(key.to_string());

@@ -14,10 +14,14 @@ fn script_path() -> PathBuf {
 }
 
 fn deployable(service: &str, identity: Option<PathBuf>) -> Deployable {
+    with_manager(service, "systemd", identity)
+}
+
+fn with_manager(service: &str, manager: &str, identity: Option<PathBuf>) -> Deployable {
     let config: DeployConfig = serde_json::from_value(serde_json::json!({
         "name": "My API (prod)",
         "ssh": { "host": "prod", "user": "deploy" },
-        "service": { "name": service, "dir": "/opt/my-api" },
+        "service": { "name": service, "dir": "/opt/my-api", "manager": manager },
         "pipeline": { "pack": { "binary": "target/release/my-api" } },
     }))
     .unwrap();
@@ -69,6 +73,18 @@ fn command_carries_the_deployable_and_quotes_the_key() {
     );
     assert_eq!(setup.key, Some(key.clone()));
     std::fs::remove_dir_all(key.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn command_asks_for_pm2_only_with_pm2() {
+    let setup = command(&with_manager("my-api", "pm2", None), &Login::Auto);
+    assert!(
+        setup.command.ends_with("--service my-api --manager pm2"),
+        "{}",
+        setup.command
+    );
+    let setup = command(&deployable("my-api", None), &Login::Auto);
+    assert!(!setup.command.contains("--manager"));
 }
 
 #[test]
@@ -142,6 +158,14 @@ fn script_refuses_unsafe_values_before_touching_anything() {
         (base("deploy", "/opt/../etc", "x"), "'..'"),
         (base("deploy", "/opt/x", "x;id"), "--service"),
         (base("deploy", "/opt/x", "x.service"), ".service"),
+        (
+            [
+                base("deploy", "/opt/x", "x"),
+                vec!["--manager".into(), "pm2;id".into()],
+            ]
+            .concat(),
+            "--manager",
+        ),
         (vec!["--user".into()], "needs a value"),
         (vec!["--bogus".into()], "unknown argument"),
     ] {
@@ -162,9 +186,14 @@ fn script_accepts_what_shipdeck_passes() {
     if String::from_utf8_lossy(&uid.stdout).trim() == "0" {
         return;
     }
-    for service in ["my-api", "my.api", "worker@1"] {
+    for (service, manager) in [
+        ("my-api", "systemd"),
+        ("my.api", "systemd"),
+        ("worker@1", "systemd"),
+        ("my-api", "pm2"),
+    ] {
         let args = arguments(
-            &deployable(service, None),
+            &with_manager(service, manager, None),
             Some("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPR1CM5+/x9= it's me@laptop"),
         );
         let (code, stderr) = run_script(&args);

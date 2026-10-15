@@ -72,18 +72,22 @@ pub fn render_for(
 /// program made absolute.
 pub fn exec_start(deployable: &Deployable, start_path: Option<&str>) -> String {
     let (program, rest) = deployable.start();
-    let program = match program {
+    [program_path(deployable, program, start_path), rest]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Where the start program is on the server.
+pub fn program_path(deployable: &Deployable, program: Program, start_path: Option<&str>) -> String {
+    match program {
         Program::Absolute(path) => path,
         Program::InRelease(path) => format!("{}/current/{path}", deployable.config.service.dir),
         // systemd finds a bare name on its own fixed PATH, which may not be
         // where preflight found it; the found path is the one to use.
         Program::Tool(name) => start_path.map(str::to_string).unwrap_or(name),
-    };
-    [program, rest]
-        .into_iter()
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
+    }
 }
 
 /// Replaces every `{{name}}`; an unknown placeholder, or one this deployable

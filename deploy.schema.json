@@ -184,6 +184,21 @@
       },
       "type": "object"
     },
+    "Manager": {
+      "description": "What keeps the app running on the server.",
+      "oneOf": [
+        {
+          "const": "systemd",
+          "description": "A systemd unit, installed and restarted with sudo.",
+          "type": "string"
+        },
+        {
+          "const": "pm2",
+          "description": "PM2, run as the SSH user: no sudo. Reloaded with `pm2 startOrReload`, then saved with `pm2 save`.",
+          "type": "string"
+        }
+      ]
+    },
     "Pack": {
       "additionalProperties": false,
       "properties": {
@@ -269,6 +284,35 @@
       },
       "type": "object"
     },
+    "Pm2": {
+      "additionalProperties": false,
+      "description": "How PM2 runs the app. Either shipdeck writes the app file from `service.start`, `service.env` and `options`, or `ecosystem` names your own.",
+      "properties": {
+        "app": {
+          "default": null,
+          "description": "The app's name in PM2, as `pm2 list` shows it. Default: `service.name`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ecosystem": {
+          "default": null,
+          "description": "Your own PM2 file in the release, such as `ecosystem.config.js`. shipdeck reloads the app `app` from it; `service.start` and `options` are not used. Ship it with `pipeline.pack.files`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "options": {
+          "additionalProperties": true,
+          "default": {},
+          "description": "More PM2 app settings for the file shipdeck writes, such as `instances: max`, `exec_mode: cluster` or `max_memory_restart: 300M`. shipdeck sets `name`, `cwd` and the environment itself.",
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
     "Preflight": {
       "additionalProperties": false,
       "properties": {
@@ -321,7 +365,7 @@
     },
     "Service": {
       "additionalProperties": false,
-      "description": "The systemd service shipdeck installs, and where its releases live.",
+      "description": "The service shipdeck runs, and where its releases live.",
       "properties": {
         "dir": {
           "description": "An absolute folder on the server, such as `/opt/my-api`. It holds `current` (the live release), `releases/`, `backups/` and `shared/`.",
@@ -351,13 +395,29 @@
           ],
           "description": "How many old releases stay on the server, for rollback."
         },
+        "manager": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Manager"
+            }
+          ],
+          "description": "What keeps the app running: `systemd`, a unit shipdeck installs with sudo, or `pm2`, run as the SSH user without sudo. Default: systemd."
+        },
         "name": {
-          "description": "The unit's name without `.service`: `my-api` becomes my-api.service.",
+          "description": "The unit's name without `.service`: `my-api` becomes my-api.service. With PM2, also the app's name unless `pm2.app` is set.",
           "type": "string"
+        },
+        "pm2": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Pm2"
+            }
+          ],
+          "description": "How PM2 runs the app, with `manager: pm2`."
         },
         "run_as": {
           "default": null,
-          "description": "The user the service runs as. Default: the SSH user.",
+          "description": "The user the service runs as. Default: the SSH user. PM2 always runs the app as the SSH user.",
           "type": [
             "string",
             "null"
@@ -490,7 +550,7 @@
           "$ref": "#/definitions/Service"
         }
       ],
-      "description": "The systemd service on the server, and where its releases live."
+      "description": "The service on the server (a systemd unit or a PM2 app), and where its releases live."
     },
     "ssh": {
       "allOf": [

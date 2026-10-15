@@ -39,6 +39,8 @@ fn facts(tools: &[(&str, Option<&str>)]) -> Facts {
         free_bytes: None,
         current: None,
         active: String::new(),
+        systemd: String::new(),
+        pm2_version: None,
         sudo_missing: Vec::new(),
         tools: tools
             .iter()
@@ -233,4 +235,25 @@ fn a_start_program_under_home_is_refused_with_the_default_unit() {
         ("npm", Some("/home/deploy/.local/bin/npm")),
     ]);
     assert!(check_tools(&web, &found, &report).is_ok());
+}
+
+#[test]
+fn pm2_must_be_known_and_alone() {
+    let web = deployable(&NODE.replace(
+        "start: node dist/main.js",
+        "start: node dist/main.js, manager: pm2",
+    ));
+    let (report, _rx) = reporter();
+    let mut found = facts(&[]);
+    found.pm2_version = Some("6.0.8".into());
+    check_pm2(&web, &found, &report).unwrap();
+
+    found.pm2_version = Some(format!("{}.0.0", crate::remote::PM2_NEWEST_MAJOR + 1));
+    let err = check_pm2(&web, &found, &report).unwrap_err().to_string();
+    assert!(err.contains("newer than this shipdeck supports"), "{err}");
+
+    found.pm2_version = Some("6.0.8".into());
+    found.systemd = "active".into();
+    let err = check_pm2(&web, &found, &report).unwrap_err().to_string();
+    assert!(err.contains("sudo systemctl disable --now web"), "{err}");
 }

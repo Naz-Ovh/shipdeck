@@ -14,14 +14,15 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow, bail};
 
 use crate::build;
+use crate::bundle;
 use crate::bundle::files::{self, Kind, Source};
-use crate::bundle::{self, unit};
 use crate::config::{
-    Commands, DeployConfig, Deployable, Program, ROLLBACK_ANSWER_SECS, Rollback, release_path,
+    Commands, DeployConfig, Deployable, Manager, Program, ROLLBACK_ANSWER_SECS, Rollback,
+    release_path,
 };
 use crate::human;
 use crate::release::{Manifest, ReleaseName};
-use crate::remote::{CommandEnv, Facts, HttpCheck, Place, Server, plan_rotation};
+use crate::remote::{CommandEnv, Facts, HttpCheck, Place, Server, check_version, plan_rotation};
 use crate::ssh::Pool;
 use report::{LogKind, Outcome, Reporter, Unit};
 
@@ -431,18 +432,18 @@ impl<'a> Run<'a> {
         let manifest = Manifest::new(&name, &deployer);
         let packed = async {
             let start_path = start_path(deployable, &facts);
-            let unit = unit::render_for(deployable, &name, start_path.as_deref())?;
+            let own = bundle::service_file(deployable, &name, start_path.as_deref())?;
             report.log(
                 LogKind::Info,
                 format!(
-                    "ExecStart={}",
-                    unit::exec_start(deployable, start_path.as_deref())
+                    "start: {}",
+                    bundle::start_line(deployable, start_path.as_deref())
                 ),
             );
             let (owned, reporter) = (deployable.clone(), report.clone());
             let mut throttle = Throttle::default();
             let bundle = tokio::task::spawn_blocking(move || {
-                bundle::pack(&owned, &manifest, &unit, |done, total| {
+                bundle::pack(&owned, &manifest, own.as_ref(), |done, total| {
                     if throttle.ready(done, total) {
                         reporter.progress(index, done, total, Unit::Bytes, "compressing");
                     }
@@ -467,6 +468,16 @@ impl<'a> Run<'a> {
             Ok(bundle) => bundle,
             Err(err) => return self.stop(Step::Pack, err),
         };
+        for path in &bundle.unused_ecosystem {
+            report.log(
+                LogKind::Warn,
+                format!(
+                    "{path} is in the release but PM2 runs {} from pm2.options; \
+                     to use your file, set pm2.ecosystem: {path} and remove pm2.options and service.start",
+                    self.config().service.pm2_file()
+                ),
+            );
+        }
         for path in &bundle.replaced {
             report.log(
                 LogKind::Info,
@@ -759,15 +770,16 @@ impl<'a> Run<'a> {
         report.log(LogKind::Error, format!("{err:#}"));
         match server.journal().await {
             Ok(lines) if !lines.is_empty() => {
-                report.log(LogKind::Info, "last journal lines:");
+                report.log(LogKind::Info, "last log lines:");
                 for line in lines {
                     report.log(LogKind::Err, line);
                 }
             }
-            _ => report.log(LogKind::Warn, "could not read the journal"),
+            _ => report.log(LogKind::Warn, "could not read the service's log"),
         }
         let error = format!("{err:#}");
         let id = self.release.clone().unwrap_or_default();
+        let manager = server.manager().label();
 
         let Some(previous) = self.previous.clone().filter(|p| *p != id) else {
             report.log(
@@ -807,7 +819,7 @@ impl<'a> Run<'a> {
             let probe = server.probe(None).await?;
             if probe.state != "active" {
                 bail!(
-                    "{previous} did not come back either: systemd says {}",
+                    "{previous} did not come back either: {manager} says {}",
                     probe.state
                 );
             }
@@ -965,6 +977,9 @@ async fn preflight(
         );
     }
     check_tools(deployable, &facts, report)?;
+    if config.service.manager == Manager::Pm2 {
+        check_pm2(deployable, &facts, report)?;
+    }
     if let Some(free) = facts.free_bytes
         && free < MIN_FREE
     {
@@ -1005,6 +1020,7 @@ fn check_tools(deployable: &Deployable, facts: &Facts, report: &Reporter) -> Res
     }
     if let (Program::Tool(tool), _) = deployable.start()
         && let Some(path) = facts.tool_path(&tool)
+        && deployable.config.service.manager == Manager::Systemd
         && !deployable.unit_template_path().is_file()
         && (path.starts_with("/home/") || path.starts_with("/root/"))
     {
@@ -1012,6 +1028,25 @@ fn check_tools(deployable: &Deployable, facts: &Facts, report: &Reporter) -> Res
             "{tool} is at {path}, but the built-in unit hides home folders from the service \
              (ProtectHome=true). Install {tool} system-wide (e.g. /usr/bin or /usr/local/bin), \
              or add a service.template without ProtectHome"
+        );
+    }
+    Ok(())
+}
+
+/// PM2 is a version shipdeck knows, and no systemd unit of the same name
+/// still runs the app.
+fn check_pm2(deployable: &Deployable, facts: &Facts, report: &Reporter) -> Result<()> {
+    let output = facts.pm2_version.as_deref().unwrap_or_default();
+    let version = check_version(output).map_err(|why| anyhow!(why))?;
+    report.log(LogKind::Success, format!("pm2 {version}"));
+    let name = &deployable.config.service.name;
+    if matches!(
+        facts.systemd.as_str(),
+        "active" | "activating" | "reloading"
+    ) {
+        bail!(
+            "the systemd service {name} is still running and would clash with PM2; \
+             stop it first: sudo systemctl disable --now {name}"
         );
     }
     Ok(())
@@ -1026,7 +1061,7 @@ fn start_path(deployable: &Deployable, facts: &Facts) -> Option<String> {
 }
 
 /// What can be checked on this machine before connecting: the project
-/// folder and the unit template.
+/// folder and the service file.
 fn check_local(deployable: &Deployable) -> Result<()> {
     let project = deployable.project_dir();
     if !project.is_dir() {
@@ -1036,8 +1071,15 @@ fn check_local(deployable: &Deployable) -> Result<()> {
             deployable.config.project
         );
     }
+    let template = deployable.unit_template_path();
+    if deployable.config.service.manager == Manager::Pm2 && template.is_file() {
+        bail!(
+            "{} is a systemd unit, but service.manager is pm2; remove it, or use systemd",
+            template.display()
+        );
+    }
     let sample = ReleaseName::new("0.0.0", "check", false, chrono::Utc::now());
-    unit::render_for(deployable, &sample, None)?;
+    bundle::service_file(deployable, &sample, None)?;
     Ok(())
 }
 
@@ -1116,6 +1158,7 @@ pub(crate) async fn wait_healthy(
 ) -> Result<String> {
     let timeout = Duration::from_secs(health.timeout_secs);
     let started = Instant::now();
+    let manager = server.manager().label();
     let mut baseline = None;
     let mut streak = 0;
     loop {
@@ -1127,12 +1170,12 @@ pub(crate) async fn wait_healthy(
             && now > before
         {
             bail!(
-                "the service crashed and was restarted {} time(s) by systemd",
+                "the service crashed and was restarted {} time(s) by {manager}",
                 now - before
             );
         }
         if probe.state == "failed" {
-            bail!("systemd reports the service as failed");
+            bail!("{manager} reports the service as failed");
         }
         if probe.http == HttpCheck::NoClient {
             bail!("pipeline.health.url is set, but the server has neither curl nor wget");
@@ -1168,7 +1211,7 @@ pub(crate) async fn wait_healthy(
                 _ => String::new(),
             };
             bail!(
-                "not healthy after {}s: systemd says {}{why}",
+                "not healthy after {}s: {manager} says {}{why}",
                 health.timeout_secs,
                 if probe.state.is_empty() {
                     "nothing"

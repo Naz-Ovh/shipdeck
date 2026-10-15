@@ -4,10 +4,12 @@
 //! `current -> releases/<id>`, `releases/<id>/`, `backups/<id>.tar.gz`, `shared/`.
 
 mod health;
+mod pm2;
 mod preflight;
 mod releases;
 
 pub use health::{HttpCheck, Probe};
+pub use pm2::{PM2_NEWEST_MAJOR, app_state, check_version};
 pub use preflight::Facts;
 pub use releases::{Kind, Listing, ReleaseEntry, RotationPlan, Status, plan_rotation};
 
@@ -16,7 +18,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, bail};
 
-use crate::config::{Service, release_path};
+use crate::config::{Manager, Service, release_path};
 use crate::deploy::report::{LogKind, Reporter};
 use crate::release::is_safe_id;
 use crate::ssh::{Output, Session, Stream, sh_quote};
@@ -25,6 +27,12 @@ pub struct Server {
     session: Arc<Session>,
     dir: String,
     service: String,
+    manager: Manager,
+    pm2_app: String,
+    /// The PM2 file, relative to the release.
+    pm2_file: String,
+    /// What the app gets when PM2 starts it.
+    env: CommandEnv,
 }
 
 impl Server {
@@ -33,11 +41,23 @@ impl Server {
             session,
             dir: service.dir.clone(),
             service: service.name.clone(),
+            manager: service.manager,
+            pm2_app: service.pm2_app().to_string(),
+            pm2_file: service.pm2_file(),
+            env: CommandEnv {
+                service: service.env.clone(),
+                env_file: service.env_file.as_deref().map(release_path),
+                vars: Vec::new(),
+            },
         }
     }
 
     pub fn session(&self) -> &Session {
         &self.session
+    }
+
+    pub fn manager(&self) -> Manager {
+        self.manager
     }
 
     fn q_dir(&self) -> String {
@@ -53,9 +73,13 @@ impl Server {
         format!("{}/releases/.{id}.tar.zst", self.dir)
     }
 
-    /// The commands that need root here; see [`sudo_commands`].
+    /// The commands that need root here; see [`sudo_commands`]. PM2 needs
+    /// none.
     pub fn sudo_commands(&self) -> Vec<String> {
-        sudo_commands(&self.dir, &self.service)
+        match self.manager {
+            Manager::Systemd => sudo_commands(&self.dir, &self.service),
+            Manager::Pm2 => Vec::new(),
+        }
     }
 
     /// Logged in as root, so nothing needs sudo.
@@ -169,8 +193,11 @@ echo \"current -> $(readlink current)\"",
     }
 
     /// Installs the unit `current` carries, reloads systemd and enables the
-    /// service at boot.
+    /// service at boot. PM2 reads its file from `current` at restart.
     pub async fn install_unit(&self, report: &Reporter) -> Result<()> {
+        if self.manager == Manager::Pm2 {
+            return Ok(());
+        }
         let (dir, svc, sudo) = (&self.dir, &self.service, self.sudo());
         let script = format!(
             "set -e
@@ -186,7 +213,29 @@ echo \"current -> $(readlink current)\"",
         Ok(())
     }
 
+    /// Restarts the service on the release `current` points to. PM2 starts
+    /// or reloads the app from `current`'s file with the service's
+    /// environment, then saves its list so the app comes back after a reboot.
     pub async fn restart(&self, report: &Reporter) -> Result<()> {
+        if self.manager == Manager::Pm2 {
+            let current = format!("{}/current", self.dir);
+            let file = sh_quote(&format!("{current}/{}", self.pm2_file));
+            let mut script = env_prelude(&current, &self.env, self.env.env_file.clone());
+            script.push_str(&format!(
+                "[ -f {file} ] || {{ echo {missing} >&2; exit 1; }}
+pm2 startOrReload {file} --only {app} --update-env
+pm2 save
+",
+                missing = sh_quote(&format!(
+                    "this release has no {}; was it deployed with systemd?",
+                    self.pm2_file
+                )),
+                app = sh_quote(&self.pm2_app),
+            ));
+            self.run(&format!("reload {} in pm2", self.pm2_app), &script, report)
+                .await?;
+            return Ok(());
+        }
         let script = format!("{}systemctl restart {}", self.sudo(), self.q_service());
         self.run(&format!("restart {}", self.service), &script, report)
             .await?;
@@ -254,17 +303,7 @@ echo {done}
                 env.env_file.clone(),
             ),
         };
-        let mut script = format!("set -e\ncd {}\n", sh_quote(&dir));
-        for (key, value) in &env.service {
-            script.push_str(&format!("export {key}={}\n", sh_quote(value)));
-        }
-        if let Some(file) = env_file {
-            script.push_str(ENV_FILE_READER);
-            script.push_str(&format!("shipdeck_env {}\n", sh_quote(&file)));
-        }
-        for (key, value) in &env.vars {
-            script.push_str(&format!("export {key}={}\n", sh_quote(value)));
-        }
+        let mut script = env_prelude(&dir, env, env_file);
         // The command is shell by design: it comes from deploy.yaml, written
         // by whoever deploys, and runs as the deploy user.
         script.push_str(command);
@@ -293,18 +332,39 @@ echo {done}
         Ok(())
     }
 
-    /// The service's last 30 journal lines.
+    /// The service's last 30 log lines: its journal, or PM2's logs.
     pub async fn journal(&self) -> Result<Vec<String>> {
-        let out = self
-            .session
-            .exec(&format!(
+        let script = match self.manager {
+            Manager::Systemd => format!(
                 "{}journalctl -u {} -n 30 --no-pager 2>&1",
                 self.sudo(),
                 self.q_service()
-            ))
-            .await?;
+            ),
+            Manager::Pm2 => format!(
+                "pm2 logs {} --lines 30 --nostream --raw 2>&1",
+                sh_quote(&self.pm2_app)
+            ),
+        };
+        let out = self.session.exec(&script).await?;
         Ok(out.stdout.lines().map(str::to_string).collect())
     }
+}
+
+/// `set -e`, `cd dir`, then `env` exported: `service.env`, then `env_file`
+/// (as systemd reads it), then `vars`.
+fn env_prelude(dir: &str, env: &CommandEnv, env_file: Option<String>) -> String {
+    let mut script = format!("set -e\ncd {}\n", sh_quote(dir));
+    for (key, value) in &env.service {
+        script.push_str(&format!("export {key}={}\n", sh_quote(value)));
+    }
+    if let Some(file) = env_file {
+        script.push_str(ENV_FILE_READER);
+        script.push_str(&format!("shipdeck_env {}\n", sh_quote(&file)));
+    }
+    for (key, value) in &env.vars {
+        script.push_str(&format!("export {key}={}\n", sh_quote(value)));
+    }
+    script
 }
 
 /// Where a command from deploy.yaml runs on the server.
