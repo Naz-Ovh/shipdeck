@@ -454,6 +454,17 @@ fn pm2_reads_its_settings_with_their_types() {
     assert_eq!(options["max_memory_restart"], serde_json::json!("300M"));
     assert_eq!(options["quoted"], serde_json::json!("4"));
 
+    let config = parse(&pm2(
+        ", pm2: { options: { a: 0x1F, b: 0o17, c: -3, d: 1.5e3, e: .5, f: TRUE, g: 1e3, h: .inf, i: 0x1G, j: 1.2.3 } }",
+    ))
+    .unwrap();
+    let options = &config.service.pm2.options;
+    let expected = serde_json::json!({
+        "a": 31, "b": 15, "c": -3, "d": 1500.0, "e": 0.5, "f": true, "g": 1000.0,
+        "h": ".inf", "i": "0x1G", "j": "1.2.3",
+    });
+    assert_eq!(serde_json::to_value(options).unwrap(), expected);
+
     let config = parse(&pm2(", pm2: { ecosystem: ecosystem.config.js }")).unwrap();
     assert_eq!(config.service.pm2_app(), "demo");
     assert_eq!(config.service.own_file(), None);

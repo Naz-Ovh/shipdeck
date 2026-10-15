@@ -378,8 +378,9 @@ fn kind_of(node: &Node) -> &'static str {
     }
 }
 
-/// Plain YAML as JSON, for parts the schema leaves open: an unquoted
-/// `true`, `false` or number keeps its type, so `instances: 2` stays a number.
+/// Plain YAML as JSON, for parts the schema leaves open. An unquoted
+/// scalar is typed by the YAML 1.2 core schema, so `instances: 2` is a
+/// number and `"2"` stays text.
 fn plain_json(node: &Node) -> Json {
     match &node.value {
         _ if node.is_null() => Json::Null,
@@ -387,22 +388,7 @@ fn plain_json(node: &Node) -> Json {
             text,
             plain: true,
             tag: None,
-        } => match text.as_str() {
-            "true" => Json::Bool(true),
-            "false" => Json::Bool(false),
-            _ => text
-                .parse::<i64>()
-                .map(Json::from)
-                .ok()
-                .or_else(|| {
-                    text.parse::<f64>()
-                        .ok()
-                        .filter(|n| n.is_finite() && text.contains('.'))
-                        .and_then(serde_json::Number::from_f64)
-                        .map(Json::Number)
-                })
-                .unwrap_or_else(|| Json::String(text.clone())),
-        },
+        } => core_schema(text).unwrap_or_else(|| Json::String(text.clone())),
         Value::Scalar { text, .. } => Json::String(text.clone()),
         Value::Seq(items) => Json::Array(items.iter().map(plain_json).collect()),
         Value::Map(entries) => Json::Object(
@@ -412,6 +398,49 @@ fn plain_json(node: &Node) -> Json {
                 .collect(),
         ),
     }
+}
+
+/// A plain scalar as the YAML 1.2 core schema reads it (spec 10.3.2):
+/// booleans, integers in decimal, `0o` octal or `0x` hex, and floats.
+/// `.inf` and `.nan` have no JSON form, so they stay text, as does
+/// everything else.
+fn core_schema(text: &str) -> Option<Json> {
+    match text {
+        "true" | "True" | "TRUE" => return Some(Json::Bool(true)),
+        "false" | "False" | "FALSE" => return Some(Json::Bool(false)),
+        _ => {}
+    }
+    let digits = |s: &str, radix: u32| !s.is_empty() && s.chars().all(|c| c.is_digit(radix));
+    if let Some(octal) = text.strip_prefix("0o").filter(|s| digits(s, 8)) {
+        return i64::from_str_radix(octal, 8).ok().map(Json::from);
+    }
+    if let Some(hex) = text.strip_prefix("0x").filter(|s| digits(s, 16)) {
+        return i64::from_str_radix(hex, 16).ok().map(Json::from);
+    }
+    let unsigned = text.strip_prefix(['-', '+']).unwrap_or(text);
+    if digits(unsigned, 10) {
+        return text.parse::<i64>().ok().map(Json::from);
+    }
+    // [-+]? ( \.[0-9]+ | [0-9]+ ( \.[0-9]* )? ) ( [eE] [-+]? [0-9]+ )?
+    let (mantissa, exponent) = match unsigned.split_once(['e', 'E']) {
+        Some((m, e)) => (m, Some(e.strip_prefix(['-', '+']).unwrap_or(e))),
+        None => (unsigned, None),
+    };
+    let mantissa_ok = match mantissa.split_once('.') {
+        Some((whole, fraction)) => {
+            (whole.is_empty() && digits(fraction, 10))
+                || (digits(whole, 10) && (fraction.is_empty() || digits(fraction, 10)))
+        }
+        None => digits(mantissa, 10),
+    };
+    if mantissa_ok && exponent.is_none_or(|e| digits(e, 10)) {
+        return text
+            .parse::<f64>()
+            .ok()
+            .and_then(serde_json::Number::from_f64)
+            .map(Json::Number);
+    }
+    None
 }
 
 fn dotted(path: &[String]) -> String {
