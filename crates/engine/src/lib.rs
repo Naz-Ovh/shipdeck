@@ -7,6 +7,7 @@ pub mod bundle;
 pub mod config;
 pub mod deploy;
 pub mod human;
+pub mod init;
 pub mod release;
 pub mod remote;
 pub mod setup;
