@@ -8,7 +8,7 @@ use ratatui::text::{Line, Span};
 
 use shipdeck_engine::deploy::report::{Outcome, StepState};
 
-use super::app::{App, Modal, OpKind, Screen, Tone};
+use super::app::{App, Live, Modal, OpKind, Screen, Tone};
 use super::theme::{self, ACCENT, ERR, INK, MUTED, OK, SURFACE, WARN};
 
 pub fn header(frame: &mut Frame, area: Rect, app: &App) {
@@ -114,18 +114,21 @@ fn operation_status(app: &App) -> Line<'static> {
 }
 
 pub fn footer(frame: &mut Frame, area: Rect, app: &App) {
+    let connect = match app.selected().map(|index| &app.live[index]) {
+        Some(Live::Ready(_)) => "disconnect",
+        _ => "connect",
+    };
     let hints: &[(&str, &str)] = match app.modals.front() {
         Some(Modal::Secret { .. }) => &[("⏎", "submit"), ("esc", "cancel"), ("ctrl+u", "clear")],
-        Some(Modal::Setup { .. }) => &[("c", "copy"), ("⏎", "close")],
         Some(Modal::AskRollback { .. }) => &[("y", "roll back now"), ("n", "keep it live")],
         Some(_) => &[("y", "yes"), ("n", "no")],
         None => match app.screen {
             Screen::Deployables => &[
                 ("↑↓", "select"),
+                ("c", connect),
                 ("⏎", "deploy"),
                 ("r", "releases"),
                 ("s", "refresh"),
-                ("u", "server setup"),
                 ("tab", "screens"),
                 ("q", "quit"),
             ],

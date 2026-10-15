@@ -17,9 +17,6 @@ use shipdeck_engine::deploy::report::{
     LogKind, OpEvent, OpId, OpUpdate, Outcome, Reporter, RollbackQuestion, StepState, Unit,
 };
 use shipdeck_engine::remote::{Kind, Listing, Server, Status};
-use shipdeck_engine::setup::{self, SetupCommand};
-
-use super::clipboard;
 use shipdeck_engine::ssh::{Pool, Question};
 
 /// Log lines kept per operation; older ones scroll away.
@@ -57,9 +54,11 @@ pub enum Fetched {
     },
 }
 
+/// One deployable's connection and what it last reported. Nothing connects
+/// until asked: `c` on the deployable, or a deploy, rollback or release list.
 #[derive(Debug, Clone)]
 pub enum Live {
-    Unknown,
+    Disconnected,
     Loading,
     Ready(Status),
     Error(String),
@@ -274,11 +273,6 @@ pub enum Modal {
         question: RollbackQuestion,
         deadline: Instant,
     },
-    /// The one-time server setup command for a deployable.
-    Setup {
-        deployable: usize,
-        setup: SetupCommand,
-    },
     Secret {
         title: String,
         prompt: String,
@@ -317,8 +311,6 @@ pub struct App {
     pub toast: Option<Toast>,
     pub tick: u64,
     pub quit: bool,
-    /// The last setup command shown, with its deployable's name; printed on quit.
-    pub last_setup: Option<(String, String)>,
     pub pool: Arc<Pool>,
     ops: UnboundedSender<OpUpdate>,
     fetched: UnboundedSender<Fetched>,
@@ -341,7 +333,7 @@ impl App {
         Self {
             root,
             deployables: discovery.deployables,
-            live: vec![Live::Unknown; count],
+            live: vec![Live::Disconnected; count],
             list,
             screen: Screen::Deployables,
             op: None,
@@ -350,7 +342,6 @@ impl App {
             toast: None,
             tick: 0,
             quit: false,
-            last_setup: None,
             pool,
             ops,
             fetched,
@@ -388,10 +379,54 @@ impl App {
 
     // ── background work ────────────────────────────────────────────────
 
-    pub fn refresh_all(&mut self) {
-        for index in 0..self.deployables.len() {
+    /// Connects the deployable, or disconnects it when it is connected.
+    fn toggle_connection(&mut self, index: usize) {
+        match self.live[index] {
+            Live::Loading => self.notify("Still connecting", Tone::Info),
+            Live::Ready(_) => self.disconnect(index),
+            Live::Disconnected | Live::Error(_) => self.refresh_status(index),
+        }
+    }
+
+    /// Closes the session to the deployable's server. Every deployable on
+    /// the same `user@host:port` shares it, so they all show disconnected.
+    fn disconnect(&mut self, index: usize) {
+        let endpoint = self.deployables[index].endpoint.clone();
+        let in_use = self
+            .op
+            .as_ref()
+            .filter(|op| op.running())
+            .is_some_and(|op| self.deployables[op.deployable].endpoint == endpoint);
+        if in_use {
+            self.notify("An operation is using this connection", Tone::Warn);
+            return;
+        }
+        for (deployable, live) in self.deployables.iter().zip(self.live.iter_mut()) {
+            if deployable.endpoint == endpoint {
+                *live = Live::Disconnected;
+            }
+        }
+        self.notify(
+            format!("Disconnected from {}", endpoint.label()),
+            Tone::Info,
+        );
+        let pool = self.pool.clone();
+        tokio::spawn(async move { pool.close(&endpoint).await });
+    }
+
+    /// Fetches the status again for every connected deployable.
+    fn refresh_connected(&mut self) {
+        let connected: Vec<usize> = (0..self.live.len())
+            .filter(|index| matches!(self.live[*index], Live::Ready(_)))
+            .collect();
+        if connected.is_empty() {
+            self.notify("Nothing is connected. Press c to connect", Tone::Info);
+            return;
+        }
+        for index in connected {
             self.refresh_status(index);
         }
+        self.notify("Refreshing live status", Tone::Info);
     }
 
     pub fn refresh_status(&mut self, index: usize) {
@@ -571,20 +606,6 @@ impl App {
         ));
     }
 
-    /// Shows the one-time server setup command for one deployable. It is
-    /// also printed when shipdeck quits, ready to copy.
-    fn show_setup(&mut self, index: usize) {
-        let setup = setup::command(&self.deployables[index], self.pool.login());
-        self.last_setup = Some((
-            self.deployables[index].config.name.clone(),
-            setup.command.clone(),
-        ));
-        self.modals.push_back(Modal::Setup {
-            deployable: index,
-            setup,
-        });
-    }
-
     fn next_op_id(&mut self) -> OpId {
         let id = self.next_op;
         self.next_op += 1;
@@ -695,15 +716,12 @@ impl App {
                     self.open_releases(index);
                 }
             }
-            KeyCode::Char('s') => {
-                self.refresh_all();
-                self.notify("Refreshing live status", Tone::Info);
-            }
-            KeyCode::Char('u') => {
+            KeyCode::Char('c') => {
                 if let Some(index) = self.selected() {
-                    self.show_setup(index);
+                    self.toggle_connection(index);
                 }
             }
+            KeyCode::Char('s') => self.refresh_connected(),
             _ => {}
         }
     }
@@ -872,22 +890,6 @@ impl App {
                         self.modals.pop_front();
                     }
                     _ => {}
-                }
-            }
-            Modal::Setup { setup, .. } => {
-                let command = setup.command.clone();
-                if key.code == KeyCode::Char('c') {
-                    match clipboard::copy(&command) {
-                        Ok(()) => self.notify(
-                            "Copied, if your terminal allows it; it is also printed when you quit",
-                            Tone::Info,
-                        ),
-                        Err(err) => self.notify(format!("Could not copy: {err}"), Tone::Warn),
-                    }
-                } else if matches!(key.code, KeyCode::Enter | KeyCode::Esc | KeyCode::Char('q'))
-                    || ctrl_c
-                {
-                    self.modals.pop_front();
                 }
             }
             Modal::AskRollback { .. } => {

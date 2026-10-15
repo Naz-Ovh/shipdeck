@@ -59,7 +59,7 @@ fn item<'a>(deployable: &'a Deployable, live: &Live, tick: u64) -> ListItem<'a> 
         Live::Ready(_) => ("○", MUTED),
         Live::Loading => (theme::spinner(tick), ACCENT),
         Live::Error(_) => ("●", ERR),
-        Live::Unknown => ("○", theme::FAINT),
+        Live::Disconnected => ("○", theme::FAINT),
     };
     let summary = live_summary(live, tick);
     ListItem::new(Text::from(vec![
@@ -80,7 +80,7 @@ fn item<'a>(deployable: &'a Deployable, live: &Live, tick: u64) -> ListItem<'a> 
 /// One line about what is live: version and service state, or why not.
 fn live_summary(live: &Live, tick: u64) -> Vec<Span<'static>> {
     match live {
-        Live::Unknown => vec![Span::styled("not checked yet", theme::faint())],
+        Live::Disconnected => vec![Span::styled("not connected · c connects", theme::faint())],
         Live::Loading => vec![Span::styled(
             format!("{} connecting…", theme::spinner(tick)),
             Style::new().fg(ACCENT),

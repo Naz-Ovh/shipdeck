@@ -345,6 +345,17 @@ impl Pool {
         Ok(session)
     }
 
+    /// Closes the session for `target`, if one is open; the next `get`
+    /// connects again.
+    pub async fn close(&self, target: &Endpoint) {
+        let slot = self.slots.lock().expect("pool lock").get(target).cloned();
+        if let Some(slot) = slot
+            && let Some(session) = slot.lock().await.take()
+        {
+            session.close().await;
+        }
+    }
+
     pub async fn close_all(&self) {
         let slots: Vec<_> = self
             .slots

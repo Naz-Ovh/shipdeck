@@ -3,7 +3,6 @@
 
 mod app;
 mod chrome;
-mod clipboard;
 mod deployables;
 mod modal;
 mod operation;
@@ -36,9 +35,6 @@ pub async fn run(mut app: App, mut inbox: Inbox) -> Result<()> {
     let mut terminal = ratatui::init();
     let result = event_loop(&mut terminal, &mut app, &mut inbox).await;
     ratatui::restore();
-    if let Some((name, command)) = &app.last_setup {
-        println!("One-time server setup for {name}; run it on the server as root:\n\n{command}\n");
-    }
     app.pool.close_all().await;
     result
 }
@@ -50,7 +46,6 @@ async fn event_loop(
 ) -> Result<()> {
     let mut events = EventStream::new();
     let mut tick = tokio::time::interval(Duration::from_millis(80));
-    app.refresh_all();
 
     while !app.quit {
         terminal.draw(|frame| draw(frame, app))?;

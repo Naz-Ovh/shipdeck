@@ -536,14 +536,19 @@ setup, so a rollback finds them already in place.
 | Key | Deployables | Operation | Releases |
 | --- | --- | --- | --- |
 | `↑` `↓` | select | scroll the log | select |
+| `c` | connect, or disconnect when connected | | |
 | `⏎` | deploy (asks first) | | roll back to the selected release (asks first) |
 | `r` | open releases | open releases | refresh |
-| `s` | refresh live status | | |
-| `u` | show the server setup command (`c` copies it) | | |
+| `s` | refresh the connected ones | | |
 | `G` | | follow the log again | |
 | `esc` | | back | back |
 | `tab`, `1` `2` `3` | switch screens | | |
 | `q` | quit (asks while something runs) | | |
+
+Nothing connects when shipdeck starts. `c` connects the selected deployable
+and shows what is live; deploying, opening releases and rolling back connect
+on their own. Disconnecting closes the session, so every deployable on that
+`user@host:port` shows as not connected.
 
 When a release fails after the switch, the rollback question takes `y` (roll
 back now) or `n` (keep it live).

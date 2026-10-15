@@ -9,7 +9,6 @@ use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph, Wrap};
 
 use shipdeck_engine::release::ReleaseName;
 use shipdeck_engine::remote::Kind;
-use shipdeck_engine::setup::SetupCommand;
 
 use std::time::Instant;
 
@@ -40,7 +39,6 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
             kind,
             current,
         } => confirm_rollback(app, *deployable, target, *kind, current.as_deref()),
-        Modal::Setup { deployable, setup } => setup_dialog(app, *deployable, setup),
         Modal::ConfirmQuit => (
             "Quit now?".to_string(),
             WARN,
@@ -327,58 +325,6 @@ fn confirm_rollback(
         WARN,
         lines,
         vec![("y", "roll back".into()), ("n", "cancel".into())],
-    )
-}
-
-fn setup_dialog(app: &App, index: usize, setup: &SetupCommand) -> Dialog {
-    let deployable = &app.deployables[index];
-    let config = &deployable.config;
-    let user = &deployable.endpoint.user;
-    let mut lines = vec![
-        Line::from(Span::styled(
-            "Run this once on the server as root:",
-            theme::bold(TEXT),
-        )),
-        Line::default(),
-        Line::from(Span::styled(setup.command.clone(), theme::bold(ACCENT))),
-        Line::default(),
-        Line::from(Span::styled(
-            format!(
-                "It fetches server-setup.sh from shipdeck v{} on GitHub, creates the user {user}, \
-                 authorizes its key, creates {} owned by {user}, and installs the sudo rule \
-                 for {} (checked by visudo first). Running it again changes nothing already \
-                 in place. Not root? Put sudo before bash.",
-                env!("CARGO_PKG_VERSION"),
-                config.service.dir,
-                config.service.name
-            ),
-            theme::muted(),
-        )),
-        Line::default(),
-    ];
-    match &setup.key {
-        Some(key) => lines.push(row(
-            "authorizes",
-            format!("the public half of {}", key.display()),
-        )),
-        None => lines.push(Line::from(Span::styled(
-            format!(
-                "No key to authorize: no --key, and ~/.ssh/config has no IdentityFile for {}. \
-                 The script tells you to set a password for {user} instead.",
-                deployable.endpoint.name
-            ),
-            Style::new().fg(WARN),
-        ))),
-    }
-    lines.push(Line::from(Span::styled(
-        "Then press ⏎ on the deployable to deploy as that user.",
-        theme::muted(),
-    )));
-    (
-        "Server setup".into(),
-        ACCENT,
-        lines,
-        vec![("c", "copy".into()), ("⏎", "close".into())],
     )
 }
 

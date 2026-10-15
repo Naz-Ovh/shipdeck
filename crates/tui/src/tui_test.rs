@@ -17,7 +17,6 @@ use shipdeck_engine::deploy::report::{
 };
 use shipdeck_engine::release::ReleaseName;
 use shipdeck_engine::remote::{Kind, Listing, ReleaseEntry, Status};
-use shipdeck_engine::setup;
 use shipdeck_engine::ssh::ssh_config::HostConfig;
 use shipdeck_engine::ssh::{Endpoint, Login, Pool};
 
@@ -386,17 +385,6 @@ async fn draws_every_screen_at_common_and_small_sizes() {
             reply: None,
         });
         render(&mut app, width, height, "trust-host");
-        let mut setup = setup::command(&app.deployables[0], &Login::Auto);
-        setup.command.push_str(
-            " --key 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPR1CM562x94ekkDx8f2 me@laptop'",
-        );
-        setup.key = Some(PathBuf::from("/home/me/.ssh/id_deploy"));
-        app.modals.push_front(Modal::Setup {
-            deployable: 0,
-            setup,
-        });
-        render(&mut app, width, height, "setup");
-        app.modals.pop_front();
         app.modals.pop_front();
         render(&mut app, width, height, "password");
     }
@@ -567,6 +555,56 @@ async fn an_unanswered_question_closes_when_its_time_is_up() {
     assert_eq!(app.modals.len(), 1);
     app.on_tick();
     assert!(app.modals.is_empty());
+}
+
+fn press(app: &mut App, code: KeyCode) {
+    app.on_event(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)));
+}
+
+#[tokio::test]
+async fn nothing_connects_until_asked() {
+    let (questions, _) = unbounded_channel();
+    let (ops, _) = unbounded_channel();
+    let (fetched, _) = unbounded_channel();
+    let discovery = Discovery {
+        deployables: vec![deployable("api-prod", "My API (prod)", "203.0.113.10")],
+        problems: Vec::new(),
+    };
+    let pool = Arc::new(Pool::new(Login::Auto, questions));
+    let mut app = App::new(PathBuf::from("."), discovery, pool, ops, fetched);
+    assert!(matches!(app.live[..], [Live::Disconnected]));
+    render(&mut app, 100, 30, "disconnected");
+
+    // `s` refreshes what is connected, and nothing is.
+    press(&mut app, KeyCode::Char('s'));
+    assert!(matches!(app.live[..], [Live::Disconnected]));
+}
+
+#[tokio::test]
+async fn c_disconnects_every_deployable_on_that_server() {
+    let mut app = app();
+    app.deployables[2].endpoint = app.deployables[0].endpoint.clone();
+    app.live[2] = app.live[0].clone();
+
+    press(&mut app, KeyCode::Char('c'));
+    assert!(matches!(app.live[0], Live::Disconnected));
+    assert!(matches!(app.live[1], Live::Error(_)));
+    assert!(matches!(app.live[2], Live::Disconnected));
+    assert!(matches!(app.live[3], Live::Loading));
+
+    // A connection being opened is left alone.
+    app.list.select(Some(3));
+    press(&mut app, KeyCode::Char('c'));
+    assert!(matches!(app.live[3], Live::Loading));
+}
+
+#[tokio::test]
+async fn c_keeps_a_connection_an_operation_uses() {
+    let mut app = app();
+    running_deploy(&mut app);
+    app.screen = Screen::Deployables;
+    press(&mut app, KeyCode::Char('c'));
+    assert!(matches!(app.live[0], Live::Ready(_)));
 }
 
 #[tokio::test]
