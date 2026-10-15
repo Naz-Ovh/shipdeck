@@ -515,6 +515,20 @@ As root these simply run. Any other user runs the last three through
 each one and, when something is missing, stops and names it. With PM2 only
 the first row applies.
 
+`server-setup.sh` sets this up for one app. Run it once on the server as
+root, with your values:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.4.0/server-setup.sh \
+  | bash -s -- --user deploy --dir /opt/my-api --service my-api \
+      --key "$(cat ~/.ssh/id_ed25519.pub)"     # --manager pm2 for a PM2 app
+```
+
+It creates the user, authorizes the key, creates `service.dir` owned by that
+user and installs a sudo rule for exactly the commands above (or, with PM2,
+starts that user's PM2 at boot). Running it again changes nothing already in
+place.
+
 ## On the server
 
 ```
@@ -593,7 +607,7 @@ cargo run -q -p shipdeck -- --schema > deploy.schema.json
 
 ### Releasing
 
-The setup command fetches `server-setup.sh`, and editors fetch
+`server-setup.sh` is fetched, and editors fetch
 `deploy.schema.json`, at the tag `v<version>`, so every release needs its tag
 pushed. Bump `[workspace.package] version` in `Cargo.toml`, update the schema
 line in `examples/` and this README, regenerate `deploy.schema.json`, commit,

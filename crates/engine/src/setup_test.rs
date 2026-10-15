@@ -1,51 +1,14 @@
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::*;
-use crate::config::DeployConfig;
 use crate::remote::sudo_commands;
-use crate::ssh::Endpoint;
-use crate::ssh::ssh_config::HostConfig;
 
 /// The script as committed at the repository root.
 const SCRIPT: &str = include_str!("../../../server-setup.sh");
 
 fn script_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../server-setup.sh")
-}
-
-fn deployable(service: &str, identity: Option<PathBuf>) -> Deployable {
-    with_manager(service, "systemd", identity)
-}
-
-fn with_manager(service: &str, manager: &str, identity: Option<PathBuf>) -> Deployable {
-    let config: DeployConfig = serde_json::from_value(serde_json::json!({
-        "name": "My API (prod)",
-        "ssh": { "host": "prod", "user": "deploy" },
-        "service": { "name": service, "dir": "/opt/my-api", "manager": manager },
-        "pipeline": { "pack": { "binary": "target/release/my-api" } },
-    }))
-    .unwrap();
-    let found = HostConfig {
-        host_name: Some("203.0.113.10".into()),
-        user: Some("root".into()),
-        identity_file: identity,
-        ..HostConfig::default()
-    };
-    let endpoint = Endpoint::from_config(&config.ssh, found).unwrap();
-    Deployable {
-        folder: PathBuf::from("./deploy/api-prod"),
-        slug: "api-prod".into(),
-        config,
-        endpoint,
-    }
-}
-
-fn key_pair(name: &str, public: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("shipdeck-setup-{name}-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("id_deploy"), "not a real key").unwrap();
-    std::fs::write(dir.join("id_deploy.pub"), format!("\n{public}\n")).unwrap();
-    dir.join("id_deploy")
 }
 
 #[test]
@@ -57,41 +20,6 @@ fn url_is_pinned_to_this_release() {
             env!("CARGO_PKG_VERSION")
         )
     );
-}
-
-#[test]
-fn command_carries_the_deployable_and_quotes_the_key() {
-    let key = key_pair("cmd", "ssh-ed25519 AAAAC3Nza me@laptop");
-    let setup = command(&deployable("my-api", Some(key.clone())), &Login::Auto);
-    assert_eq!(
-        setup.command,
-        format!(
-            "curl -fsSL {} | bash -s -- --user deploy --dir /opt/my-api --service my-api \
-             --key 'ssh-ed25519 AAAAC3Nza me@laptop'",
-            script_url()
-        )
-    );
-    assert_eq!(setup.key, Some(key.clone()));
-    std::fs::remove_dir_all(key.parent().unwrap()).unwrap();
-}
-
-#[test]
-fn command_asks_for_pm2_only_with_pm2() {
-    let setup = command(&with_manager("my-api", "pm2", None), &Login::Auto);
-    assert!(
-        setup.command.ends_with("--service my-api --manager pm2"),
-        "{}",
-        setup.command
-    );
-    let setup = command(&deployable("my-api", None), &Login::Auto);
-    assert!(!setup.command.contains("--manager"));
-}
-
-#[test]
-fn command_without_a_key_leaves_it_out() {
-    let setup = command(&deployable("my-api", None), &Login::Auto);
-    assert!(!setup.command.contains("--key"));
-    assert_eq!(setup.key, None);
 }
 
 #[test]
@@ -112,9 +40,9 @@ fn script_runs_exactly_the_sudo_commands_shipdeck_checks() {
 }
 
 #[test]
-fn script_names_the_sudoers_file_like_shipdeck() {
+fn script_names_the_sudoers_file_without_dots() {
+    // sudo skips files in /etc/sudoers.d whose names contain a `.`.
     assert!(SCRIPT.contains(r#"SUDOERS_FILE="/etc/sudoers.d/shipdeck-${SERVICE//./_}""#));
-    assert_eq!(sudoers_file("my.app"), "/etc/sudoers.d/shipdeck-my_app");
 }
 
 #[test]
@@ -179,7 +107,7 @@ fn script_refuses_unsafe_values_before_touching_anything() {
 }
 
 #[test]
-fn script_accepts_what_shipdeck_passes() {
+fn script_accepts_valid_values() {
     // Past validation the script needs root; as root this test would set up
     // the machine it runs on, so it only runs as a normal user.
     let uid = Command::new("id").arg("-u").output().unwrap();
@@ -192,23 +120,22 @@ fn script_accepts_what_shipdeck_passes() {
         ("worker@1", "systemd"),
         ("my-api", "pm2"),
     ] {
-        let args = arguments(
-            &with_manager(service, manager, None),
-            Some("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPR1CM5+/x9= it's me@laptop"),
-        );
+        let args: Vec<String> = [
+            "--user",
+            "deploy",
+            "--dir",
+            "/opt/my-api",
+            "--service",
+            service,
+            "--manager",
+            manager,
+            "--key",
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPR1CM5+/x9= it's me@laptop",
+        ]
+        .map(String::from)
+        .to_vec();
         let (code, stderr) = run_script(&args);
         assert_ne!(code, 0);
         assert!(stderr.contains("run this as root"), "{service}: {stderr}");
     }
-}
-
-#[test]
-fn reads_the_public_key_file_next_to_the_private_key() {
-    let key = key_pair("pub", "ssh-ed25519 AAAAC3Nza test@box");
-    assert_eq!(
-        public_key(&key).as_deref(),
-        Some("ssh-ed25519 AAAAC3Nza test@box")
-    );
-    assert_eq!(public_key(&key.with_file_name("missing")), None);
-    std::fs::remove_dir_all(key.parent().unwrap()).unwrap();
 }

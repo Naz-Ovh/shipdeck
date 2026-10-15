@@ -25,7 +25,7 @@ rolls back any release. Design and decisions: `docs/plan.md`. Usage: `README.md`
   `build` (version, local commands, ELF checks), `bundle` (picking files,
   tar.zst, unit), `ssh` (sessions,
   login, host keys, `~/.ssh/config` aliases), `remote` (server scripts),
-  `release` (ids, release.json), `setup` (the server setup command),
+  `release` (ids, release.json), `setup` (the server-setup.sh URL),
   `deploy` (the deploy and rollback flows, `report` for progress).
 - `crates/tui/` (`shipdeck-tui`): the screens, dialogs and key handling.
 - `crates/headless/` (`shipdeck-headless`): the `deploy`, `rollback` and

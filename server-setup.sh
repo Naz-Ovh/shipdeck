@@ -4,8 +4,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/<tag>/server-setup.sh \
 #     | bash -s -- --user deploy --dir /opt/my-api --service my-api --key 'ssh-ed25519 AAAA... me@pc'
 #
-# Press `u` on a deployable in shipdeck to get this command with your values
-# filled in. Not root? Put `sudo` before `bash`.
+# Fill in your own values: the SSH user, service.dir and service.name from
+# deploy.yaml, and your public key. Not root? Put `sudo` before `bash`.
 #
 # It creates the deploy user, authorizes its key, creates the app folder
 # owned by that user, and installs the sudo rule shipdeck needs (checked by

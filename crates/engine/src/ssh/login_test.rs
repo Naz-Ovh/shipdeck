@@ -63,17 +63,3 @@ fn login_never_prints_a_secret() {
     );
     assert_eq!(shown, "key text password");
 }
-
-#[test]
-fn the_setup_command_authorizes_the_key_text() {
-    let Some((private, public)) = generated("setup", "") else {
-        return;
-    };
-    let mut expected = public.split(' ').take(2).collect::<Vec<_>>().join(" ");
-    expected.push_str(" test@box");
-    assert_eq!(
-        crate::setup::public_key_of(&private).as_deref(),
-        Some(expected.as_str())
-    );
-    assert_eq!(crate::setup::public_key_of("nope"), None);
-}
