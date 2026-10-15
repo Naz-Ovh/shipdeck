@@ -130,5 +130,8 @@ async fn connect(
     if entry.current {
         bail!("{target} is already the current release");
     }
+    if entry.name.is_none() {
+        bail!("shipdeck did not create {target}, so it will not switch to it");
+    }
     Ok((server, entry.kind, listing.current.clone()))
 }
