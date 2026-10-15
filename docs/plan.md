@@ -29,16 +29,17 @@ live.
 | Editor completion | The config types generate `deploy.schema.json` (draft-07), published at each release tag; examples start with the `yaml-language-server` line. The launch check walks the same schema, and a test keeps the file current |
 | What is committed | `deploy.yaml` and extra files are committed; `.env` and other secrets are gitignored |
 | Any app | `pipeline.pack` ships a `binary` (checked against the server's CPU and glibc), `files`, or both. `service.start` says what the service runs (`node dist/main.js`); a bare program name is found on the server at preflight and written into the unit with its full path |
-| Pipeline | Ten steps under `pipeline:`: preflight, build, pack, upload, unpack, setup, switch, restart, health, done, plus failed. Each step that can run commands has `run` (and `check` where something must pass) with `local` and `server` sides; a step accepts only the sides it can run (build is local only, setup server only, upload/unpack/switch/restart none) |
+| Pipeline | Eleven steps under `pipeline:`: preflight, build, pack, upload, unpack, setup, backup, switch, restart, health, done, plus failed. Each step that can run commands has `run` (and `check` where something must pass) with `local` and `server` sides; a step accepts only the sides it can run (build is local only, setup server only, upload/unpack/switch/restart none) |
 | Files | `pipeline.pack.files.include` and `exclude`, each split into `project` (the source) and `deploy` (next to deploy.yaml). fast-glob/Tailwind patterns; a leading `!` leaves out (include) or keeps (exclude). `.git` never ships; a deploy file replaces a project file at the same path |
 | Service environment | `service.env_file: .env` becomes `EnvironmentFile=` and is loaded for server commands too (read like systemd: no expansion); `service.env` adds single variables |
 | Shared folders | `service.shared: [uploads]` lives in `shared/` and is linked into every release at unpack |
 | Server location | `/opt/<app>` |
 | Release layout | `releases/<id>/` folders plus a `current` symlink; systemd only uses `current/...` |
-| Retention | Set per deployable: `open` releases unpacked, then `compressed` releases as `.tar.gz`. The default is 5 + 15, so 20 versions in total |
+| Retention | `pipeline.backup.keep`, per deployable: `open` releases unpacked, then `compressed` releases kept only as their backup. The default is 5 + 15, so 20 versions in total |
+| Backups | After setup, `pipeline.backup.files` picks what of the release goes into `backups/<id>.tar.zst`: by default the shipped files, not what setup made (node_modules, .venv), so a backup is about the size of the upload. `include` adds files setup made that it cannot make again; `exclude` leaves out. Rolling back to a backup unpacks it, links `service.shared` and runs setup again. Releases from before backups are compressed whole into `.tar.gz`, as 0.5 did |
 | Version visibility | Each release carries `release.json` and its own systemd unit, with the version in `Description=`, so `systemctl status` shows it |
-| Failure handling | A failed switch, restart or health check asks whether to roll back (`rollback: ask`, the default) and rolls back after 30 s with no answer; `rollback: auto` never asks. `n` keeps the new release live. `failed` runs after any failure |
-| Manual rollback | Runs health and then `done` with `SHIPDECK_ACTION=rollback` |
+| Failure handling | A failed switch, restart or health check asks whether to roll back (`failed.rollback: ask`, the default) and rolls back after 30 s with no answer; `rollback: auto` never asks. `n` keeps the new release live. `failed` runs after any failure |
+| Manual rollback | Unpacks and sets up a backup first, then runs health and `done`, all with `SHIPDECK_ACTION=rollback` |
 | PM2 | `service.manager: pm2` instead of systemd, as the SSH user with no sudo. Each release carries `<service>.pm2.json` (`cwd` is `current`), or ships the user's `pm2.ecosystem`; restart is `pm2 startOrReload --only <app> --update-env` with the service's environment loaded, then `pm2 save`. Health reads `pm2 jlist`. PM2 newer than the major version shipdeck is tested with (6) is refused at preflight |
 | Without the TUI | `deploy`, `rollback` and `releases` subcommands run the same engine flows and print what it reports as lines. Nothing waits for a person: rolling back is a flag (`--on-failure`), a new host key needs `--trust-new-host`, a password comes from `--password` or `SHIPDECK_PASSWORD`. Each `Outcome` has its own exit code, which is a contract with the scripts that call shipdeck |
 
@@ -119,8 +120,10 @@ Python.
 │   │   ├── release.json
 │   │   └── ...extra files
 │   └── v0.3.0-9f8e7d6-20261012.091000/
-├── backups/                  next `keep.compressed` releases, as .tar.gz
-│   └── v0.2.9-1a2b3c4-20261001.120000.tar.gz
+├── backups/                  each release's backup, made after setup
+│   ├── v0.3.1-ab12cd3-20261014.153012.tar.zst
+│   ├── v0.3.0-9f8e7d6-20261012.091000.tar.zst
+│   └── v0.2.9-1a2b3c4-20261001.120000.tar.zst
 └── shared/                   kept across every deploy; `service.shared` folders are linked from each release
 ```
 
@@ -169,16 +172,17 @@ and releases are ordered by it, never by the version text.
 | 4 | Upload | Uploads over SFTP into `releases/.<id>.tar.zst` | — | Removes `<id>`. Nothing changed |
 | 5 | Unpack | Unpacks into `releases/<id>/` through a hidden folder; links `service.shared` | — | Removes `<id>`. Nothing changed |
 | 6 | Setup | Nothing: the live version keeps running | `run.server` then `check.server` in `releases/<id>/` (`npm ci --omit=dev`, migrations) | Removes `<id>`. Nothing changed |
-| 7 | Switch | Points `current` at `<id>` in one rename, installs the unit from `current/`, `daemon-reload`, `enable`. The old process keeps serving | — | Asks, then rolls back |
-| 8 | Restart | Restarts the service (about 1–2 seconds of downtime) | — | Asks, then rolls back |
-| 9 | Health | `systemctl is-active` and, if set, the URL must pass 3 times in a row, one second apart; a rising restart count fails at once | `check.server` in `current/`, then `check.local`, retried until `timeout_secs` | Asks, then rolls back; the last 30 journal lines are shown |
-| 10 | Done | Compresses releases beyond `keep.open` into `backups/`, deletes tarballs beyond `keep.compressed` | `run.server` in `current/`, then `run.local` | Warning only. The release stays live |
+| 7 | Backup | Lists `releases/<id>/`, picks what `backup.files` names (shipdeck's own files always, `service.shared` never), and packs it on the server into `backups/<id>.tar.zst` | — | Removes `<id>` and its backup. Nothing changed |
+| 8 | Switch | Points `current` at `<id>` in one rename, installs the unit from `current/`, `daemon-reload`, `enable`. The old process keeps serving | — | Asks, then rolls back |
+| 9 | Restart | Restarts the service (about 1–2 seconds of downtime) | — | Asks, then rolls back |
+| 10 | Health | `systemctl is-active` and, if set, the URL must pass 3 times in a row, one second apart; a rising restart count fails at once | `check.server` in `current/`, then `check.local`, retried until `timeout_secs` | Asks, then rolls back; the last 30 journal lines are shown |
+| 11 | Done | Deletes the folders of releases beyond `keep.open` (their backup stays), and folder and backup beyond `keep.compressed` | `run.server` in `current/`, then `run.local` | Warning only. The release stays live |
 | ✱ | Failed | Runs when any step failed, after the rollback | `run.local`, with `SHIPDECK_STEP` naming the failed step | Logged |
 
 The unit is always installed from `current/`, so the sudo rule names one
 fixed path and a rollback restores the unit that belongs to that release.
 
-**Rollback after a failure** asks first with `rollback: ask`: a dialog shows
+**Rollback after a failure** asks first with `failed.rollback: ask`: a dialog shows
 both releases and a countdown, and with no answer in 30 seconds shipdeck
 rolls back. Rolling back points `current` at the previous release, reinstalls
 that release's unit, restarts it, checks it is active, and removes the failed
@@ -186,15 +190,16 @@ release. `n` keeps the new release live as it is. On a first deploy there is
 no previous release, so the failed one stays in place for inspection.
 
 **Manual rollback** from the Releases screen does the same for any release
-you pick, then runs health and `done` with `SHIPDECK_ACTION=rollback`. If the
-release is compressed, it is first unpacked back into `releases/`.
+you pick, then runs health and `done` with `SHIPDECK_ACTION=rollback`. A
+release kept only as a backup is first unpacked back into `releases/`, gets
+its `service.shared` links and runs setup again; the backup stays.
 
 ## The screens
 
 **Deployables.** The folders found under the root. For each: its name, host,
 the version live on the server and whether the service is running.
 
-**Deploy.** The steps as a checklist with live status (ten, plus Failed
+**Deploy.** The steps as a checklist with live status (eleven, plus Failed
 when the deployable has `failed` commands), scrolled to keep the running one in view; a progress
 panel with a real bar for the running step (crates compiled, bytes packed,
 bytes uploaded with speed, health seconds, releases rotated) and an overall
@@ -253,7 +258,8 @@ crates/engine/src/
 ├── bundle/        picking the files, tar.zst, rendering the systemd unit
 ├── release.rs     release ids and release.json
 ├── ssh/           the russh session, ~/.ssh/config aliases, login, host keys, commands, SFTP upload
-├── remote/        preflight, unpack, shared links, server commands, switch, unit, health, rotate
+├── remote/        preflight, unpack, shared links, server commands, switch, unit, health,
+│                  backups (picking the files, packing, unpacking), rotate
 ├── setup.rs       the server setup command (the script is server-setup.sh at the root)
 └── deploy/        the deploy and rollback flows, and the progress reports
 ```

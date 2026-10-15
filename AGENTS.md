@@ -24,7 +24,7 @@ rolls back any release. Design and decisions: `docs/plan.md`. Usage: `README.md`
   are the JSON Schema, the line-aware YAML tree, the launch check, globs),
   `build` (version, local commands, ELF checks), `bundle` (picking files,
   tar.zst, unit), `ssh` (sessions,
-  login, host keys, `~/.ssh/config` aliases), `remote` (server scripts),
+  login, host keys, `~/.ssh/config` aliases), `remote` (server scripts; the backup and which files go in it),
   `release` (ids, release.json), `setup` (the server-setup.sh URL),
   `deploy` (the deploy and rollback flows, `report` for progress),
   `init` (the presets and the new deployable folder).

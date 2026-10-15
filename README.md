@@ -119,7 +119,7 @@ What the TUI would ask comes from flags instead:
 | The TUI asks | Without the TUI |
 | --- | --- |
 | Deploy this? | Running the command is the yes. |
-| Roll back after a failed switch, restart or health check? | `--on-failure rollback` (the default) rolls back at once; `--on-failure keep` keeps the failed release live. Either overrides `pipeline.health.rollback`. |
+| Roll back after a failed switch, restart or health check? | `--on-failure rollback` (the default) rolls back at once; `--on-failure keep` keeps the failed release live. Either overrides `pipeline.failed.rollback`. |
 | Trust a server seen for the first time? | No, unless `--trust-new-host`. A changed host key is always refused. |
 | A password or key passphrase? | Never asked: use `--key` or `SHIPDECK_SSH_KEY` (with `SHIPDECK_KEY_PASSPHRASE` for an encrypted key), `--password` or `SHIPDECK_PASSWORD`. |
 
@@ -180,7 +180,6 @@ service:
   env_file: .env                            # also loaded for server commands
   env: { NODE_ENV: production }
   shared: [uploads]                         # kept across releases
-  keep: { open: 5, compressed: 15 }
 pipeline:
   preflight:
     requires: [node, npm]
@@ -206,6 +205,10 @@ pipeline:
         - npm run migrate
     check:
       server: node --check dist/main.js     # fails → release removed
+  backup:                                   # what stays once the folder goes
+    files:
+      include: [data/keys]                  # besides the shipped files
+    keep: { open: 5, compressed: 15 }
   # switch, restart                         shipdeck
   health:
     url: http://127.0.0.1:3000/health       # fetched on the server
@@ -213,12 +216,12 @@ pipeline:
       server: ./bin/smoke-test
       local: curl -fsS https://web.example.com/health
     timeout_secs: 20
-    rollback: ask                           # default; or auto
   done:                                     # new release is live
     run:
       server: ./bin/warm-cache
       local: ./notify.sh "web $SHIPDECK_VERSION is live"
   failed:
+    rollback: ask                           # default; or auto
     run:
       local: ./notify.sh "failed at $SHIPDECK_STEP"
 ```
@@ -237,10 +240,11 @@ pipeline:
 | 4 | upload | sends the archive to the server | — |
 | 5 | unpack | unpacks it into `releases/<id>`, links `service.shared` | — |
 | 6 | setup | nothing: the old release is still live | `run.server` → `check.server` |
-| 7 | switch | points `current` at `releases/<id>`, installs its unit | — |
-| 8 | restart | restarts the service | — |
-| 9 | health | waits until the service is active and `url` answers | `check.server` → `check.local` |
-| 10 | done | tidies old releases (`service.keep`) | `run.server` → `run.local` |
+| 7 | backup | packs `backup.files` into `backups/<id>.tar.zst` | — |
+| 8 | switch | points `current` at `releases/<id>`, installs its unit | — |
+| 9 | restart | restarts the service | — |
+| 10 | health | waits until the service is active and `url` answers | `check.server` → `check.local` |
+| 11 | done | tidies old releases (`backup.keep`) | `run.server` → `run.local` |
 | ✱ | failed | a step failed | `run.local` |
 
 `run` commands run once, in order, and stop at the first failure. `check`
@@ -254,10 +258,11 @@ commands only where it can run them:
 | pack | ✘ | ✘ | — | `binary`, `files` | stops |
 | upload, unpack | ✘ | ✘ | — | — | the release is removed |
 | setup | ✘ | `run`, `check` | `releases/<id>` | — | the release is removed; the old one keeps serving |
+| backup | ✘ | ✘ | — | `files`, `keep` | the release is removed; the old one keeps serving |
 | switch, restart | ✘ | ✘ | — | — | asks, then rolls back |
-| health | `check` | `check` | `current` | `url`, `timeout_secs`, `rollback` | asks, then rolls back |
+| health | `check` | `check` | `current` | `url`, `timeout_secs` | asks, then rolls back |
 | done | `run` | `run` | `current` | — | a warning only |
-| failed | `run` | ✘ | — | — | logged |
+| failed | `run` | ✘ | — | `rollback` | logged |
 
 Local commands run in `project`. Every command is one shell line (`sh -c`),
 so `&&`, pipes and `$VARS` work; give one, or a list.
@@ -283,15 +288,18 @@ so `&&`, pipes and `$VARS` work; give one, or a list.
 | `service.env_file` | none | A `KEY=value` file in the release, such as `.env`: the service's environment (`EnvironmentFile=`), and loaded for every server command too |
 | `service.env` | `{}` | Variables for the service (`Environment=`) and for server commands |
 | `service.shared` | `[]` | Folders kept across releases, such as `uploads`. Each lives in `shared/` and is linked into every release at unpack. |
-| `service.keep.open` | `5` | Releases kept unpacked, counting the live one, ready for instant rollback |
-| `service.keep.compressed` | `15` | Older releases kept as `.tar.gz` after that |
 | `pipeline.preflight.requires` | `[]` | Programs the server must have, such as `npm`. The program `service.start` names is checked anyway. |
 | `pipeline.build.version_from` | found | The file whose version names the release, relative to `project`: `Cargo.toml` (`version.workspace = true` is followed), `package.json`, `pyproject.toml`, or any file whose first line is the version. Unset, the first of those in `project` (`VERSION` for the last), else the latest git tag, else `0.0.0`. |
 | `pipeline.pack.binary` | none | A compiled program, relative to `project`. It lands at the release root, and its CPU and glibc floor are checked against the server. |
 | `pipeline.pack.files` | none | What else ships; see [Files](#files) |
+| `pipeline.backup.files.deployed` | `true` | The backup holds the files shipdeck shipped; see [Backups](#backups) |
+| `pipeline.backup.files.include` | `[]` | More from the release, such as a file setup made that it cannot make again |
+| `pipeline.backup.files.exclude` | `[]` | Left out of the backup, shipped or not |
+| `pipeline.backup.keep.open` | `5` | Releases kept unpacked, counting the live one, ready for instant rollback |
+| `pipeline.backup.keep.compressed` | `15` | Older releases kept only as their backup after that. `0` keeps none and makes none. |
 | `pipeline.health.url` | none | Must answer 2xx, fetched on the server with curl or wget |
 | `pipeline.health.timeout_secs` | `20` | How long the release has to become healthy, checks included |
-| `pipeline.health.rollback` | `ask` | `ask` or `auto`; see [When it fails](#when-it-fails-after-the-switch) |
+| `pipeline.failed.rollback` | `ask` | `ask` or `auto`; see [When it fails](#when-it-fails-after-the-switch) |
 
 ### Files
 
@@ -329,6 +337,34 @@ fast-glob and Tailwind:
 - Every `include` pattern must find something after the build, or the deploy stops at Build (Preflight for `deploy`).
 - `.env*` files always get mode `0600`; links inside folders stay links.
 
+### Backups
+
+After setup, shipdeck packs part of the new release into
+`backups/<id>.tar.zst`. When the release gets older than `keep.open`, its
+folder goes and the backup stays, up to `keep.compressed` of them.
+
+```yaml
+backup:
+  files:
+    deployed: true                    # the shipped files (the default)
+    include: [data/keys]              # plus these, made by setup
+    exclude: ["**/*.log"]             # minus these
+  keep: { open: 5, compressed: 15 }
+```
+
+What setup makes, such as `node_modules` or `.venv`, stays out unless you
+include it, so a backup is about the size of the upload. Rolling back to a
+backup unpacks it, links `service.shared` and runs `pipeline.setup` again
+(with `SHIPDECK_ACTION=rollback`), which puts the rest back; the server then
+needs what setup needs, such as the npm registry. `include` and `exclude`
+take the [Files](#files) patterns, relative to the release. `release.json`
+and the service file are always in a backup; `service.shared` folders never
+are.
+
+Releases deployed before backups have none: when they leave the open ones,
+they are compressed whole into `backups/<id>.tar.gz` as before, and come back
+without setup.
+
 ### Variables
 
 Every command sees these, besides its own environment:
@@ -351,8 +387,8 @@ removed, nothing expanded. Preflight reads it from the live release.
 ### When it fails after the switch
 
 Once `current` points at the new release, a failing switch, restart or
-health check puts the previous release back. With `rollback: ask` (the
-default) shipdeck asks first:
+health check puts the previous release back. With `failed.rollback: ask`
+(the default) shipdeck asks first:
 
 ```
 ╭ web · health failed ─────────────────────────────────────╮
@@ -371,7 +407,8 @@ to look at it; roll back later from the Releases screen. `rollback: auto`
 rolls back at once without asking. Either way `failed` runs afterwards.
 
 A manual rollback from the Releases screen goes switch → restart → health →
-done, with `SHIPDECK_ACTION=rollback`, so `done` can tell everyone.
+done, with `SHIPDECK_ACTION=rollback`, so `done` can tell everyone. A release
+kept only as a backup is unpacked and set up first.
 
 ### Mistakes are caught before anything runs
 
@@ -443,7 +480,7 @@ shipdeck 0.3 refuses a 0.2 file and says where each key went:
 | `remote.start` + `remote.args` | `service.start`, arguments included |
 | `remote.env`, `remote.env_file`, `remote.run_as` | `service.env`, `service.env_file`, `service.run_as` |
 | `remote.requires` | `pipeline.preflight.requires` |
-| `releases` | `service.keep` |
+| `releases` | `pipeline.backup.keep` |
 | `health` | `pipeline.health` |
 | `hooks.before` | `pipeline.preflight.run.local` |
 | `hooks.server` | `pipeline.setup.run.server` |
@@ -451,6 +488,15 @@ shipdeck 0.3 refuses a 0.2 file and says where each key went:
 
 A `deploy.json` from 0.1 is refused too; JSON is YAML, so rename it and move
 the keys the same way.
+
+### From 0.5
+
+Two keys moved; shipdeck points at the new place:
+
+| 0.5 | now |
+| --- | --- |
+| `service.keep` | `pipeline.backup.keep` |
+| `pipeline.health.rollback` | `pipeline.failed.rollback` |
 
 ## Tools on the server
 
@@ -572,7 +618,7 @@ place.
 /opt/my-app/
 ├── current -> releases/v0.3.1-ab12cd3-20261014.153012
 ├── releases/        newest `keep.open` releases, unpacked
-├── backups/         next `keep.compressed` releases, as .tar.gz
+├── backups/         each release's backup, `<id>.tar.zst`, for `keep.open` + `keep.compressed` releases
 └── shared/          kept across deploys; the only folder the default unit may write to
 ```
 
@@ -580,7 +626,8 @@ A release id is `v<version>-<git sha>[-dirty]-<UTC yyyymmdd.hhmmss>`. Each
 release carries `release.json` (who deployed what, from which commit) and its
 own unit, whose `Description=` holds the version, so `systemctl status`
 shows what is live. Each release also installs its own dependencies in
-setup, so a rollback finds them already in place.
+setup, so a rollback to an open release finds them already in place; one
+kept only as a backup gets them from setup again.
 
 ## Screens
 
