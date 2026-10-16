@@ -131,6 +131,14 @@ Preflight checks your PC and the server before anything is built. A failure here
     Run `server-setup.sh` once on the server as root. It installs a sudo rule for exactly these commands. Or deploy as `root`. See [Server access](/docs/guides/server-access).
   </Accordion>
 
+  <Accordion title="the server has no <tool>, which shipdeck unpacks and checks releases with">
+    shipdeck itself needs `tar`, `zstd` and `sha256sum` on the server. Install what the message names: `apt install zstd`, or `dnf install zstd`; `sha256sum` comes with `coreutils`.
+  </Accordion>
+
+  <Accordion title="<user> may not run sudo <command>. Run server-setup.sh on the server again">
+    `:stop`, `:start` or `:logs` in the TUI needs a sudo right that a deploy does not: `systemctl stop <service>`, `systemctl start <service>` or `journalctl -u <service> -f -n 200 --no-pager`. A server set up before shipdeck had these lacks them, and still deploys. Run the `server-setup.sh` command from the message once on the server as root; it brings the sudo rule up to date. See [Server access](/docs/guides/server-access).
+  </Accordion>
+
   <Accordion title="<user> may not create <dir>, and has no sudo without a password">
     On a first deploy shipdeck creates `service.dir`. The user could not create it, and could not use `sudo -n mkdir` either. Create the folder on the server and give it to the deploy user, or run `server-setup.sh` (see [Server access](/docs/guides/server-access)), which does both.
   </Accordion>
@@ -208,11 +216,31 @@ Preflight checks your PC and the server before anything is built. A failure here
   </Accordion>
 
   <Accordion title="the server has <free> free; this release needs about <size>">
-    Pack checks that the server has room for about twice the archive plus its unpacked size. Free space on the server or lower `pipeline.backup.keep`.
+    Pack checks that the server has room for about twice the archive plus the release's whole size, files copied from the live release included. Free space on the server or lower `pipeline.backup.keep`.
+  </Accordion>
+
+  <Accordion title="Nothing changed since <id>, the live release">
+    The new release's fingerprint equals the live one's: the same files, modes and links, the same service file and the same `deploy.yaml`. The screen asks `Deploy anyway?`; No stops with nothing on the server touched. `shipdeck deploy` stops with exit code `6` instead; add `--allow-unchanged` to deploy the duplicate.
+  </Accordion>
+
+  <Accordion title="Every file is sent, though most did not change">
+    The log says why on an `ℹ` line in Pack: `nothing is live yet, so every file is sent`, or the error the server gave while hashing `current/` (for example a file the deploy user cannot read), followed by `every file is sent instead`. Files whose names hold a newline, a carriage return or a backslash are always sent.
+  </Accordion>
+
+  <Accordion title="<path> changed while the release was packed">
+    A file changed on your PC between hashing and packing, so the receipt would not describe what was sent. Wait until nothing writes to it (a watcher or a second build, for example) and deploy again.
   </Accordion>
 
   <Accordion title="Version errors such as <file> has no package.version">
     shipdeck names the release from the version in `Cargo.toml`, `package.json`, `pyproject.toml` or `VERSION`, in that order, else the latest git tag, else `0.0.0`. Point `pipeline.build.version_from` at the right file, or add the version to it. A `Cargo.toml` with `version.workspace = true` needs a workspace `Cargo.toml` above it that sets `workspace.package.version`.
+  </Accordion>
+</Accordions>
+
+## Unpack
+
+<Accordions>
+  <Accordion title="<n> files copied from current did not match: <paths>; sending the whole release">
+    A warning in Unpack: a file of the live release changed between the hashing in Pack and the copy, so the check with `sha256sum -c` failed. shipdeck removed the half-made release and sends the whole release once; the step then ends with `verified · sent whole`. If even that does not match, the deploy stops with `releases/<id> does not match what was packed` and the live release was not touched.
   </Accordion>
 </Accordions>
 

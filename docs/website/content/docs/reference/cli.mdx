@@ -174,7 +174,10 @@ Each file starts with a heading of its folder and file name. The path after `┌
 | `3` | A command only: the new release failed and the previous one is live again |
 | `4` | A command only: the new release failed and stays live (`--on-failure keep`) |
 | `5` | A command only: the new release failed and putting the old one back failed too |
+| `6` | `deploy` only: nothing changed since the live release, so nothing was deployed (`--allow-unchanged` deploys anyway) |
 | `130` | A command only: stopped with Ctrl-C twice |
+
+Scripts rely on these numbers: new outcomes get new codes, and none is ever renumbered.
 
 A deploy or rollback that fails inside the screen does not change the exit code: quitting the screen exits with `0` whatever happened. You see the result on the [Operation screen](/docs/reference/screens#operation). The commands report it in the exit code instead.
 
@@ -244,6 +247,16 @@ What to do when the new release fails after the switch: at the switch, the resta
 | `rollback` (default) | Put the release that was live back at once. Exit code `3`. |
 | `keep` | Keep the failed release live, to look at it. Exit code `4`. Roll back later with `shipdeck rollback`. |
 
+#### `--allow-unchanged`
+
+Deploy even when nothing changed since the live release: the new release's fingerprint (its files, modes, links, service file and `deploy.yaml`) equals the live one's. Without it such a deploy stops at Pack, before anything on the server changes, with exit code `6`:
+
+```txt
+▲ My API (prod): nothing changed since v0.3.1-ab12cd3-20261014.153012, so nothing was deployed; --allow-unchanged deploys it anyway
+```
+
+With several deployables, an unchanged one stops the rest like any other result but success.
+
 ### `rollback <DEPLOY_ROOT> <NAME> --to <RELEASE>`
 
 Makes a release already on the server live again. A release kept only as its backup is unpacked first and set up again with `pipeline.setup`; an old `.tar.gz` is unpacked first. `RELEASE` is an id as `shipdeck releases` lists it. A rollback whose health check fails puts back what was live. See [Releases](/docs/guides/releases#rolling-back-by-hand).
@@ -268,6 +281,7 @@ v0.3.0-9f8e7d6-20261012.091000  0.3.0    9f8e7d6  2026-10-12 09:10  31.0 MiB  un
 | --- | --- |
 | Deploy this? | Running the command is the yes. |
 | Roll back? | `--on-failure`. |
+| Nothing changed: deploy anyway? | No, unless `--allow-unchanged`. |
 | Trust a server seen for the first time? | No, and the command stops with the key's fingerprint. `--trust-new-host` trusts it and saves it to `~/.ssh/known_hosts`. A changed key is always refused. |
 | A password or a key passphrase? | Never asked; the login fails with a hint. Use `--key` with a key without a passphrase, `--password` or `SHIPDECK_PASSWORD`. |
 

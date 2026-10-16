@@ -40,12 +40,20 @@ Everything shipdeck puts into those scripts is either checked by the config rule
 
 The upload is the only part that is not a script: it goes over SFTP, or through `cat` over SSH when the server has no SFTP subsystem.
 
+## Only what changed travels
+
+Before it packs, shipdeck hashes every file of the new release with SHA-256 and asks the server, in one script, for the hashes of the same paths in `current/`. The server computes them there and then, from the files themselves, so nothing it stored can mislead the deploy. A file with the same path and hash stays out of the archive.
+
+At unpack, those files are copied from `current` into the new release with a tar pipe: their modification times stay, and they are real copies, never hard links, so the live release, and the one a rollback goes back to, cannot change through the new one. Each gets the mode the new release has for it. Then `sha256sum -c` checks every file of the new release against a receipt sent with the archive, and only a release that matches is moved into place. If the live release changed between the hashing and the copy, the check fails, and shipdeck removes the half-made release and sends the whole release once. With nothing live, the whole release is sent, as it is when the server cannot hash.
+
+The same hashes make the release's fingerprint, kept in `release.json`: the files with their modes and hashes, links, folders, the service file rendered without the release's name, and `deploy.yaml`. When it equals the live release's, nothing changed, and shipdeck asks before it deploys a duplicate.
+
 ## Nothing live changes before the switch
 
 A deploy builds the new release next to the running one:
 
 1. Preflight, build and pack happen on your PC, plus checks on the server and your own `pipeline.preflight.run.server` commands.
-2. Upload and unpack write into `releases/`, under names the live release never uses.
+2. Upload and unpack write into `releases/`, under names the live release never uses; unpack only reads the live release, to copy the files that did not change.
 3. Setup runs your commands inside the new release folder, while the old one serves.
 4. Backup packs what shipdeck shipped from the new release into `backups/<id>.tar.zst`, next to the live release's own.
 

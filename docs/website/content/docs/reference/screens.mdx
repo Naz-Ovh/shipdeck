@@ -3,7 +3,7 @@ title: Screens and keys
 description: What each shipdeck screen and dialog shows, and every key that works on it.
 ---
 
-shipdeck has three screens (Deployables, Operation, Releases) and a few dialogs that open on top of them. The keyboard drives everything; the mouse is not used.
+shipdeck has three screens (Deployables, Operation, Releases), a log view that covers them while it is open, a `:` command line, and a few dialogs that open on top of them. The keyboard drives everything; the mouse is not used.
 
 ## The frame
 
@@ -23,6 +23,7 @@ The operation status on the right of the tabs:
 | `↩ my-api: rolled back` | It failed after the switch and the previous release is back (amber). |
 | `▲ my-api: kept after a failure` | It failed, and you chose to keep it (amber). |
 | `‼ my-api: rollback failed` | Putting the previous release back failed too (red). |
+| `= my-api: nothing changed` | Nothing changed since the live release, and you chose not to deploy a duplicate (amber). |
 
 The name shown is the deployable's folder name.
 
@@ -39,10 +40,14 @@ Toasts:
 | `An operation is using this connection` | You press `c` to disconnect while a deploy or rollback uses that connection. |
 | `That release is already live` | You press `⏎` on the live release. |
 | `shipdeck did not create that folder, so it will not switch to it` | You press `⏎` on a folder marked `not ours`. |
+| `Not a command: :<text>. Try :logs, :restart, :stop or :start` | You run a command the `:` line does not know. |
+| `<folder> is being deployed; only :logs works until it ends` | You run `:stop`, `:start` or `:restart` while that deployable deploys or rolls back. |
+| `Stopping <service>…`, then `<service>: stopped` | `:stop` runs, then is done (`Starting`, `Restarting` alike). |
+| `Wait for the last command to finish` | You run a second `:stop`, `:start` or `:restart` on a deployable before the first is done. |
 
 ## Global keys
 
-These work on every screen while no dialog is open. While a dialog is open, only the dialog's keys work.
+These work on every screen while no dialog is open. While a dialog is open, only the dialog's keys work; while the `:` line is open, keys type into it; while the log view is open, only its keys and `Ctrl+C` work.
 
 | Key | Action |
 | --- | --- |
@@ -90,7 +95,7 @@ The start screen. shipdeck connects to nothing when it opens: every deployable s
 │                                        ││   keeps    5 unpacked + 15 compressed                  │
 │                                        ││   unit     built-in template                           │
 ╰────────────────────────────────────────╯╰────────────────────────────────────────────────────────╯
- ↑↓  select    c  disconnect    ⏎  deploy    r  releases    s  refresh    tab  screens    q  quit
+ ↑↓  select    c  disconnect    ⏎  deploy    r  releases    s  refresh    :  commands    tab  screen
 `}</Screen>
 
 The list on the left has four lines per deployable: a status dot and the name, `<user>@<host>[:port]` and the folder name, then the live summary. `▌` marks the selected one.
@@ -133,8 +138,81 @@ With no deployables, the screen shows `No deployables yet` and where shipdeck lo
 | `r` | Open Releases for the selected deployable. |
 | `c` | Connect the selected deployable and read its live status. When it is connected, disconnect it instead. |
 | `s` | Refresh the live status of the deployables that are connected. |
+| `:` | Open the command line for the selected deployable's service. |
 
 The footer's `c` label reads `connect`, or `disconnect` when the selected deployable is connected. Disconnecting closes the SSH session, and deployables on the same `user@host:port` share it, so they all show `not connected`. `c` will not disconnect while a deploy or rollback uses that connection, and while the deployable is still connecting it only says `Still connecting`.
+
+## The command line
+
+`:` on Deployables opens a line at the bottom, in place of the key hints, as in vim. It acts on the selected deployable's service.
+
+```txt
+:rest▏
+```
+
+| Command | Does |
+| --- | --- |
+| `:logs` | Opens the [log view](#logs). Works at any time. |
+| `:restart` | Restarts the service the way a deploy's Restart step does. Asks first. |
+| `:stop` | Stops the service. Asks first. It stays stopped until it is started again, a deploy restarts it or the server reboots. |
+| `:start` | Starts the service. A PM2 app that is already online is left as it is. |
+
+While a deploy or rollback of that deployable runs, only `:logs` works. With systemd, `:stop`, `:start` and `:logs` need sudo rights of their own; on a server set up before shipdeck had them, a dialog titled `Could not stop <service>` (or start, or the log view itself) says so, with the `server-setup.sh` command to run again on the server as root. See [Server access](/docs/guides/server-access).
+
+| Key | Action |
+| --- | --- |
+| letters | Type the command. |
+| `Tab` | Complete what is typed to the first command it starts; again for the next one (`:st` goes `stop`, `start`). |
+| `⏎` | Run it. An empty line just closes. |
+| `Backspace` | Delete a character; on an empty line, close it. |
+| `Esc`, `Ctrl+C` | Close without running anything. |
+
+## Logs
+
+`:logs` covers the screen with the service's last 200 log lines, then follows it live: `journalctl -u <service> -f -n 200 --no-pager` (through `sudo -n` unless you log in as root), or `pm2 logs <app> --raw --lines 200` with PM2. The command runs on a terminal on the server, so closing the view hangs it up and the command ends there too.
+
+<Screen title="Logs">{`
+ ◆ shipdeck   root ./scripts/deploy                         login ~/.ssh/config key, else a password
+ 1 Deployables   2 Operation   3 Releases
+
+╭ Logs · api-prod · deploy@api ───────────────────────────────────────────────────────── following ╮
+│ Oct 16 12:00:16 api-prod[812]: GET /health 200                                                   ▲
+│ Oct 16 12:00:17 api-prod[812]: GET /health 200                                                   ║
+│ Oct 16 12:00:18 api-prod[812]: GET /health 200                                                   ║
+│ Oct 16 12:00:19 api-prod[812]: GET /health 200                                                   ║
+│ Oct 16 12:00:20 api-prod[812]: GET /health 200                                                   ║
+│ Oct 16 12:00:21 api-prod[812]: GET /health 200                                                   ║
+│ Oct 16 12:00:22 api-prod[812]: GET /health 200                                                   ║
+│ Oct 16 12:00:23 api-prod[812]: GET /health 200                                                   ║
+│ Oct 16 12:00:24 api-prod[812]: GET /health 200                                                   ║
+│ Oct 16 12:00:25 api-prod[812]: GET /health 200                                                   █
+│ Oct 16 12:00:26 api-prod[812]: GET /health 200                                                   █
+│ Oct 16 12:00:27 api-prod[812]: GET /health 200                                                   █
+│ Oct 16 12:00:28 api-prod[812]: GET /health 200                                                   █
+│ Oct 16 12:00:29 api-prod[812]: GET /health 200                                                   █
+│ Oct 16 12:00:30 api-prod[812]: GET /health 200                                                   █
+│ Oct 16 12:00:31 api-prod[812]: GET /health 200                                                   █
+│ Oct 16 12:00:32 api-prod[812]: GET /health 200                                                   █
+│ Oct 16 12:00:33 api-prod[812]: GET /health 200                                                   █
+│ Oct 16 12:00:34 api-prod[812]: GET /health 200                                                   █
+│ Oct 16 12:00:35 api-prod[812]: GET /health 200                                                   █
+│ Oct 16 12:00:36 api-prod[812]: GET /health 200                                                   █
+│ Oct 16 12:00:37 api-prod[812]: GET /health 200                                                   █
+│ Oct 16 12:00:38 api-prod[812]: GET /health 200                                                   █
+│ Oct 16 12:00:39 api-prod[812]: GET /health 200                                                   ▼
+╰ journalctl -u api-prod -f -n 200 --no-pager ─────────────────────────────────────────────────────╯
+ ↑↓  scroll    pgup/pgdn  page    G  follow    q  close
+`}</Screen>
+
+The title names the service and the server, the bottom border the command. On the right: ` connecting ` until the server answers, ` following `, ` ↑ <n> lines · G to follow ` after you scroll up, or ` ended ` with the reason under the last line, such as a missing sudo right with the command that adds it. Up to 5000 lines are kept.
+
+| Key | Action |
+| --- | --- |
+| `↑` / `k`, `↓` / `j` | Scroll one line. |
+| `PgUp` / `PgDn` | Scroll 20 lines. |
+| `Home` / `g` | Top. |
+| `End` / `G` | Bottom, and follow again. |
+| `q`, `Esc` | Close the view and stop following. |
 
 ## Operation
 
@@ -175,7 +253,7 @@ A deploy or rollback, running or finished. Starting one switches to this screen.
 
 The capture uses test data, so every time reads `0.0s`.
 
-**Banner.** Titled ` Deploy ` or ` Rollback `, with the elapsed time on the right. The first line is `<name>  →  <user>@<host>:<dir>  release <id>  <version> (<commit>)`. While running, the second line shows the current step and `step N of M`, or `Waiting for your answer…` while the rollback question is open. When finished, the border takes a colour and the second line a badge:
+**Banner.** Titled ` Deploy ` or ` Rollback `, with the elapsed time on the right. The first line is `<name>  →  <user>@<host>:<dir>  release <id>  <version> (<commit>)`. While running, the second line shows the current step and `step N of M`, or `Waiting for your answer…` while the rollback or unchanged question is open. When finished, the border takes a colour and the second line a badge:
 
 | Badge | Text |
 | --- | --- |
@@ -184,6 +262,7 @@ The capture uses test data, so every time reads `0.0s`.
 | ` ROLLED BACK ` | `<Step> failed: <error>  · <previous id> is live again` |
 | ` KEPT ` | `<Step> failed: <error>  · <release> stays live as you chose` |
 | ` ROLLBACK FAILED ` | `<error>  then: <rollback error>  · check the server now` |
+| ` NOTHING CHANGED ` | `<live id> already holds this release  · nothing on the server was touched` |
 
 **Steps.** One row per step: icon, number, name, a short detail and the time it took. A deploy has `Preflight`, `Build`, `Pack`, `Upload`, `Unpack`, `Setup`, `Backup`, `Switch`, `Restart`, `Health`, `Done`, plus `Failed` when `pipeline.failed.run.local` has commands. A rollback has `Connect`, `Unpack`, `Setup`, `Switch`, `Restart`, `Health`, `Done`, plus `Failed` under the same condition (`Unpack` only does work for a compressed release, `Setup` only for a backup). See [The pipeline](/docs/guides/pipeline).
 
@@ -378,6 +457,46 @@ The error is its first line, cut at 70 characters; the full error is in the log.
 | `n`, `N` | Keep the new release live. You can roll back later from Releases. |
 
 No other key works here, not even `Esc` or `Ctrl+C`, so you cannot quit until you answer or the countdown ends. With `pipeline.failed.rollback: auto` this dialog never opens. See [Health and rollback](/docs/guides/health-and-rollback).
+
+### Nothing changed
+
+Opens during Pack when the new release's fingerprint equals the live release's: the same files, modes and links, the same service file and the same `deploy.yaml`. The deploy waits for the answer; nothing on the server has changed yet. The screen jumps to Operation, and the title names the deployable's folder, for example `api-prod · nothing changed`.
+
+```txt
+Nothing changed since v0.3.1-ab12cd3-20261014.153012 (live).
+
+Deploying again makes a duplicate release.
+
+Deploy anyway?
+
+ y  deploy anyway     n  stop here
+```
+
+| Key | Action |
+| --- | --- |
+| `y`, `Y` | Deploy it anyway, as a duplicate of the live release. |
+| `n`, `N`, `⏎`, `Esc`, `Ctrl+C` | Stop here. The deploy ends as ` NOTHING CHANGED `. |
+
+### Restart, Stop
+
+Opens with `:restart` or `:stop`. The title names the folder and the action, such as `api-prod · stop`:
+
+```txt
+Stop api-prod on deploy@api?
+
+It stays stopped until it is started again, a deploy restarts it or the server reboots.
+
+ y  stop     n  cancel
+```
+
+| Key | Action |
+| --- | --- |
+| `y`, `Y`, `⏎` | Run it. |
+| `n`, `N`, `Esc`, `Ctrl+C` | Cancel. |
+
+### Could not …
+
+Opens when `:stop`, `:start` or `:restart` fails, with the whole error, such as a missing sudo right and the `server-setup.sh` command that adds it. `⏎`, `Esc` or `q` close it.
 
 ### Quit now?
 

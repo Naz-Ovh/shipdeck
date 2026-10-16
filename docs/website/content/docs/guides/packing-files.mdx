@@ -3,7 +3,7 @@ title: Packing files
 description: How pipeline.pack picks the binary and the files that go into a release, and how the patterns match.
 ---
 
-`pipeline.pack` says what goes into a release: a compiled `binary`, `files` from your project and from the deploy folder, or both. shipdeck packs them into one archive, uploads it and unpacks it into `releases/<id>` on the server.
+`pipeline.pack` says what goes into a release: a compiled `binary`, `files` from your project and from the deploy folder, or both. shipdeck packs them into one archive, uploads it and unpacks it into `releases/<id>` on the server. A file the live release already has, with the same path and SHA-256, is copied from it on the server instead of sent; see [Only what changed is sent](#only-what-changed-is-sent).
 
 ```yaml title="scripts/deploy/my-api-prod/deploy.yaml"
 pipeline:
@@ -134,6 +134,16 @@ shipdeck does not read `.gitignore`. With `include.project: [.]`, `node_modules`
 | Any other symlink, inside a shipped folder or matched by a glob | stays a link with its original target, so `node_modules/.bin/*` keeps working |
 
 An absolute link target points at the same path on the server.
+
+## Only what changed is sent
+
+At Pack, shipdeck hashes every file of the release and asks the server for the SHA-256 of the same paths in `current/`. Those that match stay out of the archive; unpack copies them from the live release, gives them this release's modes, and checks every file with `sha256sum -c` before the release counts as there. Folders, links, `release.json` and the service file always go, as do files whose names hold a newline, a carriage return or a backslash, which `sha256sum` spells differently on GNU and busybox. The Pack step says how it went:
+
+```txt
+✔ Pack  312 files · 309 already on the server · 3 to send · 25.0 MiB → 1.2 MiB
+```
+
+When nothing at all changed (the same files, modes and links, the same service file and the same `deploy.yaml`), shipdeck asks before deploying a duplicate of the live release; see [The pipeline](/docs/guides/pipeline#3-pack).
 
 ## Examples
 

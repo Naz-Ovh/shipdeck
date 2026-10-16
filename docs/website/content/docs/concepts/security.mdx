@@ -32,7 +32,7 @@ The one exception is the `server` commands you write in `pipeline` (for example 
 With a user other than `root`, only two things ever run as root:
 
 1. **`server-setup.sh`**, once, when you run it yourself. It checks every argument before it changes anything, installs the sudo rule only after `visudo` accepts it, and is fetched from a URL pinned to your shipdeck release tag. See [Server access](/docs/guides/server-access#server-setupsh).
-2. **Five commands**, through `sudo -n` (never prompting for a password):
+2. **Five commands for a deploy**, through `sudo -n` (never prompting for a password):
 
 ```sh
 systemctl daemon-reload
@@ -42,7 +42,15 @@ install -m 0644 /opt/my-api/current/my-api.service /etc/systemd/system/my-api.se
 journalctl -u my-api -n 30 --no-pager
 ```
 
-The unit is always installed from `<dir>/current/<service>.service`, so the sudo rule names one fixed path, and a rollback brings back the unit of that release.
+3. **Three more for the service by hand**, the TUI's `:stop`, `:start` and `:logs`, also through `sudo -n`:
+
+```sh
+systemctl stop my-api
+systemctl start my-api
+journalctl -u my-api -f -n 200 --no-pager
+```
+
+A deploy never needs the last three, so a server whose rule predates them still deploys; only those commands say to run `server-setup.sh` again. The unit is always installed from `<dir>/current/<service>.service`, so the sudo rule names one fixed path, and a rollback brings back the unit of that release.
 
 On a first deploy, if the user cannot create `service.dir` itself, shipdeck also tries `sudo -n mkdir -p` and `sudo -n chown`. That only works for users with broader sudo rights; a user made by `server-setup.sh` never needs it.
 
@@ -55,7 +63,7 @@ When `ssh.user` is `root`, everything runs as root: file operations, your `serve
 Everything else runs over SSH as `ssh.user`, without sudo:
 
 - the preflight facts script and creating folders in `service.dir`
-- upload, unpack, `service.shared` links and the switch of `current`
+- hashing the live release's files, upload, unpack (copying unchanged files from `current`, checking every file with `sha256sum -c`), `service.shared` links and the switch of `current`
 - packing backups, tidying old releases and restoring them
 - health probes (`systemctl is-active`, `systemctl show`, `curl` or `wget`)
 - your `server` commands from `pipeline`
@@ -84,7 +92,7 @@ See [SSH and login](/docs/guides/ssh#host-keys).
 
 ## Safe changes on the server
 
-Unpacking and restoring go through hidden `.partial` folders, `current` changes with one rename, and packing a backup or compressing an old release writes a `.part` file before renaming it. A step that fails halfway leaves no half-written release in view.
+Unpacking and restoring go through hidden `.partial` folders, `current` changes with one rename, and packing a backup or compressing an old release writes a `.part` file before renaming it. A step that fails halfway leaves no half-written release in view. A new release is checked file by file against its receipt before it is renamed into place, so files copied from the live release must match what your PC packed; the server's hashes are computed at each deploy, never read from anything stored. Copies are real copies, never hard links, so the release you would roll back to cannot change through the new one.
 
 ## Limits
 

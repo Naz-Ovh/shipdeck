@@ -203,7 +203,7 @@ function intro(): string {
     '',
     `> ${appDescription}`,
     '',
-    `These are the docs for ${appName} ${shipdeckVersion()}. shipdeck is a terminal UI: you run \`shipdeck <deploy-root>\`, where the deploy root holds one folder per deployable, each with a \`deploy.yaml\`. Deploys run a fixed pipeline (${pipelineSteps.map((s) => s.name).join(', ')}). Each deploy unpacks into its own folder under \`/opt/<app>/releases/\` and leaves a backup of what it shipped in \`/opt/<app>/backups/\`, and you can roll back to any of them.`,
+    `These are the docs for ${appName} ${shipdeckVersion()}. shipdeck is a terminal UI: you run \`shipdeck <deploy-root>\`, where the deploy root holds one folder per deployable, each with a \`deploy.yaml\`. Deploys run a fixed pipeline (${pipelineSteps.map((s) => s.name).join(', ')}). Each deploy sends only the files the live release lacks, unpacks into its own folder under \`/opt/<app>/releases/\` with the rest copied from the live release and every file checked by SHA-256, and leaves a backup of what it shipped in \`/opt/<app>/backups/\`, and you can roll back to any of them.`,
   ].join('\n');
 }
 

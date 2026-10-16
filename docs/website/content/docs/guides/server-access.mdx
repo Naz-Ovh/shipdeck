@@ -10,8 +10,8 @@ shipdeck needs no setup on the server. It deploys as `ssh.user`, whoever that is
 | Way | Setup | What runs as root |
 | --- | --- | --- |
 | Log in as `root` | none | everything, including `server` commands from `deploy.yaml`; the service too, unless `service.run_as` is set |
-| An existing user with passwordless sudo (for example a cloud image's default user) | none; the first deploy creates `service.dir` | the five commands below, through `sudo -n` |
-| A dedicated user from `server-setup.sh` | run one command as root, once per app | the five commands below, and only for that one service |
+| An existing user with passwordless sudo (for example a cloud image's default user) | none; the first deploy creates `service.dir` | the commands below, through `sudo -n` |
+| A dedicated user from `server-setup.sh` | run one command as root, once per app | the commands below, and only for that one service |
 
 The third way gives the least privilege. The first two are fine for a server you already manage.
 
@@ -20,7 +20,7 @@ The third way gives the least privilege. The first two are fine for a server you
 "Root" means the user name is literally `root`. Any other user needs:
 
 1. **Write access to `service.dir`**, or the right to create it. On a first deploy shipdeck runs `mkdir -p` as the user, and if that fails, `sudo -n mkdir -p` followed by `sudo -n chown` to the user. If both fail, preflight stops with `create <dir> failed (exit 1): <user> may not create <dir>, and has no sudo without a password`. A folder that exists but is not writable stops with `<user> cannot write to <dir>`.
-2. **Passwordless sudo for five commands**, listed below.
+2. **Passwordless sudo for five commands**, listed below, and for three more if you stop, start or follow the service from the TUI.
 
 The service runs as `service.run_as`, by default the SSH user. That user must be able to read the release.
 
@@ -39,6 +39,23 @@ journalctl -u my-api -n 30 --no-pager
 They install the release's unit, reload systemd, enable and restart the service, and read the last 30 journal lines when a deploy fails. shipdeck always calls them as `sudo -n ...`, so sudo never prompts for a password: it either allows the command or fails.
 
 The `sudo -n mkdir` and `sudo -n chown` used on a first deploy are not part of this list. They only work for users with broader sudo rights. With `server-setup.sh` the folder already exists, so they are never needed.
+
+### Three more for the service by hand
+
+The TUI's `:stop`, `:start` and `:logs` run these, also as `sudo -n ...`:
+
+```sh
+systemctl stop my-api
+systemctl start my-api
+journalctl -u my-api -f -n 200 --no-pager
+```
+
+A deploy never needs them, and preflight does not ask for them, so a server set up before shipdeck had them keeps deploying. When one is missing, only that command fails, with the `server-setup.sh` command that adds it:
+
+```txt
+deploy may not run sudo systemctl stop my-api. Run server-setup.sh on the server again, as root, to allow it:
+curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v<version>/server-setup.sh | bash -s -- --user deploy --dir /opt/my-api --service my-api
+```
 
 ### How preflight checks it
 
@@ -130,11 +147,11 @@ It creates `service.dir` if missing and makes the user its owner (the folder its
 </Step>
 <Step>
 ### The sudo rule
-It writes one line allowing the five commands, with each program's full path as `command -v` finds it on the server. The rule is checked with `visudo` before it is installed, mode 0440, owned by root:
+It writes one line allowing the eight commands, with each program's full path as `command -v` finds it on the server. The rule is checked with `visudo` before it is installed, mode 0440, owned by root:
 
 ```txt title="/etc/sudoers.d/shipdeck-my-api"
 # Written by shipdeck server-setup.sh for my-api.
-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload, /usr/bin/systemctl enable my-api, /usr/bin/systemctl restart my-api, /usr/bin/install -m 0644 /opt/my-api/current/my-api.service /etc/systemd/system/my-api.service, /usr/bin/journalctl -u my-api -n 30 --no-pager
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload, /usr/bin/systemctl enable my-api, /usr/bin/systemctl restart my-api, /usr/bin/install -m 0644 /opt/my-api/current/my-api.service /etc/systemd/system/my-api.service, /usr/bin/journalctl -u my-api -n 30 --no-pager, /usr/bin/systemctl stop my-api, /usr/bin/systemctl start my-api, /usr/bin/journalctl -u my-api -f -n 200 --no-pager
 ```
 
 The file is named `shipdeck-<service>` with every `.` replaced by `_`, because sudo ignores files in `sudoers.d` whose names contain a dot. If `visudo` rejects the rule, the script stops with `the sudo rule did not pass visudo; nothing was installed`.
@@ -147,7 +164,9 @@ If `sshd` has an `AllowUsers` list without the user, it prints a warning telling
 
 It ends with `done: deploy can deploy my-api to /opt/my-api`.
 
-The script is idempotent: running it again changes nothing that is already in place. Run it once per app; each app gets its own sudo file. Then press `⏎` on the deployable to deploy as that user.
+The script is idempotent: running it again changes nothing that is already in place, and replaces an older sudo rule with the current one (`--key` can be left out then). Run it once per app; each app gets its own sudo file. Then press `⏎` on the deployable to deploy as that user.
+
+The URL is pinned to a release tag, so what runs as root changes only with a shipdeck release: a change to `server-setup.sh` reaches servers through a new tag, and the command shipdeck shows always names its own version's tag.
 
 ## Tools on the server
 

@@ -24,6 +24,10 @@ pipeline:
 
 Releases deployed with 0.5 or earlier keep working: shipdeck still lists them, switches to them and rolls back to them. They have no backup, so when one leaves the unpacked releases it is compressed whole into `backups/<id>.tar.gz`, as before, and a rollback to it unpacks it without running setup. Releases deployed from now on are kept as `backups/<id>.tar.zst`.
 
+The server now also needs `sha256sum` (from `coreutils`, on every common distribution): deploys send only the files the live release lacks and check every file at unpack. A live release from before has no content fingerprint in its `release.json`, so the first deploy after the upgrade always counts as a change.
+
+`:stop`, `:start` and `:logs` in the TUI need three sudo rights a deploy does not (see [Server access](/docs/guides/server-access#three-more-for-the-service-by-hand)). A server set up with an older `server-setup.sh` keeps deploying; run the script from this release once more on it, as root, to use them.
+
 ## From 0.2
 
 shipdeck 0.3 groups the deploy steps under `pipeline:` and the service settings under `service:`. It refuses a 0.2 file and says where each old key went, so you can move them one by one.

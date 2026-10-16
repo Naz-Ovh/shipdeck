@@ -49,7 +49,11 @@ The same as text, with the transient files:
 │   │   ├── .env                          0600 (any file named .env*)
 │   │   ├── uploads -> /opt/my-api/shared/uploads
 │   │   └── ...                           files from pipeline.pack.files
+│   ├── .<id>.paths                       transient: the paths to hash in current
 │   ├── .<id>.tar.zst                     transient: the upload
+│   ├── .<id>.sha256                      transient: the receipt unpack checks
+│   ├── .<id>.reuse.<mode>                transient: files to copy from current
+│   ├── .<id>.checked                     transient: what sha256sum -c said
 │   └── .<id>.partial/                    transient: unpacking or restoring
 ├── backups/
 │   ├── <id>.tar.zst                      a release's backup, made after setup
@@ -88,14 +92,18 @@ These exist only while shipdeck is working. A name starting with a dot keeps the
 
 | Path | When |
 | --- | --- |
+| `releases/.<id>.paths` | The paths whose SHA-256 the server computes in `current/`, NUL-separated, during Pack. The hashing script removes it. |
 | `releases/.<id>.tar.zst` | The uploaded archive, between upload and unpack. |
-| `releases/.<id>.partial/` | A release being unpacked, or a backup or tarball being restored. Renamed to `releases/<id>` when complete. |
+| `releases/.<id>.sha256` | The receipt: `<sha256>  ./<path>` for every file of the release, in `sha256sum`'s own format, checked with `sha256sum -c` at unpack. |
+| `releases/.<id>.reuse.<mode>` | For one mode, such as `0644`, the files unpack copies from `current` and gives that mode, NUL-separated. |
+| `releases/.<id>.checked` | The output of `sha256sum -c`, while unpack reads it. |
+| `releases/.<id>.partial/` | A release being unpacked, or a backup or tarball being restored. Renamed to `releases/<id>` once every file matches the receipt. |
 | `.current.next` | The new symlink, just before it is renamed over `current`. |
 | `backups/.<id>.tar.zst.part` | A backup being packed. Renamed to `backups/<id>.tar.zst` when complete. |
 | `backups/.<id>.files` | The list of paths that go into a backup, while it is packed. |
 | `backups/.<id>.tar.gz.part` | A whole-release tarball being written. Renamed when complete. |
 
-If a run is cut off, such a file may stay behind. shipdeck never lists it, and the next unpack of the same id removes an old `.partial` first.
+Unpack removes the files sent for a release, whether it succeeds or not, and a failed deploy removes them with the release. If a run is cut off, such a file may stay behind. shipdeck never lists it, and the next unpack of the same id removes an old `.partial` first. Nothing of them stays in a release folder.
 
 ## Release ids
 
@@ -128,7 +136,8 @@ Pretty-printed JSON at the root of every release:
   "git": "ab12cd3",
   "dirty": false,
   "built_at": "2026-10-14T15:30:12+00:00",
-  "deployed_by": "Jane Doe"
+  "deployed_by": "Jane Doe",
+  "content": "sha256:3f8a…"
 }
 ```
 
@@ -140,13 +149,14 @@ Pretty-printed JSON at the root of every release:
 | `dirty` | `true` if tracked files had uncommitted changes. |
 | `built_at` | The id's timestamp in RFC 3339, with `+00:00`. |
 | `deployed_by` | `git config user.name` in the project, else `$USER`, else `unknown`. |
+| `content` | `sha256:<hex>`, the release's fingerprint: its paths with their kind, each file's mode and SHA-256, each link's target, the service file rendered without the release's name, and `deploy.yaml`. Releases from before it have none. |
 
-The Releases screen reads it for open releases. shipdeck refuses to pack a file of yours named `release.json` at the release root.
+The Releases screen reads it for open releases. Preflight reads `content` from `current/release.json`: when the new release's fingerprint is the same, nothing changed, and shipdeck asks before deploying a duplicate. shipdeck refuses to pack a file of yours named `release.json` at the release root.
 
 ## Ownership and modes
 
 - Every file operation under `service.dir` runs as the SSH user, without sudo. With a non-root user, everything there belongs to that user.
-- Modes come from the archive: folders `0755`, the binary `0755`, `release.json` and the unit `0644`, files whose name starts with `.env` `0600`, other files keep their local mode. Symlinks stay symlinks.
+- Modes come from your PC: folders `0755`, the binary `0755`, `release.json` and the unit `0644`, files whose name starts with `.env` `0600`, other files keep their local mode. A file copied from the live release gets the mode the new release has for it. Symlinks stay symlinks.
 - If shipdeck created `service.dir` with `sudo -n mkdir` on a first deploy, it hands it to the SSH user with `chown`. `server-setup.sh` creates it and gives it to the user too.
 - The service runs as `service.run_as`, by default the SSH user. That user must be able to read the release.
 
@@ -159,7 +169,7 @@ Release files belong to the SSH user and `.env` files are `0600`. systemd still 
 | Path | Written by | Content |
 | --- | --- | --- |
 | `/etc/systemd/system/<service>.service` | `sudo -n install -m 0644` (no sudo as root), at every switch | A copy of `current/<service>.service`. It refers only to paths under `current/`. |
-| `/etc/sudoers.d/shipdeck-<service>` | `server-setup.sh`, once, if you used it | The sudo rule for the five commands shipdeck needs. Every `.` in the service name becomes `_`, because sudo ignores files in `sudoers.d` whose names contain a dot. |
+| `/etc/sudoers.d/shipdeck-<service>` | `server-setup.sh`, once, if you used it | The sudo rule for the five commands a deploy needs and the three that stop, start and follow the service by hand. Every `.` in the service name becomes `_`, because sudo ignores files in `sudoers.d` whose names contain a dot. |
 
 The unit is always installed from the same path, `<service.dir>/current/<service>.service`, so a sudo rule can name it exactly. See [Service template](/docs/reference/service-template) for its contents and [Server access](/docs/guides/server-access) for the sudo rule.
 

@@ -20,7 +20,7 @@ It fits people who run one or a few small servers, with one or more services eac
 ## Core ideas
 
 - **Build locally.** Your build commands run on your PC. The server only receives the finished release.
-- **Only what you list travels.** `pipeline.pack` names the binary and the files that go into the release. Nothing else is uploaded. See [Packing files](/docs/guides/packing-files).
+- **Only what you list travels, and only what changed.** `pipeline.pack` names the binary and the files that go into the release. Nothing else is uploaded, and files the live release already has, checked by SHA-256 on the server, are copied there instead of sent. A release identical to the live one is not deployed without asking. See [Packing files](/docs/guides/packing-files).
 - **One `deploy.yaml` per deployable.** Each deployable is a folder under a deploy root that you pass on the command line. The file says plainly which commands run on your PC (`local`) and which on the server (`server`). See [Deploy root](/docs/guides/deploy-root).
 - **An atomic switch.** Each release lives in `releases/<id>/` on the server, and a `current` symlink points at the live one. Going live is a single rename of that symlink. systemd only ever uses `current/...` paths, so the paths it sees never change.
 - **Releases you can roll back to.** After setup, each release leaves a small backup of what it shipped in `backups/`. By default shipdeck keeps 5 releases unpacked and the backups of 15 more. Any of them can go live again; a backup is unpacked and set up again first. See [Releases](/docs/guides/releases).
@@ -65,9 +65,9 @@ shipdeck 0.3.0 keeps a narrow scope:
 **On the server**
 
 - Linux with systemd and an SSH server.
-- `zstd`, to unpack releases (`apt install zstd`, or `dnf install zstd`).
+- `zstd`, to unpack releases (`apt install zstd`, or `dnf install zstd`), and `sha256sum` (from coreutils), to check them.
 - `curl` or `wget`, if you set `pipeline.health.url`.
-- Either the root user, or a user with passwordless `sudo` for the five commands shipdeck needs. [Server access](/docs/guides/server-access) lists them and shows the one-time setup script.
+- Either the root user, or a user with passwordless `sudo` for the five commands a deploy needs (three more to stop, start and follow the service from the TUI). [Server access](/docs/guides/server-access) lists them and shows the one-time setup script.
 - At least 100 MiB of free disk space.
 
 ## Next

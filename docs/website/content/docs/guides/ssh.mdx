@@ -165,7 +165,7 @@ shipdeck opens one SSH session per endpoint (host, port, user and key) and reuse
 
 ## Deploying as any SSH user
 
-shipdeck deploys as `ssh.user`, whoever that is. When the user is literally `root`, nothing goes through sudo. Any other user needs write access to `service.dir` (or the right to create it) and passwordless sudo for five commands. [Server access](/docs/guides/server-access) covers the options and the setup script.
+shipdeck deploys as `ssh.user`, whoever that is. When the user is literally `root`, nothing goes through sudo. Any other user needs write access to `service.dir` (or the right to create it) and passwordless sudo for five commands, plus three more to stop, start or follow the service from the TUI. [Server access](/docs/guides/server-access) covers the options and the setup script.
 
 ## Next
 

@@ -15,12 +15,12 @@ Nothing live changes before **switch**. A failure in the first seven steps stops
 
 `Preflight: checking your PC and the server`
 
-On your PC, shipdeck checks that the `project` folder exists and renders the systemd unit once with a sample release, so a mistake in `service.template` shows up now. Then it connects over SSH and reads the server's facts in one script: CPU architecture, glibc version, whether `service.dir` exists and is writable, free disk space, the live release and the service state.
+On your PC, shipdeck checks that the `project` folder exists and renders the systemd unit once with a sample release, so a mistake in `service.template` shows up now. Then it connects over SSH and reads the server's facts in one script: CPU architecture, glibc version, whether `service.dir` exists and is writable, free disk space, the live release, its content fingerprint from `release.json`, and the service state.
 
 On a first deploy it creates `service.dir`, as the SSH user, or with `sudo -n mkdir` and `chown` when the user has passwordless sudo. A `service.dir` that exists but is not writable stops here (`<user> cannot write to <dir>`). Then it checks:
 
 - the `sudo -n` rights for the five commands it needs as root (skipped when you log in as `root`; see [Server access](/docs/guides/server-access));
-- that `tar` and `zstd`, which unpack the release, are on the server. A server without them stops here with the command to install them (`apt install zstd`, or `dnf install zstd`);
+- that `tar`, `zstd` and `sha256sum`, which unpack and check the release, are on the server. A server without them stops here with the command to install them (`apt install zstd`, or `dnf install zstd`; `sha256sum` comes with `coreutils`);
 - that the program `service.start` names, and every program in `pipeline.preflight.requires`, is on the server;
 - that at least 100 MiB are free.
 
@@ -44,15 +44,23 @@ A failure stops the deploy (`` the build failed: `npm run build` exited with cod
 
 `Pack: packing the release`
 
-shipdeck renders the real systemd unit and packs one `.tar.zst` in memory, compressed with zstd on every core: the binary (mode `0755`), `release.json`, `<service>.service` and the files you listed in `pipeline.pack.files`. Files whose name starts with `.env` get mode `0600`. Then it checks the server has room: about twice the archive plus its unpacked size.
+shipdeck renders the real systemd unit, picks what goes into the release (the binary, mode `0755`; `release.json`; `<service>.service`; the files you listed in `pipeline.pack.files`, those whose name starts with `.env` with mode `0600`) and hashes every file with SHA-256.
 
-No commands of yours run here. A failure stops the deploy. See [Packing files](/docs/guides/packing-files).
+From the hashes it makes the release's fingerprint, which `release.json` keeps as `content`: the files with their modes and hashes, links, folders, the unit rendered without the release's name, and `deploy.yaml`. When it equals the live release's, nothing changed, and shipdeck asks `Deploy anyway?` before making a duplicate. No (the default) stops here with nothing on the server touched; without the TUI the answer is no unless `--allow-unchanged`.
+
+Then it asks the server for the SHA-256 of the same paths in `current/`, computed there and then, for regular files only. A file whose path and hash match stays out of the archive: unpack copies it from the live release. Folders, links, `release.json`, the unit, and files whose names hold a newline, a carriage return or a backslash always go. The rest is packed into one `.tar.zst` in memory, compressed with zstd on every core, and shipdeck checks the server has room: about twice the archive plus the release's whole size.
+
+```
+✔ Pack  312 files · 309 already on the server · 3 to send · 25.0 MiB → 1.2 MiB
+```
+
+With nothing live yet, or when the server cannot hash, every file goes (`nothing is live yet, so every file is sent`). A file that changes on your PC while it is packed stops the deploy. No commands of yours run here. A failure stops the deploy. See [Packing files](/docs/guides/packing-files).
 
 ### 4. Upload
 
 `Upload: sending the release`
 
-shipdeck creates `releases/`, `backups/` and `shared/` in `service.dir` if they are missing, then uploads the archive to `releases/.<id>.tar.zst` over SFTP. When the server has no SFTP subsystem it falls back to `cat` over SSH.
+shipdeck creates `releases/`, `backups/` and `shared/` in `service.dir` if they are missing, then uploads the archive to `releases/.<id>.tar.zst` over SFTP, with two small files next to it: the receipt `releases/.<id>.sha256`, every file of the release in `sha256sum`'s own format, and for each mode the files to copy from the live release, `releases/.<id>.reuse.<mode>`. When the server has no SFTP subsystem it falls back to `cat` over SSH.
 
 A failure removes what was uploaded and stops.
 
@@ -60,9 +68,13 @@ A failure removes what was uploaded and stops.
 
 `Unpack: unpacking into releases/<id>`
 
-The archive is unpacked into a hidden `releases/.<id>.partial` folder, then renamed to `releases/<id>`, so a half-written release never looks complete. Each `service.shared` folder is then linked into the release, pointing at `shared/<folder>`.
+The archive is unpacked into a hidden `releases/.<id>.partial` folder. The files the live release already had are copied into it from `current` with a tar pipe, which keeps their modification times (good for ETags) and never hard-links them, so the release a rollback goes back to stays as it is; each gets the mode this release gives it. Then `sha256sum -c` checks every file against the receipt. Only then is the folder renamed to `releases/<id>`, so a half-written or wrong release never looks complete, and the files sent for it are removed. Each `service.shared` folder is then linked into the release, pointing at `shared/<folder>`.
 
-A failure removes the release and stops.
+```
+✔ Unpack  releases/v1.4.1-ab12cd3-20261015.120000 · 3 unpacked · 309 copied · verified
+```
+
+If a copied file does not match, because the live release changed between the hashing and the copy, shipdeck removes the half-made release, logs which files, and sends the whole release once (`… · verified · sent whole`). Any other failure removes the release and stops.
 
 ### 6. Setup
 
@@ -128,9 +140,9 @@ If nothing failed, it is skipped (`nothing failed`). Its own failure is logged a
 | --- | --- | --- | --- |
 | 1 | preflight | checks your PC and the server | `run.server` → `run.local` |
 | 2 | build | names the release | `run.local` |
-| 3 | pack | packs the binary and files | - |
-| 4 | upload | sends the archive to the server | - |
-| 5 | unpack | unpacks it into `releases/<id>`, links `service.shared` | - |
+| 3 | pack | hashes every file, asks the live release which it has, packs the rest | - |
+| 4 | upload | sends the archive and its receipt to the server | - |
+| 5 | unpack | unpacks it into `releases/<id>`, copies the unchanged files from `current`, checks every file, links `service.shared` | - |
 | 6 | setup | nothing: the old release is still live | `run.server` → `check.server` |
 | 7 | backup | packs `backups/<id>.tar.zst` from the release | - |
 | 8 | switch | points `current` at `releases/<id>`, installs its unit | - |

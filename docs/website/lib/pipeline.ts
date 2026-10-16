@@ -4,9 +4,9 @@ export type Side = 'local' | 'server';
 export const pipelineSteps: { name: string; does: string; yours: Side[] }[] = [
   { name: 'preflight', does: 'checks your PC and the server', yours: ['server', 'local'] },
   { name: 'build', does: 'builds on your PC, names the release', yours: ['local'] },
-  { name: 'pack', does: 'packs the binary and the files you list', yours: [] },
+  { name: 'pack', does: 'packs what the live release lacks of what you list', yours: [] },
   { name: 'upload', does: 'sends one archive over SSH', yours: [] },
-  { name: 'unpack', does: 'into releases/<id>, links shared folders', yours: [] },
+  { name: 'unpack', does: 'into releases/<id>, copies and checks the rest', yours: [] },
   { name: 'setup', does: 'your commands while the old release serves', yours: ['server'] },
   { name: 'backup', does: 'packs what a rollback needs into backups/', yours: [] },
   { name: 'switch', does: 'points current at the new release', yours: [] },
