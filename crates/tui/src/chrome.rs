@@ -123,7 +123,14 @@ pub fn footer(frame: &mut Frame, area: Rect, app: &App) {
         Some(Modal::Secret { .. }) => &[("⏎", "submit"), ("esc", "cancel"), ("ctrl+u", "clear")],
         Some(Modal::AskRollback { .. }) => &[("y", "roll back now"), ("n", "keep it live")],
         Some(Modal::AskUnchanged { .. }) => &[("y", "deploy anyway"), ("n", "stop here")],
+        Some(Modal::Notice { .. }) => &[("⏎", "close")],
         Some(_) => &[("y", "yes"), ("n", "no")],
+        None if app.logs.is_some() => &[
+            ("↑↓", "scroll"),
+            ("pgup/pgdn", "page"),
+            ("G", "follow"),
+            ("q", "close"),
+        ],
         None => match app.screen {
             Screen::Deployables => &[
                 ("↑↓", "select"),
@@ -131,6 +138,7 @@ pub fn footer(frame: &mut Frame, area: Rect, app: &App) {
                 ("⏎", "deploy"),
                 ("r", "releases"),
                 ("s", "refresh"),
+                (":", "commands"),
                 ("tab", "screens"),
                 ("q", "quit"),
             ],

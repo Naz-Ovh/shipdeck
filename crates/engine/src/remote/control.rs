@@ -8,7 +8,7 @@ use std::future::Future;
 use anyhow::{Result, bail};
 
 use super::Server;
-use crate::config::Manager;
+use crate::config::{Manager, Service};
 use crate::setup;
 use crate::ssh::sh_quote;
 
@@ -67,15 +67,15 @@ fn log_script(manager: Manager, service: &str, pm2_app: &str, sudo: &str) -> Str
     }
 }
 
-impl Server {
-    /// What follows the service's log, as the log view names it.
-    pub fn log_command(&self) -> String {
-        match self.manager {
-            Manager::Systemd => journal_follow(&self.service),
-            Manager::Pm2 => format!("pm2 logs {} --raw --lines {LOG_LINES}", self.pm2_app),
-        }
+/// What follows `service`'s log, as a screen names it.
+pub fn log_command(service: &Service) -> String {
+    match service.manager {
+        Manager::Systemd => journal_follow(&service.name),
+        Manager::Pm2 => format!("pm2 logs {} --raw --lines {LOG_LINES}", service.pm2_app()),
     }
+}
 
+impl Server {
     /// Stops, starts or restarts the service. A PM2 app that is already
     /// running is left as it is by `Start`.
     pub async fn control(&self, action: Control) -> Result<()> {

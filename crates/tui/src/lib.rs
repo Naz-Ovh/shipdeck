@@ -3,7 +3,9 @@
 
 mod app;
 mod chrome;
+mod command;
 mod deployables;
+mod logs;
 mod modal;
 mod operation;
 mod releases;
@@ -63,7 +65,13 @@ async fn event_loop(
                     app.on_op(update);
                 }
             }
-            Some(fetched) = inbox.fetched.recv() => app.on_fetched(fetched),
+            Some(fetched) = inbox.fetched.recv() => {
+                app.on_fetched(fetched);
+                // A log arrives a line at a time; show them all at once.
+                while let Ok(fetched) = inbox.fetched.try_recv() {
+                    app.on_fetched(fetched);
+                }
+            }
             _ = tick.tick() => app.on_tick(),
         }
     }
@@ -81,11 +89,15 @@ fn draw(frame: &mut Frame, app: &mut App) {
 
     chrome::header(frame, header, app);
     match app.screen {
+        _ if app.logs.is_some() => logs::draw(frame, body, app),
         Screen::Deployables => deployables::draw(frame, body, app),
         Screen::Operation => operation::draw(frame, body, app),
         Screen::Releases => releases::draw(frame, body, app),
     }
-    chrome::footer(frame, footer, app);
+    match &app.command {
+        Some(line) => command::draw(frame, footer, line),
+        None => chrome::footer(frame, footer, app),
+    }
     modal::draw(frame, frame.area(), app);
 }
 

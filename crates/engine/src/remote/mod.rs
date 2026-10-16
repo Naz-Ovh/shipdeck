@@ -13,7 +13,7 @@ mod preflight;
 mod releases;
 
 pub use backup::{Archive, Picked, ReleaseFile, pick};
-pub use control::{Control, control_commands};
+pub use control::{Control, control_commands, log_command};
 pub use delta::Unpacked;
 pub use health::{HttpCheck, Probe};
 pub use pm2::{PM2_NEWEST_MAJOR, app_state, check_version};

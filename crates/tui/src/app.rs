@@ -17,8 +17,10 @@ use shipdeck_engine::deploy::report::{
     LogKind, OpEvent, OpId, OpUpdate, Outcome, Reporter, RollbackQuestion, StepState,
     UnchangedQuestion, Unit,
 };
-use shipdeck_engine::remote::{Archive, Kind, Listing, Server, Status};
+use shipdeck_engine::remote::{Archive, Control, Kind, Listing, Server, Status, log_command};
 use shipdeck_engine::ssh::{Pool, Question};
+
+use super::command::{self, CommandLine};
 
 /// Log lines kept per operation; older ones scroll away.
 const LOG_LIMIT: usize = 5000;
@@ -52,6 +54,25 @@ pub enum Fetched {
     Releases {
         index: usize,
         result: Result<Listing, String>,
+    },
+    /// A `:stop`, `:start` or `:restart` is done.
+    Controlled {
+        index: usize,
+        action: Control,
+        result: Result<(), String>,
+    },
+    /// The log view `view` is connected and following.
+    LogsOpen {
+        view: u64,
+    },
+    LogLine {
+        view: u64,
+        line: String,
+    },
+    /// The log ended: its exit code when it ended on its own.
+    LogsEnded {
+        view: u64,
+        result: Result<Option<u32>, String>,
     },
 }
 
@@ -260,6 +281,29 @@ pub struct ReleasesView {
     pub table: TableState,
 }
 
+/// Where the log view is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LogsState {
+    Connecting,
+    Following,
+    /// Why it stopped.
+    Ended(String),
+}
+
+/// A service's log, followed live over the whole screen.
+pub struct LogsView {
+    pub id: u64,
+    pub deployable: usize,
+    /// What follows it on the server.
+    pub command: String,
+    pub lines: VecDeque<String>,
+    /// Lines up from the bottom; 0 follows new output.
+    pub scroll: usize,
+    pub state: LogsState,
+    /// Dropping it, as closing the view does, stops the log on the server.
+    _stop: oneshot::Sender<()>,
+}
+
 pub enum Modal {
     ConfirmDeploy {
         deployable: usize,
@@ -274,6 +318,16 @@ pub enum Modal {
         current: Option<String>,
     },
     ConfirmQuit,
+    /// `:stop` or `:restart` asks first.
+    ConfirmControl {
+        deployable: usize,
+        action: Control,
+    },
+    /// Something that needs reading, such as why a command failed.
+    Notice {
+        title: String,
+        text: String,
+    },
     /// A release failed after the switch: roll back, or keep it? With no
     /// answer by `deadline` the deploy rolls back on its own.
     AskRollback {
@@ -323,6 +377,12 @@ pub struct App {
     pub screen: Screen,
     pub op: Option<Operation>,
     pub releases: Option<ReleasesView>,
+    /// The `:` line, while it is open.
+    pub command: Option<CommandLine>,
+    /// The log view, while it is open; it covers every screen.
+    pub logs: Option<LogsView>,
+    /// Deployables a `:stop`, `:start` or `:restart` is running for.
+    pub controlling: Vec<usize>,
     pub modals: VecDeque<Modal>,
     pub toast: Option<Toast>,
     pub tick: u64,
@@ -331,6 +391,7 @@ pub struct App {
     ops: UnboundedSender<OpUpdate>,
     fetched: UnboundedSender<Fetched>,
     next_op: OpId,
+    next_logs: u64,
 }
 
 impl App {
@@ -354,6 +415,9 @@ impl App {
             screen: Screen::Deployables,
             op: None,
             releases: None,
+            command: None,
+            logs: None,
+            controlling: Vec::new(),
             modals: VecDeque::new(),
             toast: None,
             tick: 0,
@@ -362,6 +426,7 @@ impl App {
             ops,
             fetched,
             next_op: 1,
+            next_logs: 1,
         }
     }
 
@@ -371,6 +436,13 @@ impl App {
 
     pub fn op_running(&self) -> bool {
         self.op.as_ref().is_some_and(Operation::running)
+    }
+
+    /// Whether a deploy or rollback of `index` is running.
+    fn op_running_on(&self, index: usize) -> bool {
+        self.op
+            .as_ref()
+            .is_some_and(|op| op.running() && op.deployable == index)
     }
 
     fn notify(&mut self, text: impl Into<String>, tone: Tone) {
@@ -464,6 +536,100 @@ impl App {
         });
     }
 
+    /// Stops, starts or restarts the deployable's service in the
+    /// background.
+    fn control(&mut self, index: usize, action: Control) {
+        if self.controlling.contains(&index) {
+            self.notify("Wait for the last command to finish", Tone::Warn);
+            return;
+        }
+        let Some(deployable) = self.deployables.get(index).cloned() else {
+            return;
+        };
+        self.controlling.push(index);
+        let name = deployable.config.service.name.clone();
+        self.notify(format!("{} {name}…", doing(action)), Tone::Info);
+        let (pool, tx) = (self.pool.clone(), self.fetched.clone());
+        tokio::spawn(async move {
+            let result = async {
+                let session = pool.get(&deployable.endpoint).await?;
+                Server::new(session, &deployable.config.service)
+                    .control(action)
+                    .await
+            }
+            .await
+            .map_err(|err| format!("{err:#}"));
+            let _ = tx.send(Fetched::Controlled {
+                index,
+                action,
+                result,
+            });
+        });
+    }
+
+    fn controlled(&mut self, index: usize, action: Control, result: Result<(), String>) {
+        self.controlling.retain(|i| *i != index);
+        let Some(deployable) = self.deployables.get(index) else {
+            return;
+        };
+        let name = deployable.config.service.name.clone();
+        match result {
+            Ok(()) => {
+                self.notify(format!("{name}: {}", done(action)), Tone::Info);
+                self.refresh_status(index);
+            }
+            Err(text) => self.modals.push_back(Modal::Notice {
+                title: format!("Could not {} {name}", action.verb()),
+                text,
+            }),
+        }
+    }
+
+    /// Opens the log view and follows the deployable's log until it closes.
+    fn open_logs(&mut self, index: usize) {
+        let Some(deployable) = self.deployables.get(index).cloned() else {
+            return;
+        };
+        let view = self.next_logs;
+        self.next_logs += 1;
+        let (stop, stopped) = oneshot::channel::<()>();
+        self.logs = Some(LogsView {
+            id: view,
+            deployable: index,
+            command: log_command(&deployable.config.service),
+            lines: VecDeque::new(),
+            scroll: 0,
+            state: LogsState::Connecting,
+            _stop: stop,
+        });
+        let (pool, tx) = (self.pool.clone(), self.fetched.clone());
+        tokio::spawn(async move {
+            let result = async {
+                let session = pool.get(&deployable.endpoint).await?;
+                let server = Server::new(session, &deployable.config.service);
+                let _ = tx.send(Fetched::LogsOpen { view });
+                let line_tx = tx.clone();
+                server
+                    .follow_logs(
+                        |line| {
+                            let _ = line_tx.send(Fetched::LogLine {
+                                view,
+                                line: line.to_string(),
+                            });
+                        },
+                        async {
+                            // The view closed: its sender is gone.
+                            let _ = stopped.await;
+                        },
+                    )
+                    .await
+            }
+            .await
+            .map_err(|err| format!("{err:#}"));
+            let _ = tx.send(Fetched::LogsEnded { view, result });
+        });
+    }
+
     fn open_releases(&mut self, index: usize) {
         let mut table = TableState::default();
         table.select(Some(0));
@@ -519,6 +685,37 @@ impl App {
                         }
                         Err(err) => Fetch::Error(err),
                     };
+                }
+            }
+            Fetched::Controlled {
+                index,
+                action,
+                result,
+            } => self.controlled(index, action, result),
+            Fetched::LogsOpen { view } => {
+                if let Some(logs) = self.logs.as_mut().filter(|l| l.id == view) {
+                    logs.state = LogsState::Following;
+                }
+            }
+            Fetched::LogLine { view, line } => {
+                if let Some(logs) = self.logs.as_mut().filter(|l| l.id == view) {
+                    logs.lines.push_back(line);
+                    if logs.lines.len() > LOG_LIMIT {
+                        logs.lines.pop_front();
+                    }
+                    // Keep a scrolled-up view still while new lines arrive.
+                    if logs.scroll > 0 {
+                        logs.scroll = (logs.scroll + 1).min(logs.lines.len());
+                    }
+                }
+            }
+            Fetched::LogsEnded { view, result } => {
+                if let Some(logs) = self.logs.as_mut().filter(|l| l.id == view) {
+                    logs.state = LogsState::Ended(match result {
+                        Ok(Some(code)) => format!("the log ended (exit {code})"),
+                        Ok(None) => "the log ended".to_string(),
+                        Err(err) => err,
+                    });
                 }
             }
         }
@@ -654,8 +851,16 @@ impl App {
             self.on_modal_key(key);
             return;
         }
+        if self.command.is_some() {
+            self.on_command_key(key);
+            return;
+        }
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.request_quit();
+            return;
+        }
+        if self.logs.is_some() {
+            self.on_logs_key(key);
             return;
         }
         match key.code {
@@ -751,6 +956,84 @@ impl App {
                 }
             }
             KeyCode::Char('s') => self.refresh_connected(),
+            KeyCode::Char(':') if self.selected().is_some() => {
+                self.command = Some(CommandLine::default());
+            }
+            _ => {}
+        }
+    }
+
+    fn on_command_key(&mut self, key: KeyEvent) {
+        let Some(line) = self.command.as_mut() else {
+            return;
+        };
+        let ctrl_c =
+            key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c');
+        match key.code {
+            _ if ctrl_c => self.command = None,
+            KeyCode::Esc => self.command = None,
+            KeyCode::Enter => {
+                let input = std::mem::take(&mut line.input);
+                self.command = None;
+                self.run_command(&input);
+            }
+            KeyCode::Tab => line.complete(),
+            KeyCode::Backspace => {
+                if !line.pop() {
+                    self.command = None;
+                }
+            }
+            KeyCode::Char(c) => line.push(c),
+            _ => {}
+        }
+    }
+
+    /// Runs what was typed after `:` for the selected deployable.
+    fn run_command(&mut self, input: &str) {
+        let Some(index) = self.selected() else {
+            return;
+        };
+        if input.trim().is_empty() {
+            return;
+        }
+        let command = match command::parse(input) {
+            Ok(command) => command,
+            Err(why) => return self.notify(why, Tone::Warn),
+        };
+        let Some(action) = command.control() else {
+            return self.open_logs(index);
+        };
+        if self.op_running_on(index) {
+            let slug = &self.deployables[index].slug;
+            self.notify(
+                format!("{slug} is being deployed; only :logs works until it ends"),
+                Tone::Warn,
+            );
+            return;
+        }
+        if matches!(action, Control::Stop | Control::Restart) {
+            self.modals.push_back(Modal::ConfirmControl {
+                deployable: index,
+                action,
+            });
+        } else {
+            self.control(index, action);
+        }
+    }
+
+    fn on_logs_key(&mut self, key: KeyEvent) {
+        let Some(logs) = self.logs.as_mut() else {
+            return;
+        };
+        let max = logs.lines.len();
+        match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => self.logs = None,
+            KeyCode::Up | KeyCode::Char('k') => logs.scroll = (logs.scroll + 1).min(max),
+            KeyCode::Down | KeyCode::Char('j') => logs.scroll = logs.scroll.saturating_sub(1),
+            KeyCode::PageUp => logs.scroll = (logs.scroll + 20).min(max),
+            KeyCode::PageDown => logs.scroll = logs.scroll.saturating_sub(20),
+            KeyCode::Home | KeyCode::Char('g') => logs.scroll = max,
+            KeyCode::End | KeyCode::Char('G') => logs.scroll = 0,
             _ => {}
         }
     }
@@ -945,6 +1228,35 @@ impl App {
                     let _ = question.reply.send(answer);
                 }
             }
+            Modal::ConfirmControl { deployable, action } => {
+                let (index, action) = (*deployable, *action);
+                match key.code {
+                    KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                        self.modals.pop_front();
+                        if self.op_running_on(index) {
+                            self.notify("A deploy started meanwhile; not now", Tone::Warn);
+                        } else {
+                            self.control(index, action);
+                        }
+                    }
+                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                        self.modals.pop_front();
+                    }
+                    _ if ctrl_c => {
+                        self.modals.pop_front();
+                    }
+                    _ => {}
+                }
+            }
+            Modal::Notice { .. } => match key.code {
+                KeyCode::Enter | KeyCode::Esc | KeyCode::Char('q') => {
+                    self.modals.pop_front();
+                }
+                _ if ctrl_c => {
+                    self.modals.pop_front();
+                }
+                _ => {}
+            },
             Modal::ConfirmQuit => match key.code {
                 KeyCode::Char('y') | KeyCode::Char('Y') => self.quit = true,
                 KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
@@ -954,5 +1266,23 @@ impl App {
                 _ => {}
             },
         }
+    }
+}
+
+/// `Stopping`, `Starting`, `Restarting`.
+fn doing(action: Control) -> &'static str {
+    match action {
+        Control::Stop => "Stopping",
+        Control::Start => "Starting",
+        Control::Restart => "Restarting",
+    }
+}
+
+/// `stopped`, `started`, `restarted`.
+fn done(action: Control) -> &'static str {
+    match action {
+        Control::Stop => "stopped",
+        Control::Start => "started",
+        Control::Restart => "restarted",
     }
 }

@@ -8,7 +8,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph, Wrap};
 
 use shipdeck_engine::release::ReleaseName;
-use shipdeck_engine::remote::Archive;
+use shipdeck_engine::remote::{Archive, Control};
 
 use std::time::Instant;
 
@@ -44,6 +44,15 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
             from,
             current,
         } => confirm_rollback(app, *deployable, target, *from, current.as_deref()),
+        Modal::ConfirmControl { deployable, action } => confirm_control(app, *deployable, *action),
+        Modal::Notice { title, text } => (
+            title.clone(),
+            ERR,
+            text.lines()
+                .map(|line| Line::from(Span::styled(line.to_string(), theme::text())))
+                .collect(),
+            vec![("⏎", "close".into())],
+        ),
         Modal::ConfirmQuit => (
             "Quit now?".to_string(),
             WARN,
@@ -291,6 +300,45 @@ fn ask_rollback(app: &App, index: usize, question: &RollbackQuestion, deadline: 
             ("n", format!("keep {new} live")),
         ],
     )
+}
+
+fn confirm_control(app: &App, index: usize, action: Control) -> Dialog {
+    let deployable = &app.deployables[index];
+    let service = &deployable.config.service;
+    let verb = action.verb();
+    let what = match action {
+        Control::Stop => {
+            "It stays stopped until it is started again, a deploy restarts it or the server reboots."
+        }
+        _ => "It is down for a moment while it restarts.",
+    };
+    let lines = vec![
+        Line::from(vec![
+            Span::styled(format!("{} ", capitalized(verb)), theme::bold(TEXT)),
+            Span::styled(service.name.clone(), theme::bold(VIOLET)),
+            Span::styled(
+                format!(" on {}?", deployable.endpoint.label()),
+                theme::bold(TEXT),
+            ),
+        ]),
+        Line::default(),
+        Line::from(Span::styled(what, theme::muted())),
+    ];
+    (
+        format!("{} · {verb}", deployable.slug),
+        WARN,
+        lines,
+        vec![("y", verb.to_string()), ("n", "cancel".into())],
+    )
+}
+
+/// `stop` → `Stop`.
+fn capitalized(word: &str) -> String {
+    let mut chars = word.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
 }
 
 fn ask_unchanged(app: &App, index: usize, question: &UnchangedQuestion) -> Dialog {

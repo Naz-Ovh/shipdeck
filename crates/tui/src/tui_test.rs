@@ -16,11 +16,13 @@ use shipdeck_engine::deploy::report::{
     LogKind, OpEvent, OpUpdate, Outcome, RollbackQuestion, StepState, UnchangedQuestion, Unit,
 };
 use shipdeck_engine::release::ReleaseName;
-use shipdeck_engine::remote::{Archive, Kind, Listing, ReleaseEntry, Status};
+use shipdeck_engine::remote::{Archive, Control, Kind, Listing, ReleaseEntry, Status};
 use shipdeck_engine::ssh::ssh_config::HostConfig;
 use shipdeck_engine::ssh::{Endpoint, Login, Pool};
 
-use super::app::{App, Fetch, Live, Modal, OpKind, Operation, ReleasesView, Screen};
+use super::app::{
+    App, Fetch, Fetched, Live, LogsState, Modal, OpKind, Operation, ReleasesView, Screen, Tone,
+};
 use super::draw;
 
 const RELEASES: [&str; 4] = [
@@ -672,4 +674,198 @@ async fn an_unchanged_release_asks_first_and_no_is_the_default() {
         }),
     );
     render(&mut app, 100, 30, "deploy-unchanged");
+}
+
+fn type_in(app: &mut App, text: &str) {
+    for c in text.chars() {
+        press(app, KeyCode::Char(c));
+    }
+}
+
+fn toast(app: &App) -> Option<(&str, Tone)> {
+    app.toast.as_ref().map(|t| (t.text.as_str(), t.tone))
+}
+
+#[tokio::test]
+async fn colon_opens_a_command_line_that_runs_service_commands() {
+    let mut app = app();
+    press(&mut app, KeyCode::Char(':'));
+    assert!(app.command.is_some());
+    // Keys are text on the line: q does not quit, 2 does not switch.
+    type_in(&mut app, "q2");
+    assert!(!app.quit);
+    assert_eq!(app.screen, Screen::Deployables);
+    assert_eq!(app.command.as_ref().unwrap().input, "q2");
+    render(&mut app, 100, 30, "command-line");
+    press(&mut app, KeyCode::Esc);
+    assert!(app.command.is_none());
+
+    // Tab completes; stop and restart ask first.
+    press(&mut app, KeyCode::Char(':'));
+    type_in(&mut app, "rest");
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(app.command.as_ref().unwrap().input, "restart");
+    press(&mut app, KeyCode::Enter);
+    assert!(app.command.is_none());
+    assert!(matches!(
+        app.modals.front(),
+        Some(Modal::ConfirmControl {
+            deployable: 0,
+            action: Control::Restart
+        })
+    ));
+    render(&mut app, 100, 30, "confirm-restart");
+    press(&mut app, KeyCode::Char('n'));
+    assert!(app.modals.is_empty());
+    assert!(app.controlling.is_empty());
+
+    press(&mut app, KeyCode::Char(':'));
+    type_in(&mut app, "stop");
+    press(&mut app, KeyCode::Enter);
+    assert!(matches!(
+        app.modals.front(),
+        Some(Modal::ConfirmControl {
+            action: Control::Stop,
+            ..
+        })
+    ));
+    press(&mut app, KeyCode::Char('y'));
+    assert_eq!(app.controlling, [0]);
+    assert_eq!(toast(&app), Some(("Stopping api-prod…", Tone::Info)));
+
+    // :start needs no question.
+    app.list.select(Some(1));
+    press(&mut app, KeyCode::Char(':'));
+    type_in(&mut app, "start");
+    press(&mut app, KeyCode::Enter);
+    assert!(app.modals.is_empty());
+    assert_eq!(app.controlling, [0, 1]);
+
+    press(&mut app, KeyCode::Char(':'));
+    type_in(&mut app, "reboot");
+    press(&mut app, KeyCode::Enter);
+    let (text, tone) = toast(&app).unwrap();
+    assert!(text.starts_with("Not a command: :reboot"), "{text}");
+    assert_eq!(tone, Tone::Warn);
+
+    // Backspace on an empty line closes it, as in vim.
+    press(&mut app, KeyCode::Char(':'));
+    press(&mut app, KeyCode::Backspace);
+    assert!(app.command.is_none());
+}
+
+#[tokio::test]
+async fn while_a_deploy_runs_only_logs_works_on_that_deployable() {
+    let mut app = app();
+    running_deploy(&mut app);
+    app.screen = Screen::Deployables;
+    press(&mut app, KeyCode::Char(':'));
+    type_in(&mut app, "stop");
+    press(&mut app, KeyCode::Enter);
+    assert!(app.modals.is_empty());
+    let (text, _) = toast(&app).unwrap();
+    assert!(text.contains("only :logs works"), "{text}");
+
+    press(&mut app, KeyCode::Char(':'));
+    type_in(&mut app, "logs");
+    press(&mut app, KeyCode::Enter);
+    assert!(app.logs.is_some());
+
+    // Another deployable is free.
+    app.logs = None;
+    app.list.select(Some(1));
+    press(&mut app, KeyCode::Char(':'));
+    type_in(&mut app, "stop");
+    press(&mut app, KeyCode::Enter);
+    assert!(matches!(
+        app.modals.front(),
+        Some(Modal::ConfirmControl { deployable: 1, .. })
+    ));
+}
+
+#[tokio::test]
+async fn the_log_view_follows_lines_and_closes_with_q() {
+    let mut app = app();
+    press(&mut app, KeyCode::Char(':'));
+    type_in(&mut app, "logs");
+    press(&mut app, KeyCode::Enter);
+    let view = app.logs.as_ref().unwrap().id;
+    assert_eq!(
+        app.logs.as_ref().unwrap().command,
+        "journalctl -u api-prod -f -n 200 --no-pager"
+    );
+    render(&mut app, 100, 30, "logs-connecting");
+
+    app.on_fetched(Fetched::LogsOpen { view });
+    for n in 0..40 {
+        app.on_fetched(Fetched::LogLine {
+            view,
+            line: format!("Oct 16 12:00:{n:02} api-prod[812]: GET /health 200"),
+        });
+    }
+    // A line from a view closed before is dropped.
+    app.on_fetched(Fetched::LogLine {
+        view: view + 1,
+        line: "stale".into(),
+    });
+    let logs = app.logs.as_ref().unwrap();
+    assert_eq!(logs.state, LogsState::Following);
+    assert_eq!(logs.lines.len(), 40);
+    render(&mut app, 100, 30, "logs-following");
+
+    press(&mut app, KeyCode::Up);
+    assert_eq!(app.logs.as_ref().unwrap().scroll, 1);
+    press(&mut app, KeyCode::Char('G'));
+    assert_eq!(app.logs.as_ref().unwrap().scroll, 0);
+
+    app.on_fetched(Fetched::LogsEnded {
+        view,
+        result: Err(
+            "deploy may not run sudo journalctl -u api-prod -f -n 200 --no-pager. \
+                     Run server-setup.sh on the server again, as root, to allow it:\n\
+                     curl -fsSL https://example.com/server-setup.sh | bash -s -- --user deploy \
+                     --dir /opt/api-prod --service api-prod"
+                .into(),
+        ),
+    });
+    assert!(matches!(
+        app.logs.as_ref().unwrap().state,
+        LogsState::Ended(_)
+    ));
+    render(&mut app, 100, 30, "logs-ended");
+
+    // q closes the view, not shipdeck.
+    press(&mut app, KeyCode::Char('q'));
+    assert!(app.logs.is_none());
+    assert!(!app.quit);
+}
+
+#[tokio::test]
+async fn a_failed_command_shows_why_and_a_done_one_refreshes() {
+    let mut app = app();
+    app.controlling = vec![0];
+    app.on_fetched(Fetched::Controlled {
+        index: 0,
+        action: Control::Stop,
+        result: Err("deploy may not run sudo systemctl stop api-prod. \
+                     Run server-setup.sh on the server again, as root, to allow it:\n\
+                     curl -fsSL https://example.com/server-setup.sh | bash -s -- --user deploy \
+                     --dir /opt/api-prod --service api-prod"
+            .into()),
+    });
+    assert!(app.controlling.is_empty());
+    assert!(
+        matches!(app.modals.front(), Some(Modal::Notice { title, .. }) if title == "Could not stop api-prod")
+    );
+    render(&mut app, 100, 30, "control-failed");
+    press(&mut app, KeyCode::Enter);
+    assert!(app.modals.is_empty());
+
+    app.on_fetched(Fetched::Controlled {
+        index: 0,
+        action: Control::Restart,
+        result: Ok(()),
+    });
+    assert_eq!(toast(&app), Some(("api-prod: restarted", Tone::Info)));
+    assert!(matches!(app.live[0], Live::Loading));
 }
