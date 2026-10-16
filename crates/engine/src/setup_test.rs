@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::*;
-use crate::remote::sudo_commands;
+use crate::remote::{control_commands, sudo_commands};
 
 /// The script as committed at the repository root.
 const SCRIPT: &str = include_str!("../../../server-setup.sh");
@@ -22,20 +22,45 @@ fn url_is_pinned_to_this_release() {
     );
 }
 
-#[test]
-fn script_runs_exactly_the_sudo_commands_shipdeck_checks() {
+/// The entries of the bash array `name` in the script.
+fn listed(name: &str) -> Vec<&'static str> {
+    let opening = format!("{name}=(\n");
     let start = SCRIPT
-        .find("SUDO_COMMANDS=(\n")
-        .expect("SUDO_COMMANDS in the script");
-    let body = &SCRIPT[start + "SUDO_COMMANDS=(\n".len()..];
-    let listed: Vec<&str> = body[..body.find("\n)").unwrap()]
+        .find(&opening)
+        .unwrap_or_else(|| panic!("{name} in the script"));
+    let body = &SCRIPT[start + opening.len()..];
+    body[..body.find("\n)").unwrap()]
         .lines()
         .map(|l| l.trim().trim_matches('"'))
-        .collect();
-    let expected = sudo_commands("$APP_DIR", "$SERVICE");
+        .collect()
+}
+
+#[test]
+fn script_runs_exactly_the_sudo_commands_shipdeck_checks() {
     assert_eq!(
-        listed, expected,
+        listed("SUDO_COMMANDS"),
+        sudo_commands("$APP_DIR", "$SERVICE"),
         "server-setup.sh and remote::sudo_commands differ"
+    );
+    assert_eq!(
+        listed("CONTROL_COMMANDS"),
+        control_commands("$SERVICE"),
+        "server-setup.sh and remote::control_commands differ"
+    );
+    assert!(
+        SCRIPT.contains(r#"for entry in "${SUDO_COMMANDS[@]}" "${CONTROL_COMMANDS[@]}"; do"#),
+        "the sudo rule allows both lists"
+    );
+}
+
+#[test]
+fn the_setup_command_renews_one_apps_rule() {
+    assert_eq!(
+        command("deploy", "/opt/my-api", "my-api"),
+        format!(
+            "curl -fsSL {} | bash -s -- --user deploy --dir /opt/my-api --service my-api",
+            script_url()
+        )
     );
 }
 

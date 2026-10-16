@@ -5,6 +5,7 @@
 //! (`.tar.gz` from before backups), `shared/`.
 
 mod backup;
+mod control;
 mod delta;
 mod health;
 mod pm2;
@@ -12,6 +13,7 @@ mod preflight;
 mod releases;
 
 pub use backup::{Archive, Picked, ReleaseFile, pick};
+pub use control::{Control, control_commands};
 pub use delta::Unpacked;
 pub use health::{HttpCheck, Probe};
 pub use pm2::{PM2_NEWEST_MAJOR, app_state, check_version};
@@ -203,20 +205,7 @@ echo \"current -> $(readlink current)\"",
     /// environment, then saves its list so the app comes back after a reboot.
     pub async fn restart(&self, report: &Reporter) -> Result<()> {
         if self.manager == Manager::Pm2 {
-            let current = format!("{}/current", self.dir);
-            let file = sh_quote(&format!("{current}/{}", self.pm2_file));
-            let mut script = env_prelude(&current, &self.env, self.env.env_file.clone());
-            script.push_str(&format!(
-                "[ -f {file} ] || {{ echo {missing} >&2; exit 1; }}
-pm2 startOrReload {file} --only {app} --update-env
-pm2 save
-",
-                missing = sh_quote(&format!(
-                    "this release has no {}; was it deployed with systemd?",
-                    self.pm2_file
-                )),
-                app = sh_quote(&self.pm2_app),
-            ));
+            let script = self.pm2_script("startOrReload");
             self.run(&format!("reload {} in pm2", self.pm2_app), &script, report)
                 .await?;
             return Ok(());
@@ -225,6 +214,27 @@ pm2 save
         self.run(&format!("restart {}", self.service), &script, report)
             .await?;
         Ok(())
+    }
+
+    /// `pm2 <verb>` on `current`'s PM2 file, for this app only, with the
+    /// service's environment loaded; then `pm2 save`, so the app comes back
+    /// after a reboot.
+    fn pm2_script(&self, verb: &str) -> String {
+        let current = format!("{}/current", self.dir);
+        let file = sh_quote(&format!("{current}/{}", self.pm2_file));
+        let mut script = env_prelude(&current, &self.env, self.env.env_file.clone());
+        script.push_str(&format!(
+            "[ -f {file} ] || {{ echo {missing} >&2; exit 1; }}
+pm2 {verb} {file} --only {app} --update-env
+pm2 save
+",
+            missing = sh_quote(&format!(
+                "this release has no {}; was it deployed with systemd?",
+                self.pm2_file
+            )),
+            app = sh_quote(&self.pm2_app),
+        ));
+        script
     }
 
     /// Links each `service.shared` folder into `releases/<id>`, creating it

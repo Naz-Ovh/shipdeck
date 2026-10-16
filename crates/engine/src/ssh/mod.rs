@@ -12,6 +12,7 @@ pub use login::{Login, Question};
 pub use shell_env::ShellEnv;
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -150,6 +151,55 @@ impl Session {
             stdout: out.text(),
             stderr: err.text(),
         })
+    }
+
+    /// Runs a POSIX `sh` script on a terminal, as `ssh -t` does, handing
+    /// each output line to `on_line` until the script ends or `stop`
+    /// resolves. Stopping closes the channel, so the terminal hangs up and
+    /// what the script runs ends with it. The terminal is `dumb`, so
+    /// programs print no colours, and stderr comes through with stdout.
+    /// Returns the exit code when the script ended on its own.
+    pub async fn follow(
+        &self,
+        script: &str,
+        mut on_line: impl FnMut(&str),
+        stop: impl Future<Output = ()>,
+    ) -> Result<Option<u32>> {
+        let mut channel = self
+            .handle
+            .channel_open_session()
+            .await
+            .with_context(|| format!("opening a channel to {}", self.label))?;
+        channel
+            .request_pty(false, "dumb", 200, 50, 0, 0, &[])
+            .await
+            .context("asking for a terminal")?;
+        let script = format!("{}{script}", self.prelude);
+        channel
+            .exec(true, format!("sh -c {}", sh_quote(&script)))
+            .await
+            .context("starting the remote command")?;
+        let mut lines = Splitter::default();
+        let mut code = None;
+        tokio::pin!(stop);
+        loop {
+            tokio::select! {
+                msg = channel.wait() => match msg {
+                    Some(ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. }) => {
+                        lines.feed(&data, &mut on_line);
+                    }
+                    Some(ChannelMsg::ExitStatus { exit_status }) => code = Some(exit_status),
+                    Some(ChannelMsg::Close) | None => break,
+                    Some(_) => {}
+                },
+                () = &mut stop => {
+                    let _ = channel.close().await;
+                    return Ok(None);
+                }
+            }
+        }
+        lines.flush(&mut on_line);
+        Ok(code)
     }
 
     /// Writes `data` to `remote_path`, over SFTP when the server offers it
@@ -372,18 +422,14 @@ impl Pool {
     }
 }
 
-/// Splits a byte stream into lines, keeping the whole text too.
+/// Splits a byte stream into lines.
 #[derive(Default)]
-struct Lines {
+struct Splitter {
     partial: Vec<u8>,
-    /// Every byte, decoded once at the end: a packet can end inside a
-    /// character.
-    all: Vec<u8>,
 }
 
-impl Lines {
+impl Splitter {
     fn feed(&mut self, bytes: &[u8], mut emit: impl FnMut(&str)) {
-        self.all.extend_from_slice(bytes);
         for &byte in bytes {
             if byte == b'\n' {
                 emit(String::from_utf8_lossy(&self.partial).trim_end());
@@ -399,6 +445,26 @@ impl Lines {
             emit(String::from_utf8_lossy(&self.partial).trim_end());
             self.partial.clear();
         }
+    }
+}
+
+/// Splits a byte stream into lines, keeping the whole text too.
+#[derive(Default)]
+struct Lines {
+    split: Splitter,
+    /// Every byte, decoded once at the end: a packet can end inside a
+    /// character.
+    all: Vec<u8>,
+}
+
+impl Lines {
+    fn feed(&mut self, bytes: &[u8], emit: impl FnMut(&str)) {
+        self.all.extend_from_slice(bytes);
+        self.split.feed(bytes, emit);
+    }
+
+    fn flush(&mut self, emit: impl FnMut(&str)) {
+        self.split.flush(emit);
     }
 
     fn text(&self) -> String {

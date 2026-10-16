@@ -9,9 +9,10 @@
 #
 # It creates the deploy user, authorizes its key, creates the app folder
 # owned by that user, and installs the sudo rule shipdeck needs (checked by
-# visudo first). With --manager pm2 there is no sudo rule: it starts that
-# user's PM2 at boot instead. Running it again changes nothing that is
-# already in place.
+# visudo first): the commands a deploy runs, and those that stop, start and
+# follow the log of the service by hand. With --manager pm2 there is no sudo
+# rule: it starts that user's PM2 at boot instead. Running it again changes
+# nothing that is already in place, and brings an older rule up to date.
 set -euo pipefail
 
 usage() {
@@ -77,14 +78,20 @@ command -v zstd >/dev/null || die "zstd is required to unpack releases (apt inst
 
 # sudo skips files in /etc/sudoers.d whose names contain a dot.
 SUDOERS_FILE="/etc/sudoers.d/shipdeck-${SERVICE//./_}"
-# Exactly what shipdeck runs with sudo; shipdeck's tests keep this list in step
-# with its own.
+# Exactly what shipdeck runs with sudo; shipdeck's tests keep both lists in
+# step with its own. A deploy needs SUDO_COMMANDS.
 SUDO_COMMANDS=(
   "systemctl daemon-reload"
   "systemctl enable $SERVICE"
   "systemctl restart $SERVICE"
   "install -m 0644 $APP_DIR/current/$SERVICE.service /etc/systemd/system/$SERVICE.service"
   "journalctl -u $SERVICE -n 30 --no-pager"
+)
+# Stopping, starting and following the log of the service by hand.
+CONTROL_COMMANDS=(
+  "systemctl stop $SERVICE"
+  "systemctl start $SERVICE"
+  "journalctl -u $SERVICE -f -n 200 --no-pager"
 )
 
 # 1. The user shipdeck logs in as.
@@ -146,7 +153,7 @@ fi
 if [ "$MANAGER" = systemd ]; then
   rule="$DEPLOY_USER ALL=(root) NOPASSWD: "
   sep=""
-  for entry in "${SUDO_COMMANDS[@]}"; do
+  for entry in "${SUDO_COMMANDS[@]}" "${CONTROL_COMMANDS[@]}"; do
     tool=${entry%% *}
     path=$(command -v "$tool") || die "$tool is not installed"
     rule+="$sep$path ${entry#* }"
