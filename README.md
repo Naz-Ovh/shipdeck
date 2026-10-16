@@ -464,6 +464,9 @@ or map it once for the whole repository in `.vscode/settings.json`:
 { "yaml.schemas": { "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.5.0/deploy.schema.json": "**/deploy.yaml" } }
 ```
 
+The website serves the newest one at
+`https://shipdeck.naz.ovh/deploy.schema.json`.
+
 ### From 0.2
 
 shipdeck 0.3 refuses a 0.2 file and says where each key went:
@@ -682,11 +685,11 @@ another version in `Cargo.toml`. The scripts are in `scripts/lefthook/`.
 
 The config types in `crates/engine/src/config/mod.rs` are the schema: their
 doc comments become the editor descriptions, and the launch check walks the
-same schema. After changing them, regenerate the file (a test fails until
-you do):
+same schema. After changing them, regenerate the file and the website's
+copy in `docs/website/public/` (a test fails until you do):
 
 ```sh
-cargo run -q -p shipdeck -- --schema > deploy.schema.json
+just schema
 ```
 
 ### Releasing
@@ -694,7 +697,7 @@ cargo run -q -p shipdeck -- --schema > deploy.schema.json
 `server-setup.sh` is fetched, and editors fetch
 `deploy.schema.json`, at the tag `v<version>`, so every release needs its tag
 pushed. Bump `[workspace.package] version` in `Cargo.toml`, update the schema
-line in `examples/` and this README, regenerate `deploy.schema.json`, commit,
+line in `examples/` and this README, run `just schema`, commit,
 and push the tag:
 
 ```sh

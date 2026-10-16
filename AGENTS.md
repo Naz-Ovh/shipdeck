@@ -52,8 +52,9 @@ rolls back any release. Design and decisions: `docs/plan.md`. Usage: `README.md`
 - A config mistake is a `config::Problem` with the line it is on and a hint,
   never a bare string: shipdeck reports them all before it starts.
 - The config types are the schema. Every field needs a doc comment (editors
-  show it); after a change run `cargo run -q -p shipdeck -- --schema >
-  deploy.schema.json` (a test fails until you do).
+  show it); after a change run `just schema`, which writes
+  `deploy.schema.json` and the website's copy in `docs/website/public/`
+  (a test fails until you do).
 - Remote scripts are POSIX `sh`; they run through `sh -c`, whatever the login
   shell, after the variables the login shell's startup files export
   (`ssh::shell_env`, off with `ssh.shell_env: false` or `--no-shell-env`).
