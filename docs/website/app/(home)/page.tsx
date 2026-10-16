@@ -3,7 +3,7 @@ import { ArrowRight, Boxes, FileCheck2, KeyRound, Layers, RotateCcw, ServerCog }
 import { Terminal } from '@/components/home/terminal';
 import { CopyCommand } from '@/components/home/copy-command';
 import { PipelineSteps } from '@/components/pipeline-steps';
-import { author } from '@/lib/shared';
+import { appDescription, appName, author } from '@/lib/shared';
 import { shipdeckVersion } from '@/lib/version';
 
 const install = 'curl -LsSf https://shipdeck.naz.ovh/install.sh | sh';
@@ -62,11 +62,31 @@ const features = [
   },
 ];
 
+// Structured data for search engines: what shipdeck is and who made it.
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'SoftwareApplication',
+  name: appName,
+  description: appDescription,
+  applicationCategory: 'DeveloperApplication',
+  operatingSystem: 'Linux, macOS',
+  author: {
+    '@type': 'Person',
+    name: author.name,
+    url: author.url,
+    sameAs: [`https://github.com/${author.github}`, `https://x.com/${author.twitter}`],
+  },
+};
+
 export default function HomePage() {
   const version = shipdeckVersion();
 
   return (
     <main className="flex flex-1 flex-col">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify({ ...jsonLd, softwareVersion: version }).replace(/</g, '\\u003c') }}
+      />
       {/* hero */}
       <section className="relative overflow-hidden">
         <div
