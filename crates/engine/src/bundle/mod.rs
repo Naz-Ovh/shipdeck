@@ -174,8 +174,10 @@ pub fn pack(
             && on_server.get(&entry.path) == entry.sha256.as_ref()
     };
     let paths = entries.iter().map(|e| e.path.clone()).collect();
-    let is_file = |e: &&&Entry| !matches!(e.source, Source::Dir | Source::Link(_));
-    let files = entries.iter().filter(is_file).count();
+    let files = entries
+        .iter()
+        .filter(|e| !matches!(e.source, Source::Dir | Source::Link(_)))
+        .count();
     let input_bytes: u64 = entries.iter().map(|e| e.size).sum();
     let mut reuse: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
     let (mut reused, mut reused_bytes) = (0, 0);

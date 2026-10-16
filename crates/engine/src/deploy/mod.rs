@@ -470,7 +470,8 @@ impl<'a> Run<'a> {
             Err(err) => return self.stop(Step::Pack, err),
         };
         manifest.content = Some(fingerprint);
-        if let (Some(live), Some(_)) = (&facts.current, &facts.content)
+        // A live release from before fingerprints has none: always a change.
+        if let Some(live) = facts.current.as_deref()
             && facts.content == manifest.content
             && !self.deploy_unchanged(live).await
         {
