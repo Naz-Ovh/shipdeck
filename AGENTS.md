@@ -74,7 +74,7 @@ rolls back any release. Design and decisions: `docs/plan.md`. Usage: `README.md`
 - Tests and docs use neutral examples (`my-api`, `203.0.113.x`), never real
   hosts, IPs or project names.
 - `examples/<kind>/deploy.yaml` must keep parsing and start with the schema
-  line for this version (`config_test.rs` checks); a new field goes into the
+  line for this version (`schema_test.rs` checks); a new field goes into the
   README table and an example.
 - Release ids and the `current`/`releases`/`backups`/`shared` layout are a
   contract with servers already deployed to. Change them only on purpose.

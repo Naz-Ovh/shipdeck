@@ -772,7 +772,7 @@ git tag v0.5.0 && git push origin main v0.5.0
 ```
 
 `setup_test.rs` fails if `server-setup.sh` and `remote::sudo_commands` or
-`remote::control_commands` ever disagree, and `config_test.rs` fails if the
+`remote::control_commands` ever disagree, and `schema_test.rs` fails if the
 examples point at another version's schema. A change to `server-setup.sh`
 reaches servers only through a new release tag, since the command shipdeck
 shows is pinned to its own version's tag.
