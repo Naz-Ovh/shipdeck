@@ -35,7 +35,8 @@ rolls back any release. Design and decisions: `docs/plan.md`. Usage: `README.md`
   codes.
 - `bin/shipdeck/`: the flags (clap lives only here), the login, the config
   check, then hands over to the TUI or headless. `init`'s questions live
-  here too (`inquire`). The TUI and headless only
+  here too (`inquire`), and `man`, whose text is `bin/shipdeck/manual/`
+  (static data via `bin/shipdeck/build.rs`). The TUI and headless only
   show what the engine reports; neither depends on the other.
 
 ## Code
@@ -73,9 +74,13 @@ rolls back any release. Design and decisions: `docs/plan.md`. Usage: `README.md`
   the yml by hand.
 - Tests and docs use neutral examples (`my-api`, `203.0.113.x`), never real
   hosts, IPs or project names.
+- The manual (`bin/shipdeck/manual/`) is for people using shipdeck and the
+  agents helping them: setup, use, troubleshooting; no code internals. A
+  change in behaviour updates its page; `configs.yaml` must name exactly the
+  schema's properties (`man_test.rs` checks).
 - `examples/<kind>/deploy.yaml` must keep parsing and start with the schema
   line for this version (`schema_test.rs` checks); a new field goes into the
-  README table and an example.
+  README table, an example and `bin/shipdeck/manual/configs.yaml`.
 - Release ids and the `current`/`releases`/`backups`/`shared` layout are a
   contract with servers already deployed to. Change them only on purpose.
 - The exit codes in `shipdeck_headless::exit_code` are a contract with the scripts

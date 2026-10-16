@@ -3,7 +3,7 @@ resolver = "3"
 members = ["bin/shipdeck", "crates/engine", "crates/headless", "crates/tui"]
 
 [workspace.package]
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 publish = false
@@ -14,6 +14,7 @@ shipdeck-engine = { path = "crates/engine" }
 shipdeck-headless = { path = "crates/headless" }
 shipdeck-tui = { path = "crates/tui" }
 anyhow = "1.0.104"
+base16ct = { version = "1.0.0", features = ["alloc"] }
 chrono = "0.4.45"
 clap = { version = "4.6.7", features = ["derive"] }
 crossterm = { version = "0.29.0", features = ["event-stream"] }
@@ -28,11 +29,11 @@ russh-sftp = "3.0.1"
 schemars = "1.2.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-sha2 = "0.10.9"
+sha2 = "0.11.1"
 tar = "0.4.46"
 tokio = { version = "1.53.3", features = ["full"] }
 toml = "1.1.8"
-zstd = { version = "0.14.2", features = ["zstdmt"] }
+zstd = { version = "0.14.3", features = ["zstdmt"] }
 
 [profile.release]
 strip = true

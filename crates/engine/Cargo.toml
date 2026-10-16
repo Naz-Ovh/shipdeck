@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+base16ct.workspace = true
 chrono.workspace = true
 fast-glob.workspace = true
 granit-parser.workspace = true

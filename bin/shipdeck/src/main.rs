@@ -18,6 +18,7 @@ use shipdeck_engine::ssh::{Login, Pool, Question};
 use shipdeck_headless::{Headless, OnFailure};
 
 mod init;
+mod man;
 
 #[cfg(target_env = "musl")]
 #[global_allocator]
@@ -40,7 +41,8 @@ const PASSPHRASE_ENV: &str = "SHIPDECK_KEY_PASSPHRASE";
                   SHIPDECK_PASSWORD; else the host's ~/.ssh/config key, then the TUI asks\n\
                   for the password. SHIPDECK_KEY_PASSPHRASE unlocks an encrypted key.\n\
                   deploy, rollback and releases run without the TUI and ask nothing.\n\
-                  init creates a deployable folder; it asks for what its flags leave out.",
+                  init creates a deployable folder; it asks for what its flags leave out.\n\
+                  man is the full manual: `shipdeck man index`, `man configs`, `man details <KEY>...`.",
     args_conflicts_with_subcommands = true,
     subcommand_negates_reqs = true
 )]
@@ -85,6 +87,8 @@ enum Command {
     Init(InitArgs),
     #[command(flatten)]
     Server(ServerCommand),
+    /// The manual, for people and coding agents: `man index` (topics), `man configs` (deploy.yaml), `man details <KEY>...`
+    Man(man::ManArgs),
 }
 
 /// The commands that log in to a server.
@@ -235,6 +239,7 @@ async fn main() -> Result<ExitCode> {
     }
     let command = match cli.command {
         Some(Command::Init(args)) => return run_init(args),
+        Some(Command::Man(args)) => return Ok(man::run(args)),
         Some(Command::Server(command)) => command,
         None => {
             let root = cli

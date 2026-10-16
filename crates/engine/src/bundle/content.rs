@@ -84,7 +84,7 @@ impl Contents {
             hash.update(b"\0");
         }
         field(&mut hash, b"y", sha256(yaml.as_bytes()).as_bytes());
-        format!("sha256:{:x}", hash.finalize())
+        format!("sha256:{}", hex(hash))
     }
 }
 
@@ -139,22 +139,27 @@ pub(super) fn hash_all(entries: &mut [Entry], mut progress: impl FnMut(u64, u64)
 }
 
 pub(super) fn sha256(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    base16ct::lower::encode_string(&Sha256::digest(bytes))
+}
+
+/// The digest so far, as lowercase hex.
+pub(super) fn hex(hash: Sha256) -> String {
+    base16ct::lower::encode_string(&hash.finalize())
 }
 
 /// Reads `path` through once, without holding it in memory.
 fn sha256_file(path: &Path, on_read: impl FnMut(u64)) -> Result<String> {
     let file = std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
-    let mut hash = Sha256::new();
-    io::copy(
-        &mut Counting {
+    let mut reader = Counting {
+        inner: Hashing {
             inner: file,
-            on_read,
+            hash: Sha256::new(),
         },
-        &mut hash,
-    )
-    .with_context(|| format!("reading {}", path.display()))?;
-    Ok(format!("{:x}", hash.finalize()))
+        on_read,
+    };
+    io::copy(&mut reader, &mut io::sink())
+        .with_context(|| format!("reading {}", path.display()))?;
+    Ok(hex(reader.inner.hash))
 }
 
 /// Hashes what is read through it, so packing can tell a file changed

@@ -29,7 +29,7 @@ field is under [deploy.yaml](#deployyaml).
 ```sh
 # Linux and macOS: the latest release, or the one -V names
 curl -LsSf https://shipdeck.naz.ovh/install.sh | sh
-curl -LsSf https://shipdeck.naz.ovh/install.sh | sh -s -- -V=v0.5.0
+curl -LsSf https://shipdeck.naz.ovh/install.sh | sh -s -- -V=v0.6.0
 
 # from source
 cargo install --git https://github.com/Naz-Ovh/shipdeck shipdeck
@@ -56,6 +56,19 @@ shipdeck --schema > deploy.schema.json    # the JSON Schema, for offline editors
 | `--no-shell-env` | Server commands run without the login shell's startup files, on every server (see [Tools on the server](#tools-on-the-server)). |
 | `--password <value>` | Password. It lands in your shell history; in zsh with `HIST_IGNORE_SPACE`, start the command with a space. `SHIPDECK_PASSWORD` does the same without the history. |
 | neither | The host's `IdentityFile` from `~/.ssh/config` if it has one; if there is none or the server refuses it, the TUI asks for the password once per `user@host` and keeps it in memory for the run. |
+
+### The manual
+
+The whole manual is built into the binary, for you or a coding agent:
+
+```sh
+shipdeck man index                                   # every topic as `key: brief`
+shipdeck man configs                                 # every deploy.yaml property, as a YAML tree
+shipdeck man details agents step.health service.env  # topics and properties in full
+```
+
+`details` takes several keys, apart or comma-separated, and prints each in its
+own `<topic key="...">` or `<config key="...">` block, in the order asked.
 
 ### Start a deployable
 
@@ -169,7 +182,7 @@ mistake, it does not start, and prints every problem in every file at once
 ## deploy.yaml
 
 ```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.5.0/deploy.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.6.0/deploy.schema.json
 name: Web (prod)
 project: ../../../web                       # your source; local commands run here
 ssh:
@@ -498,13 +511,13 @@ same descriptions as above, for any editor using the YAML language server
 `deploy.yaml` with:
 
 ```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.5.0/deploy.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.6.0/deploy.schema.json
 ```
 
 or map it once for the whole repository in `.vscode/settings.json`:
 
 ```json
-{ "yaml.schemas": { "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.5.0/deploy.schema.json": "**/deploy.yaml" } }
+{ "yaml.schemas": { "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.6.0/deploy.schema.json": "**/deploy.yaml" } }
 ```
 
 The website serves the newest one at
@@ -652,7 +665,7 @@ applies.
 root, with your values:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.5.0/server-setup.sh \
+curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.6.0/server-setup.sh \
   | bash -s -- --user deploy --dir /opt/my-api --service my-api \
       --key "$(cat ~/.ssh/id_ed25519.pub)"     # --manager pm2 for a PM2 app
 ```
@@ -768,7 +781,7 @@ line in `examples/` and this README, run `just schema`, commit,
 and push the tag:
 
 ```sh
-git tag v0.5.0 && git push origin main v0.5.0
+git tag v0.6.0 && git push origin main v0.6.0
 ```
 
 `setup_test.rs` fails if `server-setup.sh` and `remote::sudo_commands` or

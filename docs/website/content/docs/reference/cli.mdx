@@ -3,18 +3,21 @@ title: Command line
 description: Every argument and flag of the shipdeck command, its errors, exit codes and what it prints.
 ---
 
-You point shipdeck at a deploy root, it checks every `deploy.yaml` under it, and then opens the terminal UI. For scripts and CI, the `deploy`, `rollback` and `releases` commands do the same work [without the UI](#without-the-ui).
+You point shipdeck at a deploy root, it checks every `deploy.yaml` under it, and then opens the terminal UI. For scripts and CI, the `deploy`, `rollback` and `releases` commands do the same work [without the UI](#without-the-ui), and `man` prints [the manual](#the-manual).
 
 ## Synopsis
 
 ```txt
 shipdeck [OPTIONS] <DEPLOY_ROOT>
 shipdeck init     <DEPLOY_ROOT> [NAME] [--preset <PRESET>] [--manager systemd|pm2] [--host <HOST>] [--user <USER>] [--project <PATH>]
-shipdeck deploy   <DEPLOY_ROOT> <NAME>... [--on-failure rollback|keep] [--trust-new-host]
+shipdeck deploy   <DEPLOY_ROOT> <NAME>... [--on-failure rollback|keep] [--allow-unchanged] [--trust-new-host]
 shipdeck rollback <DEPLOY_ROOT> <NAME> --to <RELEASE> [--trust-new-host]
 shipdeck releases <DEPLOY_ROOT> <NAME> [--trust-new-host]
+shipdeck man      [index | configs | details <KEY>...]
 shipdeck --schema
 ```
+
+`deploy`, `rollback` and `releases` take the same login options as the screen: `--key`, `--key-text`, `--password` and `--no-shell-env`.
 
 ```sh
 shipdeck ./scripts/deploy --key ~/.ssh/id_ed25519
@@ -46,13 +49,29 @@ Log in with this private key file, and only this key.
 | --- | --- |
 | Value | a path to a private key file |
 | Default | none: the `IdentityFile` of the host's `~/.ssh/config` entry, then a password prompt |
-| Conflicts with | `--password` |
+| Conflicts with | `--key-text`, `--password` |
 | Error | `Error: the key file <path> does not exist` |
 
 shipdeck expands a leading `~` itself, so `--key=~/.ssh/id_ed25519` also works in zsh, where the shell does not expand it after `=`. If the key is encrypted, the screen asks for its passphrase. If the server refuses the key, the deploy stops with `<host> refused the key <path> for user <user>`; there is no fallback to a password.
 
 ```sh
 shipdeck ./scripts/deploy --key ~/.ssh/id_deploy
+```
+
+### `--key-text <TEXT>`
+
+Log in with this private key's text, such as a CI secret.
+
+| | |
+| --- | --- |
+| Value | the key file's text, line breaks included |
+| Default | `SHIPDECK_SSH_KEY`, if it is set and not empty |
+| Conflicts with | `--key`, `--password` |
+
+The text shows in `ps` while shipdeck runs; `SHIPDECK_SSH_KEY` does not, so prefer the variable in CI. An encrypted key takes its passphrase from `SHIPDECK_KEY_PASSPHRASE`, or the screen asks for it. If the server refuses the key, the deploy stops with `<host> refused the key text for user <user>`.
+
+```sh
+SHIPDECK_SSH_KEY="$DEPLOY_KEY" shipdeck deploy ./scripts/deploy my-api   # DEPLOY_KEY: a CI secret
 ```
 
 ### `--password <PASSWORD>`
@@ -63,7 +82,7 @@ Log in with this password.
 | --- | --- |
 | Value | the password, as text |
 | Default | `SHIPDECK_PASSWORD`, if it is set and not empty |
-| Conflicts with | `--key` |
+| Conflicts with | `--key`, `--key-text` |
 
 The password lands in your shell history; `SHIPDECK_PASSWORD` does not. In zsh with `HIST_IGNORE_SPACE` set, start the command with a space to keep it out:
 
@@ -73,13 +92,25 @@ The password lands in your shell history; `SHIPDECK_PASSWORD` does not. In zsh w
 
 If the server refuses it, the deploy stops with `<host> refused the password for user <user>`.
 
-With neither `--key` nor `--password`, shipdeck logs in the way `ssh` does: the key named by `IdentityFile` for the host in `~/.ssh/config` first, then, if there is none or it is refused, a password prompt in the screen. See [SSH and login](/docs/guides/ssh).
+The first login found wins, for every server of the run: `--key`, `--key-text`, `--password`, `SHIPDECK_SSH_KEY`, `SHIPDECK_PASSWORD`. With none of them, shipdeck logs in the way `ssh` does: the key named by `IdentityFile` for the host in `~/.ssh/config` first, then, if there is none or it is refused, a password prompt in the screen. See [SSH and login](/docs/guides/ssh).
 
 | Flags | Header shows |
 | --- | --- |
 | `--key P` | `login key P` |
+| `--key-text T` or `SHIPDECK_SSH_KEY` | `login key text` |
 | `--password X` or `SHIPDECK_PASSWORD` | `login password` |
-| neither | `login ~/.ssh/config key, else a password` |
+| none | `login ~/.ssh/config key, else a password` |
+
+### `--no-shell-env`
+
+Run server commands without the login shell's startup files, on every server of the run.
+
+| | |
+| --- | --- |
+| Default | off: each connection loads what `~/.bashrc`, `~/.zshrc` and the like export (nvm, pyenv, a longer `PATH`) |
+| Per server | `ssh.shell_env: false` in its `deploy.yaml` |
+
+Loading the startup files costs a second or two per connection. Turn it off when a startup file expects a person (it starts tmux or asks a question), or when server commands should see the plain SSH environment; then name tools by absolute path or install them system-wide.
 
 ### `--schema`
 
@@ -89,22 +120,24 @@ Print the JSON Schema of `deploy.yaml` to stdout and exit with `0`. It runs befo
 shipdeck --schema > deploy.schema.json
 ```
 
-The output starts with `"$id": "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json"`.
+The output starts with `"$id": "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v<version>/deploy.schema.json"`, the version you run.
 
 ### `-h`, `--help`
 
 Print the help and exit:
 
 ```txt
-Build locally, deploy over SSH as a systemd service, roll back any release.
+Build locally, deploy over SSH as a systemd service or PM2 app, roll back any release.
 
 Usage: shipdeck [OPTIONS] [DEPLOY_ROOT]
        shipdeck <COMMAND>
 
 Commands:
+  init      Create a deployable folder with a deploy.yaml from a preset; asks for what the flags leave out
   deploy    Build and deploy one or more deployables, one after another, without the TUI
   rollback  Switch a deployable to a release already on the server, without the TUI
   releases  List the releases on the server, newest first
+  man       The manual, for people and coding agents: `man index` (topics), `man configs` (deploy.yaml), `man details <KEY>...`
   help      Print this message or the help of the given subcommand(s)
 
 Arguments:
@@ -112,24 +145,29 @@ Arguments:
 
 Options:
       --key <PATH>           Log in with this private key file
+      --key-text <TEXT>      Log in with this private key's text (it shows in `ps`; SHIPDECK_SSH_KEY does not)
       --password <PASSWORD>  Log in with this password (it lands in your shell history; SHIPDECK_PASSWORD does not)
+      --no-shell-env         Run server commands without the login shell's startup files (~/.bashrc, ~/.zshrc, ...), on every server
       --schema               Print the JSON Schema of deploy.yaml, for editor completion
   -h, --help                 Print help
   -V, --version              Print version
 
 Each folder under DEPLOY_ROOT with a deploy.yaml is one deployable.
-With neither --key nor --password (nor SHIPDECK_PASSWORD), the host's
-~/.ssh/config key is tried, then the TUI asks for the password.
+Login, first found: --key, --key-text, --password, SHIPDECK_SSH_KEY,
+SHIPDECK_PASSWORD; else the host's ~/.ssh/config key, then the TUI asks
+for the password. SHIPDECK_KEY_PASSPHRASE unlocks an encrypted key.
 deploy, rollback and releases run without the TUI and ask nothing.
+init creates a deployable folder; it asks for what its flags leave out.
+man is the full manual: `shipdeck man index`, `man configs`, `man details <KEY>...`.
 ```
 
 `shipdeck help deploy` (or `shipdeck deploy --help`) shows each command's own flags.
 
-The help shows `[DEPLOY_ROOT]` in brackets because it is optional when `--schema` is given.
+The help shows `[DEPLOY_ROOT]` in brackets because it is optional when `--schema` or a command is given.
 
 ### `-V`, `--version`
 
-Print `shipdeck 0.3.0` and exit.
+Print `shipdeck <version>`, such as `shipdeck 0.6.0`, and exit.
 
 ## Errors before the screen opens
 
@@ -170,7 +208,7 @@ Each file starts with a heading of its folder and file name. The path after `┌
 | --- | --- |
 | `0` | Normal quit, or `--schema`, `--help`, `--version`; for a command, the release is live |
 | `1` | Bad deploy root, missing key file, problems in a `deploy.yaml`, or a terminal error; for a command, also an unknown name or a failure before the live release changed |
-| `2` | Wrong usage: a missing argument or conflicting flags |
+| `2` | Wrong usage: a missing argument or conflicting flags, or a key `man details` does not know |
 | `3` | A command only: the new release failed and the previous one is live again |
 | `4` | A command only: the new release failed and stays live (`--on-failure keep`) |
 | `5` | A command only: the new release failed and putting the old one back failed too |
@@ -283,6 +321,41 @@ v0.3.0-9f8e7d6-20261012.091000  0.3.0    9f8e7d6  2026-10-12 09:10  31.0 MiB  un
 | Roll back? | `--on-failure`. |
 | Nothing changed: deploy anyway? | No, unless `--allow-unchanged`. |
 | Trust a server seen for the first time? | No, and the command stops with the key's fingerprint. `--trust-new-host` trusts it and saves it to `~/.ssh/known_hosts`. A changed key is always refused. |
-| A password or a key passphrase? | Never asked; the login fails with a hint. Use `--key` with a key without a passphrase, `--password` or `SHIPDECK_PASSWORD`. |
+| A password or a key passphrase? | Never asked; the login fails with a hint. Use `--key` or `SHIPDECK_SSH_KEY` (with `SHIPDECK_KEY_PASSPHRASE` for an encrypted key), or `SHIPDECK_PASSWORD`. |
 
 The first Ctrl-C only warns, since stopping can leave the server between two releases; a second one stops at once with exit code `130`.
+
+## The manual
+
+### `man [index | configs | details <KEY>...]`
+
+The whole manual, built into the binary, for you and for the coding agent helping you. It matches the version you run, needs no network and reads no file.
+
+| Command | Prints |
+| --- | --- |
+| `shipdeck man` or `man index` | every topic as `key: brief`, by section |
+| `shipdeck man configs` | every `deploy.yaml` property as a YAML tree, with its type, default and brief |
+| `shipdeck man details <KEY>...` | topics and properties in full |
+
+A key is a topic key from the index (`quickstart`, `step.health`, `exit-codes`) or a property path from `man configs` (`service.env`, `pipeline.health.url`). Give several, apart or comma-separated:
+
+```sh
+shipdeck man details agents cli.deploy
+shipdeck man details "agents, cli.deploy, service.start"
+```
+
+Each result is its own block, in the order asked, so an agent can tell them apart:
+
+```txt
+<topic key="step.health" brief="...">
+the page
+see: related keys
+</topic>
+<config key="service.env" type="map of text, default {}" brief="...">
+the details
+see: related keys
+</config>
+For more, check out https://forgedoc.naz.ovh/llms.txt
+```
+
+A key it does not know prints nothing on stdout: stderr names it with the closest keys, and the exit code is `2`.

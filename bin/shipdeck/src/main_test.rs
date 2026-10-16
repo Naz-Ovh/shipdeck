@@ -151,3 +151,22 @@ fn init_asks_for_what_is_left_out_and_logs_in_nowhere() {
     assert!(parse(&["init", "./deploy", "--preset", "go"]).is_err());
     assert!(parse(&["init", "./deploy", "--key", "k"]).is_err());
 }
+
+#[test]
+fn man_needs_no_deploy_root() {
+    for args in [
+        &["man"][..],
+        &["man", "index"],
+        &["man", "configs"],
+        &["man", "details", "agents", "service.env"],
+    ] {
+        let cli = parse(args).unwrap();
+        assert!(matches!(cli.command, Some(Command::Man(_))), "{args:?}");
+        assert!(cli.root.is_none());
+    }
+}
+
+#[test]
+fn man_details_needs_a_key() {
+    assert!(parse(&["man", "details"]).is_err());
+}

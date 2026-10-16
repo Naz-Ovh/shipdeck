@@ -16,6 +16,13 @@ clap.workspace = true
 inquire.workspace = true
 tokio.workspace = true
 
+# build.rs reads the manual's YAML once, at build time
+[build-dependencies]
+granit-parser.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
 # musl's own malloc is the main reason musl builds run slower than gnu ones;
 # gnu and macOS keep their system allocator
 [target.'cfg(target_env = "musl")'.dependencies]

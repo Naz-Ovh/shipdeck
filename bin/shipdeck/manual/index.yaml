@@ -1,0 +1,80 @@
+# The manual's topics, in the order `shipdeck man index` prints them. Each
+# key's text is in details.yaml; build.rs refuses a key missing from either.
+# deploy.yaml's properties are in configs.yaml, not here.
+#
+# key:   what `shipdeck man details <KEY>` takes; lowercase, `.` and `-`
+# brief: a few words saying what the page answers
+
+- section: Start here
+  topics:
+    - { key: overview, brief: "what shipdeck is; the deploy flow; terms" }
+    - { key: quickstart, brief: "first deploy from nothing" }
+    - { key: agents, brief: "rules and workflow for AI agents and scripts" }
+    - { key: install, brief: "install, update, platforms" }
+
+- section: Commands
+  topics:
+    - { key: cli, brief: "every command, flag and env variable" }
+    - { key: cli.tui, brief: "the interactive TUI - screens, keys, dialogs" }
+    - { key: cli.deploy, brief: "`shipdeck deploy`: headless deploy" }
+    - { key: cli.rollback, brief: "`shipdeck rollback`: headless rollback" }
+    - { key: cli.releases, brief: "`shipdeck releases`: list releases (read-only)" }
+    - { key: cli.init, brief: "`shipdeck init`: new deployable from a preset" }
+    - { key: cli.schema, brief: "`--schema` and editor completion" }
+    - { key: cli.man, brief: "`shipdeck man`: this manual" }
+    - { key: exit-codes, brief: "exit codes and what to do next" }
+
+- section: Login and SSH
+  topics:
+    - { key: login, brief: "keys, passwords, passphrases, their order" }
+    - { key: hosts, brief: "~/.ssh/config aliases, host keys, sessions" }
+    - { key: shell-env, brief: "server commands load ~/.bashrc (nvm, PATH)" }
+
+- section: deploy.yaml (properties - shipdeck man configs)
+  topics:
+    - { key: config, brief: "deploy root, discovery, the launch check, YAML notes" }
+    - { key: config.files, brief: "file patterns: sources, globs, `!`, never-shipped" }
+    - { key: config.commands, brief: "run/check, local/server: where and how commands run" }
+    - { key: config.variables, brief: "SHIPDECK_* variables and command environments" }
+    - { key: config.problems, brief: "launch errors, common fixes, moved keys" }
+    - { key: config.template, brief: "service.template and its placeholders" }
+
+- section: Pipeline
+  topics:
+    - { key: steps, brief: "all steps, what each does, failure behaviour" }
+    - { key: step.preflight, brief: "checks before anything is built" }
+    - { key: step.build, brief: "release naming, build, binary checks" }
+    - { key: step.pack, brief: "hashing, fingerprint, archive" }
+    - { key: step.upload, brief: "upload and unpack, sha256 verify" }
+    - { key: step.setup, brief: "server commands in the new release" }
+    - { key: step.backup, brief: "what goes into backups/<id>.tar.zst" }
+    - { key: step.switch, brief: "switch current, install unit, restart" }
+    - { key: step.health, brief: "probes, crash detection, checks, timeout" }
+    - { key: step.done, brief: "tidying old releases, post-live commands" }
+    - { key: step.failed, brief: "local commands after any failure" }
+
+- section: Releases
+  topics:
+    - { key: releases, brief: "ids, release.json, server layout, retention" }
+    - { key: delta, brief: "only changed files are uploaded" }
+    - { key: unchanged, brief: "fingerprint; nothing-changed handling (exit 6)" }
+    - { key: rollback, brief: "rollback after failure, by hand, from backup" }
+    - { key: service-control, brief: "TUI :logs :restart :stop :start" }
+
+- section: Service managers
+  topics:
+    - { key: systemd, brief: "the unit, hardening, ExecStart resolution" }
+    - { key: pm2, brief: "PM2 app file, ecosystem, reload, health" }
+
+- section: Server
+  topics:
+    - { key: server, brief: "OS, tools, disk, CPU/glibc, the user" }
+    - { key: permissions, brief: "required sudo rights and why" }
+    - { key: server-setup, brief: "server-setup.sh one-time root script" }
+
+- section: Help
+  topics:
+    - { key: presets, brief: "what each init preset writes" }
+    - { key: examples, brief: "complete deploy.yaml files" }
+    - { key: recipes, brief: "migrations, secrets, CI, monorepo, cross-compile" }
+    - { key: troubleshooting, brief: "error messages and fixes" }

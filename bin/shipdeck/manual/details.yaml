@@ -1,0 +1,1786 @@
+# The text of every topic in index.yaml, under the same key.
+#
+# see:  optional, related topic keys, printed at the end
+# text: the page; plain text, at most 100 characters a line, no tabs
+#
+# For people using shipdeck and the agents helping them: what it does, how
+# to use it, why it behaves as it does, and what to do when it fails. Full
+# sentences, one fact once. Properties are documented in configs.yaml; name
+# them by path instead of repeating them. A change in behaviour changes the
+# page that describes it.
+
+overview:
+  see: [quickstart, agents, steps, releases]
+  text: |
+    shipdeck builds an app on your own machine, ships it to a Linux server over SSH, and runs it
+    there as a systemd service or a PM2 app. Every deploy is kept on the server as its own
+    release, so any earlier release can go live again in seconds.
+
+    It exists for servers too small to build on. Whatever the language (Rust, Go, Node.js, Python,
+    Java, Dart, Bun), the build happens on your PC and only the files you list travel. Each step
+    of a deploy can run your own commands, and deploy.yaml says plainly which run on your PC and
+    which on the server.
+
+    Terms used everywhere in this manual:
+    - deploy root: a folder you pass on the command line, such as scripts/deploy. Each of its
+      direct subfolders that holds a deploy.yaml is one deployable.
+    - deployable: one such subfolder. Its folder name is its handle on the command line
+      (`shipdeck deploy scripts/deploy my-api`).
+    - deploy.yaml: what one deployable is: name, project, ssh, service and pipeline. Every
+      property is listed by `shipdeck man configs`.
+    - project: your source folder, relative to deploy.yaml. Local commands run there.
+    - release: the result of one deploy, with an id such as v1.4.0-ab12cd3-20261015.120000
+      (version, git commit, UTC build time). It lives in <service.dir>/releases/<id>/ and carries
+      release.json and its own service file.
+    - current: the symlink <service.dir>/current, pointing at the live release. systemd and PM2
+      only ever use current/..., so going live or rolling back is one rename plus a restart.
+
+    One deploy runs eleven steps: preflight, build, pack, upload, unpack, setup, backup, switch,
+    restart, health and done, plus failed when any step fails (see steps). What a failure does
+    depends on where it happens:
+    - before the switch (preflight to backup): the new release is removed; the live one never
+      stopped serving;
+    - in switch, restart or health: the previous release is put back, after asking by default;
+    - in done: only a warning; the new release stays live.
+    The only downtime is the restart, about 1-2 seconds for most apps.
+
+    There are two ways to drive it, over the same engine:
+    - the TUI, `shipdeck <ROOT>`: interactive, shows every step live and asks before anything
+      risky;
+    - headless commands for scripts, CI and agents: `deploy`, `rollback` and `releases`. They
+      print plain lines, never wait for an answer, and end with an exit code that says what
+      happened.
+
+    What shipdeck does not do: install runtimes on the server (preflight checks they are there),
+    deploy one deployable to several hosts (make one deployable per host), go through jump hosts,
+    or store logins in deploy.yaml.
+
+quickstart:
+  see: [cli.init, server, permissions, cli.deploy, rollback]
+  text: |
+    From nothing to a live app. The example deploys a project to the server `prod`, an alias in
+    ~/.ssh/config or an address such as 203.0.113.10.
+
+    1. Install shipdeck on your PC:
+         curl -LsSf https://shipdeck.naz.ovh/install.sh | sh
+         shipdeck --version
+
+    2. Make sure you can log in. shipdeck logs in like ssh, so `ssh deploy@prod true` should work
+       without questions. It uses the host's IdentityFile from ~/.ssh/config on its own; otherwise
+       pass --key, or let the TUI ask for a password. It does not use ssh-agent (see login).
+
+    3. Check the server has what a deploy needs: Linux with systemd (or PM2), tar, zstd and
+       sha256sum (`apt install tar zstd coreutils`), and your app's runtime (node, java,
+       python3). As root everything else just works. For a dedicated deploy user, run
+       server-setup.sh once as root (see server-setup); preflight names anything missing.
+
+    4. Create the deployable, inside your repository:
+         mkdir -p scripts/deploy
+         shipdeck init scripts/deploy my-api --preset rust --host prod --user deploy --project .
+       This writes scripts/deploy/my-api/deploy.yaml, an empty .env and a .gitignore that keeps
+       .env out of git. A preset is a starting point: check its build command, the binary or
+       files it ships, and service.start against your project. Put the app's secrets in .env.
+
+    5. Check the config and the login without changing anything:
+         shipdeck releases scripts/deploy my-api
+       Every deploy.yaml under the root is checked first; a mistake prints every problem with
+       its line and stops (exit 1). On a new server it ends with "no releases on the server yet".
+
+    6. Deploy, headless or in the TUI:
+         shipdeck deploy scripts/deploy my-api       # exit code 0 = the release is live
+         shipdeck scripts/deploy                     # select my-api, press Enter, then y
+       The first deploy creates service.dir, installs the service and starts it. On the first
+       connection the TUI asks to trust the server's host key; headless runs need
+       --trust-new-host once instead.
+
+    7. Deploy again whenever you like; only changed files are uploaded. To go back:
+         shipdeck releases scripts/deploy my-api
+         shipdeck rollback scripts/deploy my-api --to <id from the list>
+       In the TUI: select the deployable, press r, select a release, press Enter.
+
+    8. Commit deploy.yaml and .gitignore. Never commit .env; after a fresh clone, copy it back.
+
+agents:
+  see: [cli.deploy, exit-codes, unchanged, troubleshooting, config.problems]
+  text: |
+    How an AI agent (or a script) should drive shipdeck: use the headless commands, read the exit
+    code, and never guess a flag or a field.
+
+    Learn before acting:
+    - `shipdeck man index` lists the topics, `shipdeck man configs` every deploy.yaml property,
+      `shipdeck man details <key>...` prints any of them in full.
+    - Find the deploy root: the folder whose subfolders hold deploy.yaml files, often
+      scripts/deploy or deploy. Each subfolder is one deployable; its folder name is its NAME.
+    - Read the deployable's deploy.yaml before changing it; `shipdeck --schema` gives the exact
+      schema this binary accepts.
+
+    Commands that are safe for an agent, because they never prompt:
+      shipdeck releases <ROOT> <NAME>            read-only: checks every config, logs in, lists
+      shipdeck deploy <ROOT> <NAME>...           builds and deploys; rolls back on failure
+      shipdeck rollback <ROOT> <NAME> --to <ID>  makes a release already on the server live
+      shipdeck init <ROOT> <NAME> --preset P --host H [--user U] [--project DIR]
+      shipdeck --schema, shipdeck man ...        no login at all
+    Progress goes to stderr as plain lines; the releases table goes to stdout. When stderr is not
+    a terminal, or NO_COLOR is set, there are no colour codes.
+
+    Never do these without the user saying so:
+    - Run `shipdeck <ROOT>` alone. That is the interactive TUI; it waits for keys forever.
+    - Pass --trust-new-host, or edit ~/.ssh/known_hosts. Trusting an unknown host key is the
+      user's decision. A changed host key is a security stop, never something to work around.
+    - Pass --allow-unchanged to get past exit code 6. Exit 6 means the server already runs
+      exactly this release; a duplicate is only useful to re-run setup.
+    - Edit or delete files under service.dir on the server, or touch the `current` link. Deploy
+      again or roll back instead.
+    - Commit .env, or put a password on a command line that ends up in a log.
+
+    A good loop:
+    1. Edit deploy.yaml.
+    2. Validate with `shipdeck releases <ROOT> <NAME>`. A config mistake exits 1 and prints every
+       problem as file:line:column with a hint; fix them all at once.
+    3. Deploy with `shipdeck deploy <ROOT> <NAME>` and act on the exit code:
+       0    the release is live; done.
+       1    it failed before the live release changed. Read the `✘` lines, fix, deploy again.
+       3    it failed after going live and the previous release is back. Read the service log
+            lines printed after the error (crash reason), fix, deploy again.
+       4    it failed and was kept live (--on-failure keep). Inspect, then deploy or roll back.
+       5    it failed and the rollback failed too. Stop and tell the user: the service may be down.
+       6    nothing changed since the live release; nothing to do.
+       130  interrupted. Run `shipdeck releases` to see what is live before anything else.
+
+    Reading the output on stderr, by the mark at the start of each line:
+      ━━ a heading             › a command shipdeck runs (yours or its own), before it runs
+      two spaces: that command's output                    ℹ information
+      ✔ a step or check passed   ▲ a warning   ✘ an error   – a skipped step
+      … progress of a long step, every 5 seconds
+    When a step fails, `✘ <Step>` is followed by the full error. After a failed switch, restart or
+    health check, the service's last 30 log lines follow too: that is usually where the cause is.
+    The last line sums up the run, such as `✔ My API (prod): v1.4.0-ab12cd3-20261015.120000 is
+    live (41s)`.
+
+install:
+  see: [quickstart]
+  text: |
+    shipdeck is one binary for your PC. Nothing of shipdeck is installed on the server.
+
+    Install script, for Linux and macOS:
+      curl -LsSf https://shipdeck.naz.ovh/install.sh | sh                       # latest
+      curl -LsSf https://shipdeck.naz.ovh/install.sh | sh -s -- -V=v<version>   # one release
+    It installs to ~/.local/bin; add that to PATH if your shell does not have it. On Linux it
+    picks the gnu build when the system has glibc 2.28 or newer, and a static musl build otherwise
+    (Alpine, older distributions). Builds exist for x86_64 and aarch64 Linux and both macOS
+    architectures.
+
+    From source, with a stable Rust toolchain (1.88 or newer):
+      cargo install --git https://github.com/Naz-Ovh/shipdeck shipdeck
+
+    Windows is not supported (shipdeck relies on Unix file modes and sh); WSL works.
+
+    Updating: run the install script again. Then:
+    - update the `# yaml-language-server: $schema=...` line of each deploy.yaml to the new tag, so
+      editors complete the new version's fields;
+    - read the release notes. If a release changes the sudo rule, run server-setup.sh again on
+      the servers that use it; shipdeck also names the command when a right is missing.
+
+cli:
+  see: [login, exit-codes, cli.tui, cli.deploy]
+  text: |
+    Every command and flag. `shipdeck --help` and `shipdeck <COMMAND> --help` print the same from
+    the binary.
+
+    Commands:
+      shipdeck <ROOT> [LOGIN] [--no-shell-env]                the TUI (interactive)
+      shipdeck deploy <ROOT> <NAME>... [--on-failure rollback|keep] [--allow-unchanged] [SSH]
+      shipdeck rollback <ROOT> <NAME> --to <RELEASE> [SSH]
+      shipdeck releases <ROOT> <NAME> [SSH]
+      shipdeck init <ROOT> [NAME] [--preset P] [--manager systemd|pm2] [--host H] [--user U]
+                    [--project PATH]
+      shipdeck --schema                                       the JSON Schema of deploy.yaml
+      shipdeck man [index | configs | details <KEY>...]       this manual
+      shipdeck --version | --help
+    Here SSH means the LOGIN flags plus --no-shell-env and --trust-new-host. Flags go after the
+    command: `shipdeck deploy ./deploy my-api --key ~/.ssh/deploy`.
+
+    NAME is a deployable's folder name under ROOT, or the value of its `name` field. Folder names
+    are tried first; a `name` shared by two deployables must be given by folder.
+
+    Login flags (only one of them):
+      --key <PATH>        a private key file; `~` is expanded, also in --key=~/...
+      --key-text <TEXT>   a private key's text; it shows in `ps`, so prefer SHIPDECK_SSH_KEY
+      --password <VALUE>  a password; it lands in your shell history, so prefer SHIPDECK_PASSWORD
+    With none of them: the host's IdentityFile from ~/.ssh/config, then a password asked in the
+    TUI. Headless runs never ask. See login for the full order.
+
+    Other flags:
+      --no-shell-env      server commands skip the login shell's startup files on every server
+                          of this run (see shell-env)
+      --trust-new-host    trust and record the host key of a server not yet in
+                          ~/.ssh/known_hosts; a changed key is still refused
+      --on-failure        deploy: what a failure after the switch does. rollback (default) puts
+                          the previous release back at once; keep leaves the failed one live.
+                          Overrides pipeline.failed.rollback
+      --allow-unchanged   deploy: deploy even when nothing changed since the live release;
+                          without it such a deploy stops with exit code 6
+      --to <RELEASE>      rollback: the release id to make live, as `releases` prints it
+
+    Environment variables:
+      SHIPDECK_SSH_KEY         a private key's text (a CI secret), kept out of `ps` and logs
+      SHIPDECK_PASSWORD        the password, kept out of the shell history
+      SHIPDECK_KEY_PASSPHRASE  the passphrase of an encrypted key, so nothing is asked
+      NO_COLOR                 any value turns colour off
+    Empty values count as unset.
+
+    Every command that takes ROOT reads every deploy.yaml under it first, not just the one named.
+    Any problem in any file prints every problem and stops with exit code 1, before connecting
+    anywhere.
+
+cli.tui:
+  see: [service-control, rollback, unchanged]
+  text: |2
+      shipdeck <ROOT> [--key PATH | --key-text TEXT | --password VALUE] [--no-shell-env]
+
+    The interactive terminal UI. It waits for keys, so scripts and agents use the headless
+    commands instead. Every deploy.yaml under ROOT is checked before the screen opens. Nothing
+    connects when it starts.
+
+    Three screens; Tab, Shift-Tab or 1, 2, 3 switch between them:
+    1. Deployables: every deployable with its name, host, and, once connected, the release live
+       on the server and whether the service runs.
+    2. Operation: the running deploy or rollback. The steps as a checklist with live status, a
+       progress bar for the running step (crates compiled, bytes hashed and uploaded with speed,
+       health seconds, releases tidied), how long each step took, and a log of every command and
+       its output as it happens.
+    3. Releases: every release on the server, unpacked or kept as a backup, the live one marked.
+
+    Keys on Deployables:
+      ↑ ↓ or k j    select
+      Enter or d    deploy the selected one (asks first)
+      c             connect, or disconnect when connected
+      s             refresh the connected deployables
+      r             open its releases
+      :             a command for its service (:logs, :restart, :stop, :start)
+    Keys on Operation: ↑ ↓ / k j scroll the log, PgUp PgDn by 20, g or Home to the top, G or End
+    to follow again, r open releases, Esc or Backspace back.
+    Keys on Releases: ↑ ↓ / k j select, Enter roll back to the selected release (asks first),
+    r refresh, Esc or Backspace back.
+    Anywhere: q or Ctrl-C quits; while a deploy or rollback runs it asks first, since quitting
+    then can leave the server between two releases.
+
+    `c` connects the selected deployable and shows what is live. Deploying, opening releases and
+    rolling back connect on their own. Disconnecting closes the SSH session, so every deployable
+    on that user@host:port shows as not connected. Only one operation runs at a time.
+
+    The dialogs, and the keys they take:
+    - Deploy?: shows the target, the service, the build command, what is live now and what
+      happens on failure. It warns when a file pipeline.pack.files.include.deploy names is
+      missing. y or Enter deploys, n or Esc cancels.
+    - Nothing changed: the new release would equal the live one (see unchanged). y deploys a
+      duplicate; n, Enter or Esc stop before the server is touched. The default is no.
+    - Roll back?: after a failed switch, restart or health check, with both releases and a
+      countdown. y rolls back now, n keeps the new release live. With no answer in 30 seconds it
+      rolls back. Enter and Esc do nothing here, so a stray key cannot decide.
+    - Roll back to <id>?: from the Releases screen. y or Enter, n or Esc.
+    - Trust host?: a server not in ~/.ssh/known_hosts, with its key's SHA256 fingerprint. y
+      trusts and saves it, n or Esc refuses.
+    - Password or passphrase: typed hidden. Enter sends, Esc cancels, Ctrl-U clears. Each is
+      asked once per run and kept in memory only.
+
+cli.deploy:
+  see: [exit-codes, agents, unchanged, rollback]
+  text: |2
+      shipdeck deploy <ROOT> <NAME>... [--on-failure rollback|keep] [--allow-unchanged]
+                      [LOGIN] [--no-shell-env] [--trust-new-host]
+
+    Builds and deploys one or more deployables without the TUI: the same pipeline, printed as
+    plain lines on stderr, with no questions.
+      shipdeck deploy ./scripts/deploy my-api
+      shipdeck deploy ./scripts/deploy my-api my-web --on-failure keep
+      SHIPDECK_SSH_KEY="$DEPLOY_KEY" shipdeck deploy ./scripts/deploy my-api
+
+    How it runs:
+    1. Every deploy.yaml under ROOT is checked; any problem stops it (exit 1).
+    2. Every NAME is looked up before anything runs: by folder name, then by `name`. An unknown
+       one stops it (exit 1) and lists the deployables there are. A name given twice runs once.
+    3. The deployables deploy one after another, in the order given. The first one that does not
+       end with 0 stops the rest, which are listed as `▲ not deployed: ...`; the run exits with
+       that deployable's code.
+
+    What the TUI would ask, and how the headless run decides instead:
+    - Deploy this? Running the command is the yes.
+    - Roll back after a failed switch, restart or health check? --on-failure rollback, the
+      default, rolls back at once (exit 3). --on-failure keep keeps the failed release live
+      (exit 4). Either overrides pipeline.failed.rollback.
+    - Nothing changed; deploy anyway? No: it stops with exit 6 and touches nothing.
+      --allow-unchanged deploys the duplicate.
+    - Trust a server seen for the first time? No, unless --trust-new-host. A changed key is always
+      refused.
+    - A password or key passphrase? Never asked. Use --key or SHIPDECK_SSH_KEY (with
+      SHIPDECK_KEY_PASSPHRASE for an encrypted key), or --password or SHIPDECK_PASSWORD.
+
+    Ctrl-C: the first one only warns, because stopping mid-deploy can leave the server between
+    two releases. A second one stops at once with exit code 130.
+
+    The output, line by line, is described in agents; the exit codes in exit-codes.
+
+cli.rollback:
+  see: [rollback, cli.releases, exit-codes]
+  text: |2
+      shipdeck rollback <ROOT> <NAME> --to <RELEASE> [LOGIN] [--no-shell-env] [--trust-new-host]
+
+    Makes a release that is already on the server live again, without the TUI. Nothing is built
+    or uploaded. RELEASE is an id exactly as `shipdeck releases` prints it:
+      shipdeck releases ./scripts/deploy my-api
+      shipdeck rollback ./scripts/deploy my-api --to v1.3.9-9f8e7d6-20261012.091000
+
+    The steps:
+    - Connect: logs in, checks the sudo rights a deploy needs, lists the releases. It stops when
+      the release is no longer on the server, is already live, or is a folder shipdeck did not
+      create.
+    - Unpack: only for a release kept as a backup. backups/<id>.tar.zst is unpacked into
+      releases/<id> and the service.shared folders are linked in; an old whole-release
+      backups/<id>.tar.gz is unpacked as it is. An unpacked release skips this step.
+    - Setup: only after unpacking a .tar.zst backup. A backup holds the shipped files but not what
+      setup made (node_modules, .venv), so pipeline.setup runs again. If it fails, releases/<id>
+      is removed again and the backup stays.
+    - Switch, Restart, Health: as in a deploy.
+    - Done: pipeline.done runs with SHIPDECK_ACTION=rollback. Old releases are not tidied after a
+      rollback.
+    - Failed: pipeline.failed, if anything failed.
+
+    If the target fails after the switch, the release that was live before is put back at once.
+    The target is an old release, so it is never deleted.
+
+    Exit codes: 0 the target is live; 1 it stopped before the switch; 3 the target failed and the
+    previous release is live again; 5 that failed too; 130 interrupted.
+
+cli.releases:
+  see: [releases, cli.rollback]
+  text: |2
+      shipdeck releases <ROOT> <NAME> [LOGIN] [--no-shell-env] [--trust-new-host]
+
+    Logs in and prints the releases on the server, newest first, as aligned columns on stdout:
+      RELEASE                         VERSION  COMMIT    BUILT (UTC)       SIZE      STATE  ...
+      v1.4.0-ab12cd3-20261015.120000  1.4.0    ab12cd3   2026-10-15 12:00  31.2 MiB  live
+      v1.3.9-9f8e7d6-20261012.091000  1.3.9    9f8e7d6*  2026-10-12 09:10  30.8 MiB  unpacked
+    The last column, DEPLOYED BY, is git's user.name on the PC that deployed, else the login
+    name; `-` when only a backup is left.
+    - COMMIT ends with `*` when the release was built with uncommitted changes.
+    - SIZE is the folder's size when unpacked, else the backup's.
+    - STATE is one of: live (current points at it); unpacked (in releases/, rollback is
+      instant); compressed (only its backup is left; a rollback unpacks it and runs setup); or
+      not-ours (a folder shipdeck did not name; it is never touched or rolled back to).
+
+    It changes nothing on the server, which makes it the safe way to check that every deploy.yaml
+    is valid and that the login works. On a server with nothing deployed it prints `no releases
+    on the server yet` to stderr and exits 0. A config problem, an unknown name or a failed login
+    exits 1.
+
+    Columns are separated by two or more spaces and no cell holds two in a row, so split on that:
+      shipdeck releases ./deploy my-api | awk -F '  +' 'NR > 1 { print $1, $6 }'
+
+cli.init:
+  see: [presets, config]
+  text: |2
+      shipdeck init <ROOT> [NAME] [--preset P] [--manager systemd|pm2] [--host H] [--user U]
+                    [--project PATH]
+
+    Creates a deployable's folder under ROOT from a preset. It logs in nowhere and only writes:
+    - ROOT/NAME/deploy.yaml: from the preset, commented, starting with the schema line;
+    - ROOT/NAME/.env: empty; the app's environment, shipped with each release as mode 0600;
+    - ROOT/NAME/.gitignore: `.env`, so the secrets stay out of git.
+    Files already there are left alone, and an existing deploy.yaml is never replaced (it stops
+    with "... already exists"). ROOT must exist.
+
+    Arguments:
+    - NAME: the folder's name, which is also `name` and service.name. Letters, digits, `.`, `_`
+      and `-`, not starting with `.`.
+    - --preset: nodejs, golang, java, kotlin, rust, dart, python or bun (see presets).
+    - --manager: systemd (default) or pm2.
+    - --host: an address or an alias from ~/.ssh/config.
+    - --user: the user to log in and deploy as; default: the alias's User.
+    - --project: your source folder; default: the current folder. It is written relative to the
+      new folder, so `--project .` from the repository root becomes something like `../../..`.
+    service.dir is always /opt/NAME; change it afterwards if you like.
+
+    In a terminal it asks for whatever the flags leave out. Without one (a script, CI, an agent)
+    it asks nothing, and NAME, --preset and --host are required: leaving one out is a usage error
+    (exit 2). Esc while answering cancels ("Nothing written.", exit 1); Ctrl-C exits 130.
+
+    What init writes passes the same checks as a launch. If it would not (a user name with a
+    space, say), nothing is written and every problem is printed.
+
+cli.schema:
+  see: [config, config.problems]
+  text: |
+    `shipdeck --schema` prints the JSON Schema (draft-07) of deploy.yaml. It is generated from
+    shipdeck's own config types, so it is exactly what this binary accepts, with every field's
+    description. The launch check walks the same schema.
+
+    For completion and checking in editors with the YAML language server (VS Code with the YAML
+    extension, Neovim, Zed, JetBrains), start each deploy.yaml with:
+      # yaml-language-server: $schema=<URL>
+    where
+      <URL> = https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v<version>/deploy.schema.json
+    and <version> is what `shipdeck --version` prints. init writes this line for you. To map it
+    once for a whole repository instead, in .vscode/settings.json:
+      { "yaml.schemas": { "<URL>": "**/deploy.yaml" } }
+    The newest schema is also served at https://shipdeck.naz.ovh/deploy.schema.json. For an
+    offline editor, write it to a file with `shipdeck --schema > deploy.schema.json`.
+
+    The schema checks the shape: keys, types, allowed words. The launch check goes further:
+    values that would be unsafe in a shell or a unit, patterns, overlaps (see config.problems).
+
+cli.man:
+  see: [agents]
+  text: |2
+      shipdeck man                    the index (the same as `man index`)
+      shipdeck man index              every topic as `key: brief`, by section
+      shipdeck man configs            every deploy.yaml property as a YAML tree
+      shipdeck man details <KEY>...   topics and properties in full
+
+    Keys are topic keys (`quickstart`, `steps`, `step.health`, `exit-codes`) or property paths
+    as `man configs` shows them (`service.env`, `pipeline.health.url`). Several at once, apart or
+    comma-separated, in any mix:
+      shipdeck man details agents cli.deploy
+      shipdeck man details agents,cli.deploy,service.start
+      shipdeck man details "agents, cli.deploy, service.start"
+
+    Each result is its own block, in the order asked, so they never run together:
+      <topic key="step.health" brief="...">
+      the page
+      see: related keys
+      </topic>
+      <config key="service.env" type="map of text, default {}" brief="...">
+      the details; for a block, `fields:` with what is inside it
+      see: related keys
+      </config>
+
+    An unknown key prints nothing on stdout. stderr names it with the closest keys and the run
+    exits 2, so a script never mistakes a partial answer for a whole one. After the last block
+    comes one line pointing to the online docs: https://forgedoc.naz.ovh/llms.txt.
+
+    The manual is built into the binary: it matches the version you run, needs no network and
+    reads no file.
+
+    Where to start: new to shipdeck, overview then quickstart; driving it from a script or as an
+    agent, agents then exit-codes; writing deploy.yaml, `man configs` then examples; something
+    failed, troubleshooting and the page of the failed step (step.<name>).
+
+exit-codes:
+  see: [agents, rollback]
+  text: |
+    The exit codes are a contract with scripts: codes are added, never renumbered.
+
+      0    Success: the release is live (deploy, rollback), the list was printed (releases), the
+           files were written (init), the manual or schema was printed.
+      1    It failed before the live release changed, or shipdeck could not start: a config
+           problem, an unknown NAME, a failed login, init cancelled. The server runs exactly what
+           it ran before; fix the cause and run again.
+      2    Wrong usage, from the flag parser: an unknown flag, a missing argument, an unknown man
+           key. `shipdeck <COMMAND> --help` shows the right form.
+      3    The new release failed after the switch (switch, restart or health) and the previous
+           release is live again. The failed release was removed. The service's log lines printed
+           after the error usually say why it failed.
+      4    The new release failed after the switch and stays live (--on-failure keep, or n in
+           the TUI). Look at it, then deploy a fix or roll back.
+      5    The new release failed, and putting the previous one back failed too. The service may
+           be down: look at the server now.
+      6    Nothing changed since the live release, so nothing was deployed and nothing on the
+           server was touched. --allow-unchanged deploys a duplicate anyway.
+      130  Ctrl-C twice during a run (the first only warns), or Ctrl-C in init's questions.
+           Check `shipdeck releases` to see what is live.
+
+    Details worth knowing:
+    - A failure in pipeline.done is only a warning: the deploy still exits 0.
+    - A failure in pipeline.failed is only logged; the exit code stays the original failure's.
+    - deploy with several names exits with the code of the first one that did not exit 0.
+    - On a first deploy there is nothing to roll back to: a failure after the switch exits 1, and
+      the failed release stays in place to be looked at.
+
+login:
+  see: [hosts, cli]
+  text: |
+    How shipdeck logs in. The login is never in deploy.yaml; it comes from flags, environment
+    variables or ~/.ssh/config, so one deploy.yaml works for everyone on the team.
+
+    The first one found wins, for every server of the run:
+      1  --key <PATH>          a private key file
+      2  --key-text <TEXT>     a private key's text (visible in `ps`)
+      3  --password <VALUE>    a password (lands in the shell history)
+      4  SHIPDECK_SSH_KEY      a private key's text, kept out of `ps` and logs
+      5  SHIPDECK_PASSWORD     a password, kept out of the shell history
+      6  automatic             the host's IdentityFile from ~/.ssh/config if it has one; if
+                               there is none or the server refuses it, a password asked in the TUI
+    Only one of the three flags may be given. A --key file that does not exist stops at once.
+
+    What is not used: ssh-agent (SSH_AUTH_SOCK is ignored), default keys such as ~/.ssh/id_ed25519
+    unless an IdentityFile or --key names them, keyboard-interactive or two-factor prompts, and
+    client certificates. If `ssh prod` works only thanks to the agent, add an IdentityFile for the
+    host or pass --key.
+
+    Keys: OpenSSH and PEM private keys (ed25519, ECDSA, RSA; RSA signs with SHA-2). Store a key's
+    text exactly as the file is, line breaks included.
+
+    An encrypted key needs its passphrase. SHIPDECK_KEY_PASSPHRASE gives it up front; if it does
+    not unlock the key, the login stops. Otherwise the TUI asks, three tries at most, and keeps it
+    for the run. Headless runs cannot ask, so they stop with a hint to set the variable.
+
+    Passwords: in the TUI asked in a hidden field, three tries at most, once per user@host, and
+    kept only in memory. Headless runs never ask: use SHIPDECK_PASSWORD (or --password, which
+    lands in the history; in zsh with HIST_IGNORE_SPACE a leading space keeps it out).
+
+    The user is ssh.user, else the User of the ~/.ssh/config alias. If neither is set, the config
+    check stops with "`ssh.user` is not set, and ~/.ssh/config has no User for prod".
+
+hosts:
+  see: [login, shell-env]
+  text: |
+    ssh.host is an address (203.0.113.10, prod.example.com) or an alias from ~/.ssh/config, so
+    `host: prod` works like `ssh prod`.
+
+    From an alias shipdeck takes HostName, Port, User and IdentityFile; anything set in
+    deploy.yaml wins (ssh.port over Port, ssh.user over User). It reads the file the way ssh does:
+    lines before the first Host apply to every host; a Host line applies when one of its patterns
+    matches (`*`, `?`) and no `!pattern` does; the first value found for a keyword wins; Include
+    files are read in place (relative to ~/.ssh, wildcards allowed); `%h`, `%d`, `%u`, `%%` and
+    `~` are expanded in IdentityFile. Match blocks are not understood and never apply.
+    An alias that needs ProxyJump or ProxyCommand is refused when the config is read; jump hosts
+    are not supported, so put the server's own address in ssh.host.
+
+    Host keys are checked against ~/.ssh/known_hosts for the address actually dialled (the alias's
+    HostName) and port; a port other than 22 is written `[host]:port`, as ssh does.
+    - Known and the same: it connects.
+    - Known and different: always refused, with "HOST KEY CHANGED for ...: it differs from line N
+      of ~/.ssh/known_hosts". Either the server was reinstalled (then remove that line and
+      connect again) or someone is intercepting the connection. Find out which first.
+    - Not known yet: the TUI shows the key's type and SHA256 fingerprint and asks. Headless runs
+      refuse unless --trust-new-host. A trusted key is appended to ~/.ssh/known_hosts.
+    - A host certificate instead of a plain key: refused.
+    To trust a server ahead of time: `ssh-keyscan -H prod.example.com >> ~/.ssh/known_hosts`,
+    after checking the fingerprint with whoever runs the server.
+
+    Sessions: shipdeck opens one SSH session per user@host:port on first use and reuses it for
+    every command and upload of the run; deployables on the same server share it. Connecting
+    times out after 15 seconds; keepalives go every 15 seconds and four missed ones close the
+    session. Commands run through `sh -c` as the SSH user, whatever their login shell; uploads
+    go over SFTP.
+
+shell-env:
+  see: [hosts, config.variables, systemd]
+  text: |
+    An SSH command runs without a terminal, and then the login shell skips the files most tools
+    set themselves up in: nvm, pyenv, rbenv or sdkman add themselves to ~/.bashrc, which returns
+    early without a terminal. That is why `ssh prod 'npm -v'` can say "command not found" while
+    npm works when you log in.
+
+    So with ssh.shell_env: true (the default), once per connection shipdeck starts the login shell
+    the way `ssh prod` does for a terminal, interactive and login (`$SHELL -i -l`; bash, zsh,
+    fish each read their own files), captures the variables it exports, and gives them to every
+    server command of that session. The shell's input and output are cut off, so a startup file
+    that prints a banner or reads input does no harm.
+
+    It affects every server command from deploy.yaml and preflight's look-up of programs: a bare
+    service.start program or a preflight.requires entry is found on that PATH. It does not affect
+    the service itself: systemd starts it with its own environment, and the built-in unit hides
+    /home, so a program found under /home or /root is refused at preflight (see systemd). PM2
+    apps run as the user and are fine.
+
+    If the startup files fail, export nothing, or take longer than 20 seconds, preflight logs a
+    warning and commands run without them.
+
+    To turn it off: `ssh.shell_env: false` for one server, or `--no-shell-env` for a whole run.
+    Reasons: it costs a second or two per connection; a startup file expects a person (starts
+    tmux, asks a question); or you want server commands to see the plain SSH environment. Then
+    give tools by absolute path, or install them system-wide.
+
+config:
+  see: [config.problems, cli.init, examples, cli.schema]
+  text: |
+    The deploy root is any folder you pass on the command line. Every direct subfolder that holds
+    a deploy.yaml (or deploy.yml) is one deployable; deeper folders are not searched. Deployables
+    are sorted by folder name.
+      scripts/deploy/
+        api-prod/
+          deploy.yaml        commit it
+          service.template   optional: replaces the built-in systemd unit
+          config.yaml        optional: shipped with pipeline.pack.files.include.deploy
+          .env               the app's secrets; gitignored
+          .gitignore
+        web-prod/
+          deploy.yaml
+    Commit deploy.yaml and the files it ships from its folder, except secrets. After a fresh clone
+    every setting is still there; only each .env has to be copied back. A folder with both
+    deploy.yaml and deploy.yml, or with only an old deploy.json, is a problem, never silently
+    skipped.
+
+    The top level takes name, project, ssh, service and pipeline. Required are name, ssh.host,
+    service.name and service.dir, plus ssh.user when the ~/.ssh/config alias has no User.
+    Everything else has a default; `shipdeck man configs` lists every property. A small one:
+      name: My API (prod)
+      project: ../../..                  # the source, relative to this file
+      ssh: { host: prod, user: deploy }
+      service: { name: my-api, dir: /opt/my-api }
+      pipeline:
+        build: { run: { local: cargo build --release } }
+        pack:
+          binary: target/release/my-api
+          files: { include: { deploy: [.env] } }
+
+    Before anything runs, every deploy.yaml under the root is read, in three passes, so that every
+    problem in every file is reported at once:
+    1. YAML, keeping each key's line and column. One document per file; a key written twice in the
+       same map is refused.
+    2. The shape, against the JSON Schema: unknown keys (with "did you mean"), wrong types, steps
+       that do not take commands, keys that moved in newer versions.
+    3. The values: anything unsafe in a shell or a unit, bad patterns, overlaps, reserved names,
+       and ssh.user after ~/.ssh/config is applied.
+    Any problem stops shipdeck with exit code 1 before it logs in anywhere (see config.problems).
+
+    YAML notes:
+    - `key:` with nothing after it means "use the default".
+    - Quote a value that starts with `!` or `*`: YAML reads those as a tag or an alias. shipdeck
+      says so and shows the quoted form.
+    - A command is one string or a list of strings. Quote a list item that holds `: `.
+    - Anchors and aliases work within one file.
+    - Settings are read once per run; edits while the TUI is open apply on its next start.
+
+config.files:
+  see: [step.pack, step.backup]
+  text: |
+    What goes into a release is picked with patterns, from two sources:
+    - pipeline.pack.files.include.project and exclude.project: relative to `project`, for build
+      output and source.
+    - pipeline.pack.files.include.deploy and exclude.deploy: relative to the deployable's own
+      folder, for files that belong to this deployment (.env, a config.yaml per environment).
+      deploy.yaml, deploy.yml and service.template there are never shipped, so `deploy: [.]`
+      ships everything else in the folder.
+    Every path keeps its place inside the release: the project's dist/main.js becomes
+    releases/<id>/dist/main.js. A file from the deploy folder replaces a project file at the same
+    path (the log says so); a folder in one source and a file in the other is an error.
+    pipeline.pack.binary lands at the release root under its file name, wherever it was built.
+
+    Patterns follow fast-glob (the syntax Tailwind uses):
+      dist                 the folder and everything in it (or a file of that name)
+      *.js, file?.txt      names inside one folder; `*` and `?` never cross a `/`
+      **/*.map             at any depth, the top included
+      src/*.{js,ts}        one of several; braces nest: {lib,bin}/**
+      file[0-9].txt, [!_]* one character from a set, or not from it
+      dist/                folders only
+      .                    the whole source
+      \*                   a literal `*`
+      "!pattern"           in include: leave these out; in exclude: keep these anyway
+    Names starting with a dot match like any other. Quote patterns that start with `!` or `*`.
+
+    A path ships when an include pattern names it or a folder above it, no `!` include leaves it
+    out, and no exclude pattern names it unless a `!` exclude keeps it. For example, the whole
+    project except tests, but keeping one fixture:
+      include: { project: [.] }
+      exclude: { project: [tests, "!tests/fixtures/seed.json"] }
+
+    Always:
+    - .git is never shipped, at any depth.
+    - Files whose name starts with .env get mode 0600; every other file keeps its mode.
+    - Symbolic links stay links. A link named by an include pattern's exact path is followed
+      instead, so `dist -> build/out` ships the folder.
+    - Sockets and pipes are skipped.
+
+    Refused at launch: including release.json or the service's own file (<service>.service, or
+    <service>.pm2.json with PM2), which belong to shipdeck; shipping a service.shared path; an
+    empty pattern; a leading `/`; `..`; an empty or `.` folder in the middle; an unclosed `{` or
+    `[`; a lone trailing `\`; the same pattern twice; more than 10 brace groups or nesting deeper
+    than 10. Something must ship: pipeline.pack.binary or at least one include pattern.
+
+    Every include pattern without `!` must find something, so a missing build output is caught
+    before anything ships: project patterns after the build (else Build fails), deploy patterns
+    at the end of preflight, after preflight.run.local had the chance to create them. The error
+    lists each one as `(not found)` or `(matched nothing)`.
+
+    pipeline.backup.files.include and exclude use the same syntax, relative to the release folder
+    on the server, and are matched after setup. An include there that matches nothing is only a
+    warning (see step.backup).
+
+config.commands:
+  see: [config.variables, steps]
+  text: |
+    Steps that can run your commands have `run` and, where something must pass, `check`, each with
+    a `local` side (your PC) and/or a `server` side:
+      pipeline:
+        preflight:
+          run: { server: pg_isready -q, local: npm test }
+        setup:
+          run: { server: [npm ci --omit=dev, npm run migrate] }
+          check: { server: node --check dist/main.js }
+
+    Which step takes what, and where server commands run:
+      preflight  run.server (in service.dir), run.local
+      build      run.local
+      setup      run.server, check.server (in releases/<id>, while the old release serves)
+      health     check.server (in current), check.local
+      done       run.server (in current), run.local
+      failed     run.local
+    Within a step, the server side runs before the local one. Local commands always run in
+    `project`. pack, upload, unpack, backup, switch and restart take no commands; giving them some
+    is a launch error that says where they belong instead (for example "unpack does not take
+    commands; commands for the unpacked release go in pipeline.setup.run.server").
+
+    A value is one shell line or a list of lines. A list runs in order and stops at the first
+    failure. `&&`, pipes, redirections and $VARS work. An empty line is refused. `run` runs once.
+    `check` must pass: in setup it runs once after `run` and a failure removes the release; in
+    health it is retried every 2 seconds until timeout_secs.
+
+    Local commands run with `sh -c` in project, with stdin closed and their output streamed into
+    the log. They inherit shipdeck's own environment plus the SHIPDECK_* variables, and
+    CARGO_TERM_PROGRESS_WHEN=always, CARGO_TERM_PROGRESS_WIDTH=120 and CARGO_TERM_COLOR=never so
+    cargo's progress bar becomes the step's progress bar. They do not get service.env or
+    service.env_file. A non-zero exit fails the step: "`npm test` exited with code 1".
+
+    Server commands run as the SSH user, each line as its own script that does, in order: load the
+    login shell's exports (see shell-env), `set -e`, cd to the step's folder, export service.env,
+    load service.env_file, export the SHIPDECK_* variables, then your line. Because of `set -e`, in
+    `a; b` a failing `a` stops the line. A non-zero exit fails the step: "`npm run migrate`
+    exited with code 2 on the server".
+
+    Your commands are shell by design: whoever writes deploy.yaml runs what they like as the
+    deploy user. shipdeck adds no sudo to them; if one needs root, write `sudo -n ...` and give the
+    user that right yourself.
+
+config.variables:
+  see: [config.commands, step.failed]
+  text: |
+    Every command from deploy.yaml sees these variables:
+      SHIPDECK_ACTION      deploy, or rollback during a manual rollback
+      SHIPDECK_STEP        the step running (preflight, build, ...); in failed, the step that failed
+      SHIPDECK_ERROR       in failed only: the first line of the error
+      SHIPDECK_RELEASE     the release going live, such as v1.4.0-ab12cd3-20261015.120000
+      SHIPDECK_VERSION     its version, such as 1.4.0
+      SHIPDECK_PREVIOUS    the release that was live before, if there was one
+      SHIPDECK_NAME        `name`
+      SHIPDECK_SERVICE     service.name
+      SHIPDECK_HOST        ssh.host as written (the alias, not its address)
+      SHIPDECK_APP_DIR     service.dir
+      SHIPDECK_SHARED_DIR  service.dir/shared
+      SHIPDECK_FOLDER      local commands only: the deployable's folder, absolute
+      SHIPDECK_PROJECT     local commands only: project, absolute
+    The release is named at the start of build, so SHIPDECK_RELEASE and SHIPDECK_VERSION are not
+    set during preflight; build commands can use them, such as
+    `go build -ldflags "-X main.version=$SHIPDECK_VERSION"`. SHIPDECK_PREVIOUS is known once
+    preflight has looked at the server.
+
+    Server commands also get, in this order, so later ones win:
+    1. the variables the login shell's startup files export (see shell-env);
+    2. service.env;
+    3. service.env_file, read the way systemd reads an EnvironmentFile;
+    4. the SHIPDECK_* variables.
+    Which env_file: preflight reads the live release's (current/<file>; none on a first deploy),
+    setup the new release's (releases/<id>/<file>), health and done current's, which by then is
+    the new release.
+
+    How an env_file is read, like systemd: one KEY=value per line; blank lines and lines starting
+    with `#` or `;` are skipped; a leading `export ` is allowed; one pair of quotes around the
+    value is removed; nothing is expanded, so $HOME stays the text $HOME; Windows line endings are
+    fine; a line whose key is not a variable name is skipped; a missing file is skipped.
+
+    The service itself gets, with systemd, EnvironmentFile=<dir>/current/<file>, one
+    Environment="KEY=value" line per service.env entry, and APP_RELEASE=<release id>. With PM2,
+    service.env and env_file are exported before PM2 is called, which takes them with
+    --update-env. The SHIPDECK_* variables are for your commands only, never the service.
+
+config.problems:
+  see: [config, troubleshooting]
+  text: |
+    Every deploy.yaml under the deploy root is read before anything runs. If any has a mistake,
+    shipdeck prints every problem in every file at once, sorted by line, and stops with exit code
+    1 without logging in anywhere:
+      ✘ shipdeck did not start: 2 deploy.yaml files have 3 problems
+
+      web-prod/deploy.yaml
+        error: unpack does not take commands
+          ┌─ scripts/deploy/web-prod/deploy.yaml:36:3
+       36 │   unpack:
+          │   ^^^^^^ unpack is done by shipdeck
+          = help: commands for the unpacked release go in pipeline.setup.run.server
+    Each problem has a message, file:line:column, the line with a caret and a label, and usually
+    a help line with the fix. On a terminal it is in colour, unless NO_COLOR is set.
+
+    Common ones, and the fix:
+    - unknown key `pipeline.biuld`: a typo; the help offers "did you mean `build`?".
+    - `service.dir` is missing: name, ssh.host, service.name and service.dir are required.
+    - build cannot run commands on the server: build runs on your PC only; the server's part goes
+      in pipeline.setup.run.server. Likewise setup cannot run commands on your PC, and failed
+      cannot run commands on the server (it may be unreachable then).
+    - health has no `run`: health takes `check`, commands that must pass.
+    - `pipeline.preflight.run` must be a map (say where it runs): write
+      `run: { local: npm test }`, not `run: npm test`.
+    - ... reads as a YAML tag: a value starting with `!` needs quotes, as in "!src/old".
+    - `service.name` is the name without .service; `service.dir` must be an absolute path.
+    - `service.start` is needed when there is no `pipeline.pack.binary`: say what the service
+      runs, such as `node dist/main.js`.
+    - nothing to ship: set pipeline.pack.binary, pipeline.pack.files.include, or both.
+    - "..." climbs out with `..`: patterns stay inside their source; move the file or point
+      `project` higher.
+    - release.json (or my-api.service) belongs to shipdeck: those names cannot be shipped.
+    - "uploads" is in `service.shared`, so it cannot be shipped too: shared folders are linked,
+      never shipped.
+    - `service.env` key "my-var" is not a variable name: letters, digits and `_`.
+    - `pipeline.health.timeout_secs` must be at least 3; `pipeline.backup.keep.open` at least 1.
+    - the backup would hold nothing: set backup.files.deployed, an include, or keep.compressed: 0.
+    - `service.pm2` is only read with `manager: pm2`.
+    - `ssh.user` is not set, and ~/.ssh/config has no User for prod.
+    - `x` is written twice; deploy.yaml holds more than one document.
+
+    Keys that moved are named with their new place. From 0.5: service.keep is now
+    pipeline.backup.keep, and pipeline.health.rollback is now pipeline.failed.rollback (it covers
+    a failed switch or restart too). A file from 0.2 is refused as a whole, each old key with its
+    new place:
+      build.cwd -> project                          build.command -> pipeline.build.run.local
+      build.binary -> pipeline.pack.binary          build.files -> pipeline.pack.files.include.project
+      build.version_from -> pipeline.build.version_from (now relative to project)
+      bundle -> pipeline.pack.files.include.deploy  releases -> pipeline.backup.keep
+      remote.dir, .service, .env, .env_file, .run_as -> service.dir, .name, .env, .env_file, .run_as
+      remote.start + remote.args -> service.start   remote.requires -> pipeline.preflight.requires
+      health -> pipeline.health                     hooks.before -> pipeline.preflight.run.local
+      hooks.server -> pipeline.setup.run.server     hooks.after -> pipeline.done.run.local
+      pipeline.rotate -> gone: done tidies and pipeline.backup.keep says how many stay
+    A deploy.json from 0.1 is refused too: JSON is YAML, so rename it to deploy.yaml and move the
+    keys the same way.
+
+config.template:
+  see: [systemd]
+  text: |
+    A file named service.template next to deploy.yaml replaces the built-in systemd unit (shown in
+    the systemd topic). It is rendered for every release into releases/<id>/<service>.service,
+    which the switch installs. It is never shipped as a file of its own. Copy the built-in unit
+    into it and edit from there.
+
+    Placeholders (spaces inside the braces are fine, as in {{ dir }}):
+      {{name}}     `name`
+      {{tag}}      v1.4.0 (ab12cd3), or v1.4.0 (ab12cd3, uncommitted changes) when built dirty
+      {{id}}       the release id
+      {{version}}  1.4.0
+      {{git}}      ab12cd3, or nogit outside a git repository
+      {{dir}}      service.dir
+      {{service}}  service.name
+      {{user}}     service.run_as, else ssh.user
+      {{exec}}     the whole ExecStart= command: the program made absolute, then its arguments
+      {{binary}}   the binary's file name; only with pipeline.pack.binary
+      {{env}}      the EnvironmentFile= and Environment= lines from env_file and env; may be empty
+    The template is rendered once at preflight to check it, so an unknown placeholder, an
+    unclosed `{{`, or {{binary}} without pipeline.pack.binary stops the deploy there, before
+    anything is built, naming the known placeholders.
+
+    Keep WorkingDirectory and every path under {{dir}}/current: a rollback only moves current, so
+    that is what makes the unit right for every release. The template is part of the release's
+    fingerprint, so editing it counts as a change. With manager: pm2 a service.template is an
+    error.
+
+    The usual reason for one is a runtime installed under /home, such as Node from nvm: the
+    built-in unit has ProtectHome=true and preflight refuses such a program. A template without
+    ProtectHome works, though installing the runtime system-wide (or using PM2) is the better fix.
+
+steps:
+  see: [config.commands, rollback, exit-codes]
+  text: |
+    A deploy runs these steps in order. Some are shipdeck's alone; others also run your commands
+    (see config.commands). Each has its own page, step.<name>.
+      1  preflight  checks your PC and the server; then your run.server and run.local
+      2  build      names the release; your run.local; checks the binary and files it made
+      3  pack       hashes every file, compares with the live release, packs what differs
+      4  upload     sends the archive over SFTP into releases/
+      5  unpack     unpacks into releases/<id>, copies unchanged files from current, verifies
+                    every file, links service.shared
+      6  setup      your run.server and check.server, in the new release; the old one still serves
+      7  backup     packs the release's shipped files into backups/<id>.tar.zst
+      8  switch     points current at the new release and installs its unit
+      9  restart    restarts the service (about 1-2 seconds of downtime)
+      10 health     waits until it is active and the URL answers; your check.server, check.local
+      11 done       tidies old releases; your run.server and run.local
+      *  failed     your run.local, when any step failed, after the rollback if there was one
+
+    What a failure does depends on the zone:
+    - Steps 1-3 touch nothing on the server (except creating service.dir on a first deploy). A
+      failure just stops.
+    - Steps 4-7 build the new release beside the live one. A failure removes releases/<id>, its
+      upload files and its backup; the live release never notices.
+    - Steps 8-10 come after the point of no return: current points at the new release. A failure
+      prints the service's last 30 log lines and puts the previous release back: asked in the TUI
+      by default (pipeline.failed.rollback: ask, rolling back after 30 s without an answer), at
+      once with auto or in headless runs (unless --on-failure keep). On a first deploy there is
+      nothing to go back to, so the failed release stays in place to be looked at.
+    - Step 11 runs once the release is live; its failures are warnings only.
+
+    Skipped steps: setup when it has no commands; backup with keep.compressed: 0; failed is only
+    listed when it has commands. A release identical to the live one stops at pack, after asking
+    (see unchanged).
+
+    A manual rollback runs a shorter list: Connect, Unpack (only from a backup), Setup (only from a
+    .tar.zst backup), Switch, Restart, Health, Done, Failed (see rollback).
+
+step.preflight:
+  see: [server, permissions, shell-env, troubleshooting]
+  text: |
+    Step 1 finds out everything that can be known before anything is built or changed. Any
+    failure stops the deploy with nothing touched, except that a first deploy may have created
+    service.dir.
+
+    On your PC, before connecting: the project folder must exist; a service.template with
+    manager: pm2 is refused; and the service file is rendered once, so a template mistake (an
+    unknown placeholder) shows up now rather than after the build.
+
+    Then it logs in (see login) and loads the login shell's environment unless that is off (see
+    shell-env); the log says which. One script on the server then reports:
+    - the CPU architecture (uname -m) and the glibc version (none on musl systems);
+    - whether service.dir exists and is writable, and the free space where it lives;
+    - what current points at, and that release's fingerprint (for "nothing changed");
+    - the service's state, and with PM2 the output of `pm2 -v`;
+    - where each program the deploy needs is (`command -v`): the start program when it is a bare
+      name or an absolute path, pm2 with PM2, everything in pipeline.preflight.requires, and
+      shipdeck's own tar, zstd and sha256sum;
+    - for a non-root user with systemd, whether each sudo command is allowed (`sudo -n -l`).
+
+    It stops, saying why, when:
+    - service.dir is missing and cannot be created. It tries mkdir as the user, then
+      `sudo -n mkdir` with a chown to the user, then gives up;
+    - service.dir exists but the user cannot write to it;
+    - a sudo command is not allowed (each one is logged; see permissions);
+    - tar, zstd or sha256sum is missing (it names the packages: tar, zstd, coreutils);
+    - another needed program is missing from the PATH;
+    - with systemd and the built-in unit, the start program was found under /home or /root: the
+      unit's ProtectHome=true would hide it from the service (see systemd);
+    - with PM2: PM2 is newer than 6.x, or a systemd unit of the same name is still running and
+      would hold the app's port;
+    - the server has less than 100 MiB free.
+
+    Then your commands: pipeline.preflight.run.server in service.dir (with the live release's
+    env_file), then pipeline.preflight.run.local in project. Typical uses: tests and lint locally,
+    a database check on the server, or writing .env from a secret store.
+
+    Last, the files pipeline.pack.files.include.deploy names must exist; run.local may have just
+    created them. The step's summary is the server's architecture, glibc and free space.
+
+step.build:
+  see: [releases, config.files, recipes]
+  text: |
+    Step 2 names the release, runs your build on your PC, then checks what it made.
+
+    The release id is v<version>-<git>[-dirty]-<YYYYMMDD.HHMMSS>, the time in UTC:
+    - version: from pipeline.build.version_from when set (relative to project). Otherwise the
+      first of these found in project: Cargo.toml (package.version, following
+      `version.workspace = true` up to the workspace), package.json ("version"), pyproject.toml
+      (project.version, else tool.poetry.version), VERSION (its first line). Otherwise the latest
+      git tag, a leading v dropped. Otherwise 0.0.0. Characters other than letters, digits, `.`,
+      `_`, `+` and `-` become `_`. The log says where the version came from.
+    - git: the 7-character commit of HEAD in project, or `nogit` outside a repository.
+    - dirty: added when tracked files have uncommitted changes (untracked files do not count),
+      with a warning.
+
+    Your build is pipeline.build.run.local, in project, with SHIPDECK_RELEASE and SHIPDECK_VERSION
+    set. Its output streams into the log; cargo's progress bar becomes the step's progress bar.
+    With no build commands the files ship as they are. A failing command stops the deploy.
+
+    Then the checks:
+    - pipeline.pack.binary must be an executable built for the server's CPU ("the binary is built
+      for aarch64, but the server is x86_64"), and it must not need a newer glibc than the server
+      has. The error names the fix, such as
+      `cargo zigbuild --target x86_64-unknown-linux-gnu.2.31`. A static (musl) binary needs no
+      glibc and always passes; a glibc binary cannot run on a server without glibc.
+    - Every pipeline.pack.files.include.project pattern must find something.
+
+step.pack:
+  see: [delta, unchanged, config.files]
+  text: |
+    Step 3 builds the release in memory as one .tar.zst. A release holds:
+    - the binary, at the release root under its file name;
+    - every file, folder and link pipeline.pack.files picks (see config.files);
+    - the service's own file: <service>.service rendered from the unit template, or
+      <service>.pm2.json with PM2 (unless pm2.ecosystem names your own file);
+    - release.json (see releases).
+    The log shows the start command as it will run, every deploy-folder file that replaces a
+    project file, and, with PM2, an ecosystem file that ships but would not be used.
+
+    In order:
+    1. Every file is hashed (SHA-256); the progress bar counts bytes.
+    2. The release's fingerprint is compared with the live one's. Equal means nothing changed:
+       shipdeck asks whether to deploy a duplicate, and no (the default, and always headless
+       without --allow-unchanged) stops here with exit 6 and nothing touched (see unchanged).
+    3. The live release is asked for the hashes of the same files, computed on the server right
+       then. With nothing live, or a server that cannot hash, every file is sent (see delta).
+    4. What differs, plus every folder and link, release.json and the service file, goes into the
+       archive: zstd level 9 on every core, file modes and times kept.
+    5. The server needs about twice the archive's size plus the release's full size free, else
+       the deploy stops.
+
+    The summary reads like `312 files · 309 already on the server · 3 to send · 25.0 MiB →
+    1.2 MiB`: the release's full size, then the archive's. Nothing on the server has changed yet.
+
+step.upload:
+  see: [delta, releases]
+  text: |
+    Steps 4 and 5 put the new release on the server without touching the live one.
+
+    Upload creates releases/, backups/ and shared/ if missing, then sends over SFTP the archive
+    (releases/.<id>.tar.zst), a receipt with the SHA-256 of every file of the release, and for
+    each file mode the list of unchanged files to copy from current. The progress bar shows bytes
+    and speed. A failed upload removes everything of <id>.
+
+    Unpack then, in one script on the server:
+    1. stops if releases/<id> already exists;
+    2. unpacks into the hidden folder releases/.<id>.partial, so a half-written release never
+       looks complete, and removes the archive;
+    3. copies the listed unchanged files from current, keeping their modification times and
+       never as hard links (the release you could roll back to must stay exactly as it is), and
+       gives each its mode;
+    4. checks every file of the release against the receipt with `sha256sum -c`;
+    5. if all match, renames .<id>.partial to releases/<id> and removes the helper files;
+    6. links each service.shared folder into the release, creating it in shared/ the first time.
+       A release that ships something at a shared path fails here: "came in the release, but it
+       is shared".
+
+    If copied files do not match (current changed meanwhile, or a copy failed), the partial
+    release is removed and the whole release is packed, sent and unpacked once more; the log says
+    which files. If even the whole release does not match, the deploy stops and nothing of it is
+    left. The summary reads like `releases/<id> · 3 unpacked · 309 copied · verified`.
+
+step.setup:
+  see: [config.commands, rollback, recipes]
+  text: |
+    Step 6 runs your server commands inside the new release, releases/<id>, while the old release
+    still serves: pipeline.setup.run.server, then pipeline.setup.check.server. They get
+    service.env, the new release's env_file and the SHIPDECK_* variables. With no commands the step
+    is skipped.
+      setup:
+        run: { server: [npm ci --omit=dev, npm run migrate] }
+        check: { server: node --check dist/main.js }
+
+    Any failure removes releases/<id> and stops the deploy; the live release is untouched ("a
+    setup check failed" for a check).
+
+    What belongs here: installing production dependencies (npm ci --omit=dev, a Python virtualenv
+    with pip install), steps that need the server, database migrations, and quick tests of the
+    new files.
+
+    Keep in mind:
+    - The new release is not live yet: current still points at the old one and its service is
+      the one running. A migration that breaks the old release breaks the live service until the
+      switch, so make migrations the old release can live with.
+    - Setup runs again, with SHIPDECK_ACTION=rollback, when a release kept only as a backup is
+      rolled back to, because a backup holds only the shipped files. So setup must work from the
+      shipped files alone, and migrations must be safe to run twice. Check $SHIPDECK_ACTION to
+      skip something on a rollback.
+
+step.backup:
+  see: [releases, rollback, config.files]
+  text: |
+    Step 7 packs part of the new release, on the server, into backups/<id>.tar.zst. When the
+    release later leaves the unpacked ones (pipeline.backup.keep.open), its folder is deleted and
+    this backup stays, so it can still be rolled back to.
+
+    What goes in:
+    - always release.json and the service file;
+    - with pipeline.backup.files.deployed (true by default): every file the release shipped;
+    - whatever pipeline.backup.files.include names in the release; one that matches nothing is a
+      warning;
+    - minus whatever pipeline.backup.files.exclude names, shipped or not;
+    - never the service.shared folders, which are links to shared/.
+    What setup made, such as node_modules or .venv, stays out unless included, so a backup is
+    about the size of the upload. Rolling back to it runs setup again to make the rest. Include
+    what setup cannot make again, such as generated keys.
+
+    keep.compressed: 0 skips this step, and no backups are kept at all. A failure removes the new
+    release and its backup; the live one keeps serving. Releases deployed before backups existed
+    have none; when they retire they are compressed whole into backups/<id>.tar.gz instead, and
+    come back without setup.
+
+step.switch:
+  see: [systemd, pm2, rollback, permissions]
+  text: |
+    Steps 8 and 9 make the new release live.
+
+    Switch points current at the new release in one atomic rename (a new link .current.next, then
+    `mv -Tf .current.next current`), so current is never missing or half-written. With systemd it
+    then installs the unit the release carries and enables it:
+      sudo -n install -m 0644 <dir>/current/<service>.service /etc/systemd/system/<service>.service
+      sudo -n systemctl daemon-reload
+      sudo -n systemctl enable <service>
+    (without sudo -n as root). The unit is always installed from current/, so a rollback brings
+    back the unit that belongs to that release. With PM2 there is nothing to install. The old
+    process keeps serving until the restart.
+
+    Restart:
+    - systemd: `sudo -n systemctl restart <service>`;
+    - PM2: in current, with service.env and env_file exported,
+      `pm2 startOrReload <dir>/current/<file> --only <app> --update-env`, then `pm2 save` so the
+      app comes back after a reboot.
+    The restart is the deploy's downtime, about 1-2 seconds for most apps.
+
+    A failure in either step prints the service's last 30 log lines, then rolls back (see
+    rollback).
+
+step.health:
+  see: [rollback, systemd, pm2]
+  text: |
+    Step 10 waits until the new release is healthy, within pipeline.health.timeout_secs (20 by
+    default, at least 3).
+
+    First it probes once a second:
+    - the service's state: `systemctl is-active`, or with PM2 the app's instances from `pm2 jlist`
+      (all online counts as active, any errored as failed);
+    - the restart count: systemd's NRestarts, or the sum of PM2's restart counts;
+    - with pipeline.health.url: the URL, fetched on the server with curl (or wget), 3 seconds per
+      try; it must answer 2xx.
+    The release counts as up after 3 healthy probes in a row. It fails at once if the restart
+    count rises (the service is crash-looping), if the state is failed, or if a URL is set but the
+    server has neither curl nor wget. At the timeout it fails with the last state and the URL's
+    error.
+
+    Then your checks: pipeline.health.check.server in current, then check.local in project. A
+    failing check is retried every 2 seconds until timeout_secs has passed since the step began.
+
+    Tips: the URL is fetched on the server, so use 127.0.0.1 and the app's own port, not the
+    public address (check that one with check.local). A slow-starting app needs a larger
+    timeout_secs. The progress shows the seconds against the timeout, the state, the URL's answer
+    and `stable 2/3`.
+
+    A failure prints the service's last 30 log lines (journalctl, or pm2 logs), which usually say
+    why it did not come up, then rolls back.
+
+step.done:
+  see: [releases, rollback]
+  text: |
+    Step 11 runs once the new release is live. Nothing in it changes what is live: its failures
+    are warnings, and the deploy still exits 0.
+
+    First, after a deploy (not a rollback), old releases are tidied by pipeline.backup.keep:
+    - the newest keep.open releases stay unpacked, the live one counted;
+    - the next keep.compressed releases keep only their backup; their folders are deleted;
+    - anything older is deleted, folder and backup;
+    - releases are ordered by build time, never by version text, and folders shipdeck did not
+      name are never touched.
+    Then pipeline.done.run.server runs in current, then pipeline.done.run.local in project, such
+    as a cache warm-up on the server and a notification from your PC.
+
+    A manual rollback runs only the commands, with SHIPDECK_ACTION=rollback, and skips the step
+    when there are none.
+
+step.failed:
+  see: [config.variables, rollback]
+  text: |
+    The failed step runs pipeline.failed.run.local on your PC, in project, when any step of a
+    deploy or rollback failed, after the rollback if there was one. It has no server side, since
+    the server may be unreachable when something failed.
+      failed:
+        run:
+          local: ./notify.sh "$SHIPDECK_NAME failed at $SHIPDECK_STEP: $SHIPDECK_ERROR"
+
+    SHIPDECK_STEP names the step that failed, SHIPDECK_ERROR holds the first line of its error,
+    and SHIPDECK_ACTION says deploy or rollback. The step is listed only when it has commands, and
+    is skipped when the run succeeded or stopped because nothing changed. Its own failure is only
+    logged; the exit code stays the original failure's.
+
+    pipeline.failed.rollback, in the same block, decides what a failed switch, restart or health
+    check does (see rollback).
+
+releases:
+  see: [cli.releases, rollback, step.done]
+  text: |
+    On the server, everything lives in service.dir:
+      /opt/my-api/
+        current -> releases/v1.4.0-ab12cd3-20261015.120000   the live release
+        releases/
+          v1.4.0-ab12cd3-20261015.120000/   the binary or files, .env (0600), links to shared/,
+                                            my-api.service (or my-api.pm2.json), release.json
+          v1.3.9-9f8e7d6-20261012.091000/
+        backups/                            <id>.tar.zst per kept release (older: <id>.tar.gz)
+        shared/                             service.shared folders, kept forever
+    current is a symlink: deploying or rolling back only changes where it points, so the paths
+    systemd and PM2 see never change. Hidden .<id>.* files and folders in releases/ exist only
+    while a release is being sent; a failure removes them.
+
+    A release id is v<version>-<git commit>[-dirty]-<YYYYMMDD.HHMMSS>, the time in UTC to the
+    second, using only letters, digits, `.`, `_`, `+` and `-`:
+      v1.4.0-ab12cd3-20261015.120000
+      v1.4.0-ab12cd3-dirty-20261015.121500    built with uncommitted changes
+      v1.0.0-beta.2-ab12cd3-20261001.090000   a version may hold dashes
+    Two deploys of the same commit differ by the time. Releases are ordered by that time, never by
+    the version text. Anything in releases/ or backups/ that is not an id shipdeck made is shown
+    as not-ours and never touched.
+
+    release.json records what was deployed:
+      { "id": "v1.4.0-ab12cd3-20261015.120000", "version": "1.4.0", "git": "ab12cd3",
+        "dirty": false, "built_at": "2026-10-15T12:00:00+00:00", "deployed_by": "Jane Doe",
+        "content": "sha256:9c1e..." }
+    deployed_by is git's user.name in the project, else the login name. content is the release's
+    fingerprint (see unchanged); releases from before it have none. The unit's Description=
+    carries the version, so `systemctl status my-api` shows what is live, and the service gets
+    APP_RELEASE=<id> in its environment.
+
+    How many stay is pipeline.backup.keep, per deployable, 5 + 15 by default: the newest 5
+    unpacked (the live one counted; rolling back to one is instant, its dependencies are already
+    installed), the next 15 kept only as backups (rolling back unpacks one and runs setup), and
+    older ones deleted. Tidying happens after each deploy, never after a rollback.
+
+delta:
+  see: [step.pack, step.upload]
+  text: |
+    Only what the live release lacks is uploaded: a 25 MiB release where three files changed sends
+    about the size of those three files.
+
+    How: pack hashes every file of the new release, then asks the server for the SHA-256 of the
+    same paths in current/, computed there with sha256sum at that moment (regular files only,
+    never links; nothing stored is trusted). A file with the same path and hash stays out of the
+    archive; unpack copies it from current instead, keeping its time, never as a hard link, and
+    gives it this release's mode. Then every file of the new release, copied or unpacked, is
+    checked against a receipt before the release is moved into place.
+
+    Always sent: folders, links, release.json, the service file, and files whose names hold a
+    newline, a carriage return or a backslash (different sha256sum versions escape those
+    differently).
+
+    The whole release is sent when nothing is live yet, when the server cannot hash (the log says
+    why), or once more when copied files did not match the receipt because current changed in the
+    meantime. The comparison is always with current, not with older releases.
+
+    In the log:
+      ✔ Pack    312 files · 309 already on the server · 3 to send · 25.0 MiB → 1.2 MiB
+      ✔ Unpack  releases/v1.4.1-ab12cd3-20261015.120000 · 3 unpacked · 309 copied · verified
+
+unchanged:
+  see: [step.pack, exit-codes]
+  text: |
+    Each release.json holds `content`, a SHA-256 fingerprint of what the release is. When a new
+    release's fingerprint equals the live one's, nothing changed, and shipdeck asks before making
+    a duplicate.
+
+    The fingerprint covers every path in the release with its kind; each file's mode and SHA-256;
+    each link's target; the service file, rendered without the release's id, version and time;
+    and deploy.yaml exactly as written, so even an edited comment counts as a change. It does not
+    cover the git commit, the dirty flag or the build time: a new commit that changes nothing that
+    ships is still unchanged. A live release from before fingerprints existed has none and always
+    counts as changed; a change never counts as none.
+
+    What happens:
+    - TUI: "Nothing changed since <live> (live). Deploying again makes a duplicate release. Deploy
+      anyway?" y deploys; n, Enter or Esc stop. The default is no.
+    - Headless: no. The deploy stops with exit code 6 and "nothing changed since <live>, so nothing
+      was deployed". --allow-unchanged deploys the duplicate.
+    Stopping happens at pack, before the upload, so nothing on the server is touched.
+
+    A duplicate is worth deploying to re-run setup or migrations, or to put back files someone
+    changed by hand on the server.
+
+rollback:
+  see: [cli.rollback, step.health, releases, exit-codes]
+  text: |
+    There are two kinds of rollback: automatic after a failure, and by hand.
+
+    After a failed switch, restart or health check, current already points at the new release:
+    1. The error and the service's last 30 log lines are printed.
+    2. If nothing was live before (a first deploy), there is nothing to go back to: the failed
+       release stays in place to be looked at, and the run exits 1.
+    3. Otherwise shipdeck decides:
+       - pipeline.failed.rollback: auto, or a headless run with --on-failure rollback (the
+         default): roll back at once;
+       - ask (the default) in the TUI: a dialog shows both releases and a countdown, such as
+           v1.4.0 failed at Health: http 502 for 20s
+           v1.3.9 was live before it.
+           Roll back to v1.3.9?        rolling back in 27s
+         y rolls back, n keeps the new release live, and no answer in 30 seconds rolls back;
+       - --on-failure keep: keep the failed release live (exit 4).
+    4. Rolling back points current at the previous release, reinstalls its unit, restarts it,
+       waits 2 seconds and checks it is active. The failed release is then removed with its
+       backup. Exit 3. If the previous release does not come back either, exit 5: look at the
+       server.
+    Either way pipeline.failed runs afterwards. Failures before the switch need no rollback: the
+    new release is removed and the live one never stopped.
+
+    By hand, from the Releases screen (select, Enter) or `shipdeck rollback <ROOT> <NAME> --to
+    <id>`, to any release on the server that is not live and that shipdeck named:
+    - an unpacked release goes straight to switch, restart, health and done; no network needed;
+    - a release kept as a .tar.zst backup is first unpacked into releases/<id>, gets its
+      service.shared links, and runs pipeline.setup again to recreate what the backup leaves out
+      (node_modules, .venv). The server then needs what setup needs, such as the npm registry. If
+      setup fails, the folder is removed and the backup kept;
+    - an old whole-release .tar.gz is unpacked as it is, without setup.
+    Then switch, restart, health and pipeline.done, all with SHIPDECK_ACTION=rollback. Old
+    releases are not tidied. If the target fails health, the release that was live before is put
+    back (asked in the TUI per failed.rollback, at once headless); the target is never deleted.
+
+    A rollback only swaps releases. It does not undo database migrations, changes in shared/, or
+    anything else outside the release folder. A release's own .env is inside it and comes back
+    with it.
+
+service-control:
+  see: [cli.tui, permissions, server-setup]
+  text: |
+    In the TUI, `:` on the Deployables screen opens a command line for the selected deployable's
+    service, as in vim. Tab completes, Enter runs, Esc cancels.
+    - :logs shows the last 200 log lines, then follows new ones live, over the whole screen.
+      systemd: `journalctl -u <service> -f -n 200 --no-pager` (with sudo -n unless root); PM2:
+      `pm2 logs <app> --raw --lines 200`. ↑ ↓, PgUp PgDn, g and G scroll; q or Esc closes the view
+      and ends the command on the server.
+    - :restart asks first, then restarts the service the way a deploy's restart step does.
+    - :stop asks first, then stops it until it is started again, a deploy restarts it, or the
+      server reboots (systemctl stop, or pm2 stop).
+    - :start starts it (systemctl start, or pm2 start from current's file); a running PM2 app is
+      left alone.
+    While that deployable deploys or rolls back, only :logs runs.
+
+    With systemd, stop, start and the live log are sudo rights of their own, apart from what a
+    deploy needs. A server set up before they existed still deploys; only these commands then say
+    the right is missing and print the server-setup.sh command that renews the sudo rule, to run
+    once as root. :restart uses the deploy's own right.
+
+    There is no headless form; over plain ssh run the same commands.
+
+systemd:
+  see: [config.template, step.switch, shell-env]
+  text: |
+    With service.manager: systemd, the default, each release carries <service>.service. The switch
+    installs it as /etc/systemd/system/<service>.service, reloads systemd and enables it, so the
+    app starts at boot.
+
+    The built-in unit (copy it into service.template to change it):
+      [Unit]
+      Description={{name}} {{tag}}
+      After=network-online.target
+      Wants=network-online.target
+      [Service]
+      Type=simple
+      User={{user}}
+      WorkingDirectory={{dir}}/current
+      ExecStart={{exec}}
+      Environment=APP_RELEASE={{id}}
+      {{env}}
+      Restart=always
+      RestartSec=2
+      KillSignal=SIGTERM
+      TimeoutStopSec=30
+      LimitNOFILE=65535
+      NoNewPrivileges=true
+      ProtectSystem=strict
+      ReadWritePaths={{dir}}/shared
+      ProtectHome=true
+      PrivateTmp=true
+      PrivateDevices=true
+      ProtectKernelTunables=true
+      ProtectKernelModules=true
+      ProtectControlGroups=true
+      RestrictSUIDSGID=true
+      LockPersonality=true
+      [Install]
+      WantedBy=multi-user.target
+
+    What the hardening means for your app:
+    - The whole file system is read-only for the service except <dir>/shared and its private
+      /tmp. Write uploads, caches and SQLite files into a service.shared folder.
+    - /home, /root and /run/user are invisible. A runtime installed per user (nvm, pyenv,
+      ~/.local/bin) cannot run, so preflight refuses such a start program. Install it
+      system-wide (apt, NodeSource, /usr/local/bin), switch to PM2, or use a service.template
+      without ProtectHome.
+    - No new privileges, no devices, no setuid.
+    - Restart=always retries every 2 seconds; health notices a release that keeps crashing by its
+      rising restart count.
+
+    ExecStart is service.start with its program made absolute: a bare name becomes the path
+    preflight found (node becomes /usr/bin/node; systemd's own PATH may differ), a path inside the
+    release becomes <dir>/current/<path>, an absolute path stays. The arguments follow as written.
+    The service runs as service.run_as, by default ssh.user. For example, with
+    `start: node dist/main.js`, env_file .env and env NODE_ENV:
+      ExecStart=/usr/bin/node dist/main.js
+      EnvironmentFile=/opt/my-api/current/.env
+      Environment="NODE_ENV=production"
+
+pm2:
+  see: [step.health, server-setup, shell-env]
+  text: |
+    With service.manager: pm2, PM2 keeps the app running instead of systemd. It runs as ssh.user,
+    so the server needs no sudo rule at all, and a runtime from nvm works.
+
+    By default shipdeck writes <service>.pm2.json into each release: the app's name (pm2.app,
+    default service.name), cwd <dir>/current, the script, its arguments and the interpreter from
+    service.start, plus everything in pm2.options (any property PM2 accepts, such as instances:
+    max, exec_mode: cluster, max_memory_restart: 300M). `node <script> args` runs the script with
+    node as PM2's interpreter, so cluster mode works; node's own flags go in
+    pm2.options.node_args. Any other program runs as it is. The environment is not in the file:
+    service.env and env_file are exported before PM2 is called, which takes them with
+    --update-env.
+
+    To ship your own ecosystem file instead, name it in pm2.ecosystem (ending in .config.js,
+    .config.cjs, .json, .yml or .yaml), ship it with pipeline.pack.files, and set pm2.app to the
+    app in it. service.start and pm2.options are then not allowed.
+
+    The restart step (and :restart) runs in current, with the environment exported:
+      pm2 startOrReload <dir>/current/<file> --only <app> --update-env
+      pm2 save
+    so a rollback reloads the old release's file, and the app comes back after a reboot once
+    `pm2 startup` is set up for the user (server-setup.sh --manager pm2 does that).
+
+    Health reads `pm2 jlist`: every instance online counts as active, any errored as failed, all
+    stopped as inactive, no such app as missing. The instances' restart counts are added up; a
+    rising count is a crash. A failure prints `pm2 logs <app> --lines 30`.
+
+    Preflight requires pm2 on the user's PATH (the login shell's, see shell-env), version 6.x or
+    older; it refuses a running systemd unit with the same name (it would hold the port; stop it
+    with `sudo systemctl disable --now <service>`), a service.template, a service.run_as other
+    than ssh.user, and an app name that is all digits (PM2 reads that as a process id).
+
+server:
+  see: [permissions, server-setup, step.preflight]
+  text: |
+    What the server needs; preflight checks all of it and names what is missing:
+    - Linux with sshd and a POSIX sh. Debian, Ubuntu, Fedora, Alpine and others work.
+    - systemd for manager: systemd (the default), or PM2 6.x or older for manager: pm2.
+    - tar, zstd and sha256sum, used to unpack and verify releases (packages tar, zstd,
+      coreutils; busybox works).
+    - curl or wget when pipeline.health.url is set.
+    - At least 100 MiB free where service.dir is, and room for the releases kept.
+    - The runtime and tools service.start and pipeline.preflight.requires name (node, java,
+      python3, npm) on the SSH user's PATH; for systemd, installed outside /home and /root.
+    - For a compiled binary: the same CPU architecture, and a glibc at least as new as the binary
+      needs. Static (musl) binaries need none.
+
+    shipdeck logs in and deploys as ssh.user, whoever you choose: root, ubuntu, a dedicated deploy
+    user. Nothing has to be set up beforehand: an app's first deploy creates its folder and
+    installs its service. The user must be able to create or write service.dir and, for systemd
+    when it is not root, run a fixed list of commands with sudo and no password (see permissions).
+    server-setup.sh, run once as root, creates such a user with exactly those rights.
+
+    shipdeck leaves on the server only service.dir and, with systemd,
+    /etc/systemd/system/<service>.service; server-setup.sh adds the user and
+    /etc/sudoers.d/shipdeck-<service>. No agent, no daemon, no shipdeck binary.
+
+    To remove an app, as root:
+      systemctl disable --now my-api
+      rm /etc/systemd/system/my-api.service && systemctl daemon-reload
+      rm -rf /opt/my-api                  # shared/ too: the app's data
+      rm -f /etc/sudoers.d/shipdeck-my-api
+    With PM2, as the user: `pm2 delete my-api && pm2 save`, then remove the folder.
+
+permissions:
+  see: [server-setup, service-control, troubleshooting]
+  text: |
+    shipdeck deploys as ssh.user. That user must be able to create service.dir (itself, or with
+    `sudo -n mkdir`) or write to it. With PM2 that is all. With systemd, unless the user is root,
+    it also needs these commands through `sudo -n`, without a password, with exactly these
+    arguments for this service and this dir:
+      systemctl daemon-reload
+      systemctl enable <service>
+      systemctl restart <service>
+      install -m 0644 <dir>/current/<service>.service /etc/systemd/system/<service>.service
+      journalctl -u <service> -n 30 --no-pager
+    Preflight (and a manual rollback) checks each of these with `sudo -n -l` and, when any is
+    missing, lists them and stops before anything changes.
+    The TUI's :stop, :start and :logs need three more, checked only when used, so a server set up
+    before they existed still deploys:
+      systemctl stop <service>
+      systemctl start <service>
+      journalctl -u <service> -f -n 200 --no-pager
+
+    server-setup.sh writes all eight as one line in /etc/sudoers.d/shipdeck-<service> (a dot in
+    the service name becomes `_`, since sudo skips files whose names hold a dot), with the
+    program paths the server has:
+      deploy ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload, /usr/bin/systemctl enable
+      my-api, /usr/bin/systemctl restart my-api, ... /usr/bin/journalctl -u my-api -f -n 200
+      --no-pager
+    Writing the rule by hand is fine too; check it with `visudo -cf <file>`.
+
+    Every other file operation happens inside service.dir as the user, without sudo, and your own
+    server commands run as that user too. These commands change only with a shipdeck release that
+    says so, together with server-setup.sh.
+
+server-setup:
+  see: [permissions, pm2]
+  text: |
+    server-setup.sh sets up one app's deploy user on a server. It is optional: shipdeck also works
+    as root, or as any user you give the rights yourself. Run it once, as root; shipdeck itself
+    never runs it.
+      curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v<version>/server-setup.sh \
+        | bash -s -- --user deploy --dir /opt/my-api --service my-api \
+            --key "$(cat ~/.ssh/id_ed25519.pub)"         # --manager pm2 for a PM2 app
+    Use the tag of your shipdeck version (`shipdeck --version`, with a v), so what runs as root
+    only changes with a release. Not root? Put sudo before bash.
+
+    Flags: --user (ssh.user), --dir (service.dir) and --service (service.name) are required;
+    --manager systemd or pm2, default systemd; --key one public key line to authorize. Every value
+    is validated with the same rules as deploy.yaml before anything happens.
+
+    What it does:
+    1. checks it runs as root and that zstd exists, and with systemd also systemctl, sudo and
+       visudo;
+    2. creates the user (with a home and bash) unless it exists;
+    3. with --key, adds the key to the user's ~/.ssh/authorized_keys unless it is there; without,
+       it reminds you to set a password with passwd;
+    4. creates --dir and gives it to the user;
+    5. systemd: installs the sudo rule (see permissions) once visudo accepts it.
+       pm2: no sudo rule; runs `pm2 startup` for the user so PM2 and the apps saved with
+       `pm2 save` come back after a reboot. If pm2 is not installed yet it warns: install it
+       (npm install -g pm2) and run the script again;
+    6. warns when sshd's AllowUsers would keep the user out.
+    Running it again changes nothing already in place and brings an older sudo rule up to date;
+    --key can be left out then. Each app (each service) is its own run.
+
+presets:
+  see: [cli.init, examples]
+  text: |
+    What `shipdeck init --preset <P>` writes. Every preset sets name and service.name to NAME,
+    service.dir to /opt/NAME, `service.env_file: .env`, ships .env from the deploy folder, and
+    leaves commented hints for service.shared, backup, health (a URL on port 3000 for nodejs and
+    bun, 8000 for python, 8080 otherwise) and failed.rollback; with --manager pm2 also pm2.options.
+
+    nodejs: built here, production dependencies installed on the server.
+      build [npm ci, npm run build]; ships dist, package.json, package-lock.json;
+      start node dist/main.js; env NODE_ENV: production; requires npm;
+      setup npm ci --omit=dev.
+    golang: one static binary, nothing needed on the server.
+      build CGO_ENABLED=0 GOOS=linux go build -o dist/NAME .; binary dist/NAME.
+    rust: one binary, nothing needed on the server.
+      build cargo build --release; binary target/release/NAME.
+    dart: compiled to one executable.
+      build [dart pub get, dart compile exe bin/server.dart -o dist/NAME]; binary dist/NAME.
+    bun: compiled to one executable.
+      build [bun install, bun build ./src/index.ts --compile --target=bun-linux-x64
+      --outfile dist/NAME]; binary dist/NAME.
+    java, kotlin: built with Gradle's application plugin; the server needs Java.
+      build ./gradlew installDist; ships build/install/NAME;
+      start build/install/NAME/bin/NAME; requires java.
+    python: the source ships; the server builds its virtualenv.
+      no build; ships . minus .venv, **/__pycache__ and **/*.pyc;
+      start .venv/bin/python main.py; requires python3;
+      setup python3 -m venv .venv, then .venv/bin/pip install -q -r requirements.txt.
+
+    Check after init: entry points and paths (dist/main.js, src/index.ts, bin/server.dart,
+    main.py, requirements.txt) are guesses. rust and golang build for your PC's CPU and glibc; on
+    a Mac, or with a newer glibc than the server's, build for the server instead (see recipes). For
+    bun on an aarch64 server use --target=bun-linux-arm64. Then fill in and uncomment health.
+
+examples:
+  see: [presets, recipes]
+  text: |
+    Complete files. Each starts with the schema line (see cli.schema); paths are relative to
+    deploy.yaml.
+
+    Rust, built for the server's glibc; only the binary and its .env travel:
+      name: My API (prod)
+      project: ../../../my-api
+      ssh: { host: prod, user: deploy }
+      service:
+        name: my-api
+        dir: /opt/my-api
+        start: ./my-api -E=.env
+      pipeline:
+        build:
+          run: { local: cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31 }
+        pack:
+          binary: target/x86_64-unknown-linux-gnu/release/my-api
+          files: { include: { deploy: [.env] } }
+        health: { url: http://127.0.0.1:8080/health }
+
+    Node.js with systemd: built here, dependencies and migrations on the server before going live:
+      name: Web (prod)
+      project: ../../../web
+      ssh: { host: prod }
+      service:
+        name: web
+        dir: /opt/web
+        start: node dist/main.js
+        env_file: .env
+        env: { NODE_ENV: production }
+        shared: [uploads]
+      pipeline:
+        preflight: { requires: [npm], run: { local: npm test } }
+        build: { run: { local: [npm ci, npm run build] } }
+        pack:
+          files:
+            include: { project: [dist, package.json, package-lock.json], deploy: [.env] }
+            exclude: { project: ["**/*.map"] }
+        setup:
+          run: { server: [npm ci --omit=dev, npm run migrate] }
+          check: { server: node --check dist/main.js }
+        backup: { keep: { open: 3, compressed: 20 } }
+        health: { url: http://127.0.0.1:3000/health }
+        done: { run: { local: ./notify.sh "web $SHIPDECK_VERSION is live" } }
+        failed: { run: { local: ./notify.sh "web failed at $SHIPDECK_STEP" } }
+
+    Node.js with PM2 in cluster mode, no sudo; the pipeline is like the one above:
+      ssh: { host: prod, shell_env: true }     # load ~/.bashrc so nvm's pm2 is found
+      service:
+        name: my-api
+        dir: /opt/my-api
+        manager: pm2
+        start: node dist/main.js --port 3000
+        env_file: .env
+        pm2: { options: { instances: max, exec_mode: cluster, max_memory_restart: 300M } }
+
+    Python: the source ships as it is; the server builds the virtualenv:
+      name: Reports (prod)
+      project: ../../../reports
+      ssh: { host: prod, user: deploy }
+      service: { name: reports, dir: /opt/reports, start: .venv/bin/python -m app, env_file: .env }
+      pipeline:
+        preflight: { requires: [python3], run: { local: python3 -m pytest -q } }
+        pack:
+          files:
+            include: { project: [.], deploy: [.env] }
+            exclude: { project: [tests, "**/__pycache__", .venv, "**/*.pyc"] }
+        setup:
+          run: { server: [python3 -m venv .venv, .venv/bin/pip install -q -r requirements.txt] }
+          check: { server: .venv/bin/python -c "import app" }
+
+    Go: like Rust, with build `CGO_ENABLED=0 go build -ldflags "-X main.version=$SHIPDECK_VERSION"
+    -o dist/worker ./cmd/worker`, binary dist/worker, a health check run by the binary itself
+    (`health: { check: { server: ./worker healthcheck } }`), and `failed: { rollback: auto }` to
+    roll back without asking.
+
+recipes:
+  see: [examples, config.commands, config.variables]
+  text: |
+    Several servers or environments: make one deployable per target (api-prod, api-staging,
+    api-eu), each with its own ssh.host, .env and maybe service.name. Deploy several in one go
+    with `shipdeck deploy ROOT api-eu api-us`; they run in order and the first failure stops the
+    rest.
+
+    A monorepo: point project at the package (`project: ../../../services/api`). In a Cargo
+    workspace build with `cargo build --release -p my-api`; the binary path is relative to
+    project, and version_from may name the crate's Cargo.toml (workspace versions are followed).
+
+    Building Rust for the server:
+    - matching the server's glibc: `cargo zigbuild --release --target
+      x86_64-unknown-linux-gnu.2.31`, with the server's version from `ldd --version`;
+    - fully static: `--target x86_64-unknown-linux-musl`, which needs no glibc at all;
+    - ARM servers: aarch64-unknown-linux-gnu.<glibc> or aarch64-unknown-linux-musl.
+    The binary is then under target/<target>/release/. The build step names the right target
+    when the CPU or glibc does not match.
+
+    Database migrations: run them in pipeline.setup.run.server, so a failing migration removes
+    the release before it goes live. Write them so the old release keeps working (it serves until
+    the restart), and so they can run twice (setup runs again when a backup is rolled back to;
+    $SHIPDECK_ACTION is rollback then).
+
+    Secrets: keep .env next to deploy.yaml, gitignored, and ship it with
+    `pipeline.pack.files.include.deploy: [.env]` plus `service.env_file: .env`; it lands in each
+    release as mode 0600 and becomes the service's environment. Or write it at deploy time from a
+    secret store in pipeline.preflight.run.local, which runs before deploy-folder files are checked:
+      local: vault kv get -field=env secret/my-api > "$SHIPDECK_FOLDER/.env"
+    Values that are not secret can go in service.env.
+
+    Data the app writes (uploads, SQLite, caches): `service.shared: [data]`; the app writes to
+    ./data, a link to <dir>/shared/data and the only place the built-in unit may write. shipdeck
+    never backs up shared data; do that yourself.
+
+    A check from outside, through your proxy:
+      health:
+        url: http://127.0.0.1:3000/health                         # from the server itself
+        check: { local: curl -fsS https://my-api.example.com/health }   # from your PC
+
+    Notifications: pipeline.done.run.local and pipeline.failed.run.local with $SHIPDECK_NAME,
+    $SHIPDECK_VERSION, $SHIPDECK_STEP and $SHIPDECK_ERROR. Local commands run in project; reach a
+    script next to deploy.yaml through $SHIPDECK_FOLDER.
+
+    CI: install shipdeck with the install script; put the server's verified host key into
+    ~/.ssh/known_hosts from a secret (so no --trust-new-host is needed); write the .env files the
+    deploy ships from secrets; then
+      SHIPDECK_SSH_KEY="$DEPLOY_KEY" shipdeck deploy ./scripts/deploy my-api
+    and let the job act on the exit code.
+
+    Re-running setup on the release that is live: `shipdeck deploy ... --allow-unchanged`. Going
+    back to an earlier release: roll back; nothing needs rebuilding.
+
+    A one-off command in the release's environment (shipdeck has no exec), over ssh:
+      ssh deploy@prod 'cd /opt/my-api/current && set -a && . ./.env && set +a && ./my-api migrate'
+    Note that sh expands $ and quotes in .env where systemd does not; fine for simple files.
+
+troubleshooting:
+  see: [config.problems, step.preflight, step.health, login, hosts, permissions]
+  text: |
+    Messages as shipdeck prints them (names are examples), what they mean, and what to do. The
+    page of the step that failed (step.<name>) has the background.
+
+    Before anything runs:
+    - "shipdeck did not start: N deploy.yaml files have M problems": every problem is listed with
+      its line; fix them all (see config.problems).
+    - "./deploy is not a folder": ROOT is wrong; it is the folder that holds the deployable
+      folders.
+    - "no deployable named my-api; there is api-prod, web-prod": use one of the listed folder
+      names (or a `name`).
+    - "2 deployables are named My API; use a folder name: api-eu, api-us": name it by folder.
+    - "~/.ssh/config reaches prod through `ProxyJump bastion`, which shipdeck cannot follow yet":
+      put the server's own address in ssh.host; jump hosts are not supported.
+
+    Logging in:
+    - "connecting to deploy@prod (203.0.113.10:22) timed out after 15s": wrong address or port,
+      or a firewall. Try `ssh -v deploy@prod`.
+    - "prod refused the key ~/.ssh/deploy for user deploy": the public key is not in that user's
+      authorized_keys, or the user is wrong.
+    - "prod refused the password for user deploy 3 times", "login to deploy@prod cancelled": a
+      wrong password, or the prompt was cancelled.
+    - "Password for deploy@prod: nothing can be asked here": a headless run with no login given.
+      Use --key or SHIPDECK_SSH_KEY (plus SHIPDECK_KEY_PASSPHRASE for an encrypted key), or
+      SHIPDECK_PASSWORD. Remember ssh-agent and default keys are not used.
+    - "the given passphrase does not unlock ...": SHIPDECK_KEY_PASSPHRASE is wrong.
+    - "prod is not in ~/.ssh/known_hosts; its key is ED25519 SHA256:...": a first connection
+      without the TUI. Check the fingerprint with whoever runs the server, then run once with
+      --trust-new-host or add it with ssh-keyscan.
+    - "HOST KEY CHANGED for prod ...": stop. Either the server was reinstalled (remove the named
+      line from ~/.ssh/known_hosts and connect again) or someone is in between. Find out first.
+
+    Preflight:
+    - "deploy may not run: sudo systemctl restart my-api" and "may not run N of the commands
+      shipdeck needs as root": the sudo rule is missing, or names another service or dir. Run
+      server-setup.sh with this --user, --dir and --service, or deploy as root (see permissions).
+    - "deploy may not create /opt/my-api, and has no sudo without a password", "deploy cannot
+      write to /opt/my-api": as root, create the folder and chown it to the user, or run
+      server-setup.sh.
+    - "the server has no zstd, which shipdeck unpacks and checks releases with": install the named
+      packages (tar, zstd, coreutils).
+    - "deploy cannot find node on the server in the PATH the login shell's startup files set":
+      install it, or fix service.start or preflight.requires. With nvm, keep ssh.shell_env true
+      and make sure ~/.bashrc loads nvm.
+    - "node is at /home/deploy/.nvm/..., but the built-in unit hides home folders from the service
+      (ProtectHome=true)": install node system-wide, use manager: pm2, or a service.template
+      without ProtectHome.
+    - "the server has PM2 7.x, newer than this shipdeck supports (up to 6.x)": update shipdeck,
+      or install pm2@6 on the server.
+    - "the systemd service my-api is still running and would clash with PM2": run
+      `sudo systemctl disable --now my-api` on the server, then deploy.
+    - "only 80.0 MiB free on the server": free space, or keep fewer releases
+      (pipeline.backup.keep).
+    - "pipeline.pack.files.include.deploy in ...: .env (not found)": create the file (copy it back
+      after a fresh clone), or let preflight.run.local write it.
+    - "unknown placeholder {{port}}; known: ...": fix service.template (see config.template).
+
+    Build:
+    - "the build failed: `cargo build --release` exited with code 101": your build failed; its
+      output is in the log above the error.
+    - "the binary is built for aarch64, but the server is x86_64": build for the server's target.
+    - "the binary needs glibc 2.39, but the server has 2.31": build against the server's glibc
+      (`cargo zigbuild --target x86_64-unknown-linux-gnu.2.31`) or for musl.
+    - "... is not an executable this tool understands": pipeline.pack.binary points at a script
+      or at nothing. Ship scripts with pack.files and name the interpreter in service.start.
+    - "pipeline.pack.files.include.project in ...: dist (not found)": the build did not produce
+      it, or the pattern or project is wrong.
+
+    Pack to setup:
+    - "nothing changed since <id>, so nothing was deployed" (exit 6): the server already runs this
+      exact release; nothing to do (see unchanged).
+    - "the server has 1.1 GiB free; this release needs about 2.3 GiB": free space on the server.
+    - "releases/<id>/uploads came in the release, but it is shared": stop shipping that path; it
+      is in service.shared.
+    - "releases/<id> does not match what was packed, even sent whole": the transfer or the
+      server's disk is failing. Check the disk, deploy again.
+    - "`npm ci --omit=dev` exited with code 1 on the server": a setup command failed; its output
+      is in the log. The release was removed and the old one still serves.
+
+    After the switch:
+    - "the service crashed and was restarted 2 time(s) by systemd": the new release dies on start.
+      The log lines printed after the error say why: often a missing environment variable, a port
+      already in use, a write outside shared/, or a runtime under /home.
+    - "not healthy after 20s: systemd says activating; the health url said: ...": it starts too
+      slowly (raise timeout_secs) or the URL is wrong. The URL is fetched on the server: use
+      127.0.0.1 and the app's port.
+    - "pipeline.health.url is set, but the server has neither curl nor wget": install one.
+    - "rollback failed: ... did not come back either" (exit 5): both releases fail now, so
+      something outside the releases changed: the database, files in shared/, a package on the
+      server. Look at the server now.
+    - "deploy may not run sudo systemctl stop my-api. Run server-setup.sh on the server again":
+      the sudo rule predates :stop, :start and :logs; run the command it shows, as root.
+
+    Still unclear: watch the deploy in the TUI, or read the headless log from the top. Every
+    command shipdeck runs on the server is logged after `›` before it runs, with its output below.

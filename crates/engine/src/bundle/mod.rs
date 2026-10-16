@@ -239,7 +239,7 @@ pub fn pack(
                 };
                 tar.append_data(&mut header, &entry.path, &mut reader)
                     .with_context(|| format!("packing {}", local.display()))?;
-                let packed = format!("{:x}", reader.inner.hash.finalize());
+                let packed = content::hex(reader.inner.hash);
                 if Some(&packed) != entry.sha256.as_ref() {
                     bail!(
                         "{} changed while the release was packed; deploy again once nothing writes to it",
