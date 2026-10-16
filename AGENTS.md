@@ -82,6 +82,9 @@ rolls back any release. Design and decisions: `docs/plan.md`. Usage: `README.md`
   that call shipdeck. Add new ones; never renumber.
 - Tests live next to the code in `<module>_test.rs`:
   `#[cfg(test)] #[path = "<module>_test.rs"] mod tests;`.
+- Keep every `.rs` file, tests included, around 700 lines and never past
+  about 900, so a file can be read whole. Past that, split it by subject
+  into a folder module; a large test file splits the same way as its code.
 - Done means `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`
   and `cargo test --workspace` pass.
   lefthook's pre-push hook (`lefthook.yml`) runs them, with `cargo check`, on
