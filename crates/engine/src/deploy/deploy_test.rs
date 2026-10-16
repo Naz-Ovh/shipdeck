@@ -27,6 +27,7 @@ fn deployable(yaml: &str) -> Deployable {
         slug: "web".into(),
         endpoint: Endpoint::from_config(&config.ssh, HostConfig::default()).unwrap(),
         config,
+        yaml: yaml.to_string(),
     }
 }
 

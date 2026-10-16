@@ -28,6 +28,7 @@ pipeline:
         folder: PathBuf::from(format!("deploy/{slug}")),
         slug: slug.into(),
         config,
+        yaml: String::new(),
         endpoint,
     }
 }

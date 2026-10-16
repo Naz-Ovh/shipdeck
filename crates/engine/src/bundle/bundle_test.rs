@@ -47,6 +47,7 @@ pipeline:
         folder: deploy,
         slug: "demo".into(),
         config,
+        yaml,
         endpoint,
     }
 }

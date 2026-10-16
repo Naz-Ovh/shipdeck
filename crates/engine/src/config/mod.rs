@@ -589,6 +589,9 @@ pub struct Deployable {
     /// The folder name, used as a short handle in the UI.
     pub slug: String,
     pub config: DeployConfig,
+    /// `deploy.yaml` as it was read; a release's content fingerprint
+    /// covers it, so a changed setting is a changed release.
+    pub yaml: String,
     /// `config.ssh` with `~/.ssh/config` applied.
     pub endpoint: Endpoint,
 }
@@ -655,6 +658,7 @@ impl Deployable {
             folder: folder.to_path_buf(),
             slug,
             config,
+            yaml: text,
             endpoint,
         })
     }

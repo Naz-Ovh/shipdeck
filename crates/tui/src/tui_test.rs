@@ -118,6 +118,7 @@ fn with_config(slug: &str, host: &str, config: DeployConfig) -> Deployable {
         folder: PathBuf::from(format!("scripts/deploy/{slug}")),
         slug: slug.into(),
         config,
+        yaml: String::new(),
         endpoint,
     }
 }

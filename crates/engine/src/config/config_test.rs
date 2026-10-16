@@ -97,6 +97,7 @@ fn deployable(folder: &Path, config: DeployConfig) -> Deployable {
         )
         .unwrap(),
         config,
+        yaml: String::new(),
     }
 }
 
