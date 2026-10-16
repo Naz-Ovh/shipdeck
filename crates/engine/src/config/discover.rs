@@ -49,3 +49,7 @@ pub fn discover(root: &Path) -> Result<Discovery> {
     }
     Ok(found)
 }
+
+#[cfg(test)]
+#[path = "discover_test.rs"]
+mod tests;

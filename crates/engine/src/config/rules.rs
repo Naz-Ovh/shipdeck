@@ -624,3 +624,7 @@ fn overlaps(a: &str, b: &str) -> bool {
     let (a, b) = (Path::new(a), Path::new(b));
     a.starts_with(b) || b.starts_with(a)
 }
+
+#[cfg(test)]
+#[path = "rules_test.rs"]
+mod tests;

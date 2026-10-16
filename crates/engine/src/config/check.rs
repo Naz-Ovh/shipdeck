@@ -722,3 +722,7 @@ fn missing_help(path: &[String]) -> String {
         other => format!("add `{}:`", other.rsplit('.').next().unwrap_or(other)),
     }
 }
+
+#[cfg(test)]
+#[path = "check_test.rs"]
+mod tests;

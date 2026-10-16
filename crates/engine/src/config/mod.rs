@@ -8,6 +8,8 @@
 
 mod check;
 mod discover;
+#[cfg(test)]
+mod fixtures;
 pub mod glob;
 mod problem;
 mod rules;

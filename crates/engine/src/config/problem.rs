@@ -283,3 +283,7 @@ fn snippet(out: &mut String, paint: &Paint, path: &Path, lines: &[&str], problem
         );
     }
 }
+
+#[cfg(test)]
+#[path = "problem_test.rs"]
+mod tests;

@@ -62,3 +62,7 @@ pub fn text() -> String {
     text.push('\n');
     text
 }
+
+#[cfg(test)]
+#[path = "schema_test.rs"]
+mod tests;
