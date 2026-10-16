@@ -15,7 +15,18 @@ fn splits_chunks_into_lines() {
     lines.feed(b"o\r\nthree", |l| seen.push(l.to_string()));
     lines.flush(|l| seen.push(l.to_string()));
     assert_eq!(seen, ["one", "two", "three"]);
-    assert_eq!(lines.all, "one\ntwo\r\nthree");
+    assert_eq!(lines.text(), "one\ntwo\r\nthree");
+}
+
+#[test]
+fn a_character_split_between_packets_survives() {
+    let mut lines = Lines::default();
+    let mut seen = Vec::new();
+    let text = "café\n".as_bytes();
+    lines.feed(&text[..4], |l| seen.push(l.to_string()));
+    lines.feed(&text[4..], |l| seen.push(l.to_string()));
+    assert_eq!(seen, ["café"]);
+    assert_eq!(lines.text(), "café\n");
 }
 
 #[test]

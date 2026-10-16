@@ -147,8 +147,8 @@ impl Session {
         err.flush(|l| on_line(Stream::Err, l));
         Ok(Output {
             code: code.ok_or_else(|| anyhow!("connection to {} closed mid-command", self.label))?,
-            stdout: out.all,
-            stderr: err.all,
+            stdout: out.text(),
+            stderr: err.text(),
         })
     }
 
@@ -376,12 +376,14 @@ impl Pool {
 #[derive(Default)]
 struct Lines {
     partial: Vec<u8>,
-    all: String,
+    /// Every byte, decoded once at the end: a packet can end inside a
+    /// character.
+    all: Vec<u8>,
 }
 
 impl Lines {
     fn feed(&mut self, bytes: &[u8], mut emit: impl FnMut(&str)) {
-        self.all.push_str(&String::from_utf8_lossy(bytes));
+        self.all.extend_from_slice(bytes);
         for &byte in bytes {
             if byte == b'\n' {
                 emit(String::from_utf8_lossy(&self.partial).trim_end());
@@ -397,6 +399,10 @@ impl Lines {
             emit(String::from_utf8_lossy(&self.partial).trim_end());
             self.partial.clear();
         }
+    }
+
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.all).into_owned()
     }
 }
 
