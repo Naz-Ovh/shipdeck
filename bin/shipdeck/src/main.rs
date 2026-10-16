@@ -104,6 +104,10 @@ enum ServerCommand {
         #[arg(long, value_enum, default_value_t = OnFailureArg::Rollback)]
         on_failure: OnFailureArg,
 
+        /// Deploy even when nothing changed since the live release; without it, such a deploy stops with exit code 6
+        #[arg(long)]
+        allow_unchanged: bool,
+
         #[command(flatten)]
         ssh: SshArgs,
     },
@@ -256,8 +260,15 @@ async fn main() -> Result<ExitCode> {
     let mut headless = Headless::new(pool.clone(), questions, ssh.trust_new_host);
     let code = match command {
         ServerCommand::Deploy {
-            names, on_failure, ..
-        } => headless.deploy(&discovery, &names, on_failure.into()).await,
+            names,
+            on_failure,
+            allow_unchanged,
+            ..
+        } => {
+            headless
+                .deploy(&discovery, &names, on_failure.into(), allow_unchanged)
+                .await
+        }
         ServerCommand::Rollback { name, to, .. } => headless.rollback(&discovery, &name, to).await,
         ServerCommand::Releases { name, .. } => headless.releases(&discovery, &name).await,
     };

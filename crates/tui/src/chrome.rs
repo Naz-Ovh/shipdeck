@@ -104,6 +104,7 @@ fn operation_status(app: &App) -> Line<'static> {
                 Outcome::RolledBack { .. } => ("↩", WARN, format!("{slug}: rolled back")),
                 Outcome::Kept { .. } => ("▲", WARN, format!("{slug}: kept after a failure")),
                 Outcome::RollbackFailed { .. } => ("‼", ERR, format!("{slug}: rollback failed")),
+                Outcome::Unchanged { .. } => ("=", WARN, format!("{slug}: nothing changed")),
             };
             Line::from(vec![
                 Span::styled(format!("{icon} "), theme::bold(color)),
@@ -121,6 +122,7 @@ pub fn footer(frame: &mut Frame, area: Rect, app: &App) {
     let hints: &[(&str, &str)] = match app.modals.front() {
         Some(Modal::Secret { .. }) => &[("⏎", "submit"), ("esc", "cancel"), ("ctrl+u", "clear")],
         Some(Modal::AskRollback { .. }) => &[("y", "roll back now"), ("n", "keep it live")],
+        Some(Modal::AskUnchanged { .. }) => &[("y", "deploy anyway"), ("n", "stop here")],
         Some(_) => &[("y", "yes"), ("n", "no")],
         None => match app.screen {
             Screen::Deployables => &[

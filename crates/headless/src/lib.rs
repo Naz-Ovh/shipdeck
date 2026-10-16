@@ -46,7 +46,7 @@ impl OnFailure {
 }
 
 /// The exit code for each way an operation ends. 2 is left to the flag
-/// parser's usage errors.
+/// parser's usage errors. Scripts depend on these: add, never renumber.
 pub fn exit_code(outcome: &Outcome) -> u8 {
     match outcome {
         Outcome::Succeeded { .. } => 0,
@@ -54,6 +54,7 @@ pub fn exit_code(outcome: &Outcome) -> u8 {
         Outcome::RolledBack { .. } => 3,
         Outcome::Kept { .. } => 4,
         Outcome::RollbackFailed { .. } => 5,
+        Outcome::Unchanged { .. } => 6,
     }
 }
 
@@ -109,11 +110,14 @@ impl Headless {
     }
 
     /// Deploys each in turn; the first that does not succeed stops the rest.
+    /// A release the live one already holds is deployed only with
+    /// `allow_unchanged`.
     pub async fn deploy(
         &mut self,
         discovery: &Discovery,
         names: &[String],
         on_failure: OnFailure,
+        allow_unchanged: bool,
     ) -> ExitCode {
         let mut chosen: Vec<Deployable> = Vec::new();
         for name in names {
@@ -133,7 +137,9 @@ impl Headless {
                 self.pool.clone(),
                 Reporter::new(1, tx),
             ));
-            let code = self.watch(&deployable, &steps, ops, on_failure).await;
+            let code = self
+                .watch(&deployable, &steps, ops, on_failure, allow_unchanged)
+                .await;
             if code != 0 {
                 let rest: Vec<&str> = chosen[index + 1..]
                     .iter()
@@ -166,9 +172,10 @@ impl Headless {
             self.pool.clone(),
             Reporter::new(1, tx),
         ));
-        // A manual rollback that fails puts back what was live; nothing to keep.
+        // A manual rollback that fails puts back what was live; nothing to
+        // keep. It never asks about an unchanged release.
         let code = self
-            .watch(&deployable, &steps, ops, OnFailure::Rollback)
+            .watch(&deployable, &steps, ops, OnFailure::Rollback, false)
             .await;
         ExitCode::from(code)
     }
@@ -208,6 +215,7 @@ impl Headless {
         steps: &[&'static str],
         mut ops: UnboundedReceiver<OpUpdate>,
         on_failure: OnFailure,
+        allow_unchanged: bool,
     ) -> u8 {
         let mut lines = Lines::new(steps, self.paint, Instant::now());
         let started = Instant::now();
@@ -226,6 +234,9 @@ impl Headless {
                         // The deploy may have stopped waiting already; it
                         // logs the choice itself.
                         let _ = question.reply.send(on_failure == OnFailure::Rollback);
+                    }
+                    Some(OpEvent::AskUnchanged(question)) => {
+                        let _ = question.reply.send(allow_unchanged);
                     }
                     Some(event) => {
                         if let Some(line) = lines.line(event, Instant::now()) {
@@ -353,6 +364,10 @@ pub fn summary(paint: Paint, name: &str, outcome: &Outcome, took: Duration) -> S
             "✘ {name}: the new release failed and putting the old one back failed too; \
              check the server now"
         )),
+        Outcome::Unchanged { live } => paint.warn(&format!(
+            "▲ {name}: nothing changed since {live}, so nothing was deployed; \
+             --allow-unchanged deploys it anyway"
+        )),
     }
 }
 
@@ -431,7 +446,7 @@ impl Lines {
                 Some(paint.muted(&format!("… {label} {}", amount(done, total, unit))))
             }
             OpEvent::Release(id) => Some(paint.info(&format!("ℹ release {id}"))),
-            OpEvent::AskRollback(_) | OpEvent::Finished(_) => None,
+            OpEvent::AskRollback(_) | OpEvent::AskUnchanged(_) | OpEvent::Finished(_) => None,
         }
     }
 }

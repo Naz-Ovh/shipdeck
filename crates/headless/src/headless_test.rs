@@ -55,9 +55,10 @@ fn every_outcome_has_its_own_exit_code() {
             error: error.clone(),
             rollback_error: error,
         },
+        Outcome::Unchanged { live: "r".into() },
     ]
     .map(|outcome| exit_code(&outcome));
-    assert_eq!(codes, [0, 1, 3, 4, 5]);
+    assert_eq!(codes, [0, 1, 3, 4, 5, 6]);
 }
 
 #[test]
@@ -190,6 +191,18 @@ fn the_summary_says_what_is_live() {
             took
         ),
         "▲ my-api: the new release failed; v0.3.0 is live again"
+    );
+    assert_eq!(
+        summary(
+            paint,
+            "my-api",
+            &Outcome::Unchanged {
+                live: "v0.3.1".into()
+            },
+            took
+        ),
+        "▲ my-api: nothing changed since v0.3.1, so nothing was deployed; \
+         --allow-unchanged deploys it anyway"
     );
 }
 

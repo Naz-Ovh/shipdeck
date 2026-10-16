@@ -13,7 +13,7 @@ use shipdeck_engine::remote::Archive;
 use std::time::Instant;
 
 use shipdeck_engine::config::{ROLLBACK_ANSWER_SECS, Rollback};
-use shipdeck_engine::deploy::report::RollbackQuestion;
+use shipdeck_engine::deploy::report::{RollbackQuestion, UnchangedQuestion};
 
 use super::app::{App, Live, Modal};
 use super::theme::{self, ACCENT, ERR, INK, MUTED, SURFACE, TEXT, VIOLET, WARN};
@@ -33,6 +33,11 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
             deadline,
             ..
         } => ask_rollback(app, *deployable, question, *deadline),
+        Modal::AskUnchanged {
+            deployable,
+            question,
+            ..
+        } => ask_unchanged(app, *deployable, question),
         Modal::ConfirmRollback {
             deployable,
             target,
@@ -285,6 +290,30 @@ fn ask_rollback(app: &App, index: usize, question: &RollbackQuestion, deadline: 
             ("y", "roll back now".into()),
             ("n", format!("keep {new} live")),
         ],
+    )
+}
+
+fn ask_unchanged(app: &App, index: usize, question: &UnchangedQuestion) -> Dialog {
+    let slug = &app.deployables[index].slug;
+    let lines = vec![
+        Line::from(vec![
+            Span::styled("Nothing changed since ", theme::bold(TEXT)),
+            Span::styled(question.live.clone(), theme::bold(VIOLET)),
+            Span::styled(" (live).", theme::bold(TEXT)),
+        ]),
+        Line::default(),
+        Line::from(Span::styled(
+            "Deploying again makes a duplicate release.",
+            theme::text(),
+        )),
+        Line::default(),
+        Line::from(Span::styled("Deploy anyway?", theme::bold(WARN))),
+    ];
+    (
+        format!("{slug} · nothing changed"),
+        WARN,
+        lines,
+        vec![("y", "deploy anyway".into()), ("n", "stop here".into())],
     )
 }
 

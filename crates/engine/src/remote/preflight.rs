@@ -151,3 +151,7 @@ echo \"active=$(systemctl is-active {svc} 2>&1 | head -n1)\"
         })
     }
 }
+
+#[cfg(test)]
+#[path = "preflight_test.rs"]
+mod tests;

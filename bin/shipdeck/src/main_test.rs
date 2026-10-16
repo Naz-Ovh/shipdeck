@@ -33,6 +33,23 @@ fn deploy_takes_names_and_rolls_back_by_default() {
 }
 
 #[test]
+fn deploy_stops_on_an_unchanged_release_unless_allowed() {
+    for (extra, allowed) in [(None, false), (Some("--allow-unchanged"), true)] {
+        let args: Vec<&str> = ["deploy", "./deploy", "my-api"]
+            .into_iter()
+            .chain(extra)
+            .collect();
+        let Some(Command::Server(ServerCommand::Deploy {
+            allow_unchanged, ..
+        })) = parse(&args).unwrap().command
+        else {
+            panic!("not a deploy");
+        };
+        assert_eq!(allow_unchanged, allowed);
+    }
+}
+
+#[test]
 fn deploy_flags_go_after_the_command() {
     let cli = parse(&[
         "deploy",

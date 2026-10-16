@@ -281,3 +281,54 @@ fn pm2_must_be_known_and_alone() {
     let err = check_pm2(&web, &found, &report).unwrap_err().to_string();
     assert!(err.contains("sudo systemctl disable --now web"), "{err}");
 }
+
+#[tokio::test]
+async fn an_unchanged_release_goes_out_only_when_the_answer_is_yes() {
+    let web = deployable(NODE);
+    for give in [false, true] {
+        let (report, mut rx) = reporter();
+        let mut run = Run::new(&web, &report, deploy_steps(&web.config), Action::Deploy);
+        run.release = Some("v1.4.1-abc1234-20261015.120000".into());
+        let asked = run.deploy_unchanged("v1.4.0-abc1234-20261014.120000");
+        let answering = async {
+            loop {
+                let update = rx.recv().await.unwrap();
+                if let OpEvent::AskUnchanged(question) = update.event {
+                    assert_eq!(question.live, "v1.4.0-abc1234-20261014.120000");
+                    assert_eq!(question.release, "v1.4.1-abc1234-20261015.120000");
+                    question.reply.send(give).unwrap();
+                    break;
+                }
+            }
+        };
+        let (deploys, ()) = tokio::join!(asked, answering);
+        assert_eq!(deploys, give);
+    }
+
+    // Nobody to answer: it does not deploy.
+    let (report, rx) = reporter();
+    drop(rx);
+    let run = Run::new(&web, &report, deploy_steps(&web.config), Action::Deploy);
+    assert!(!run.deploy_unchanged("v1").await);
+}
+
+#[test]
+fn stopping_an_unchanged_deploy_skips_the_rest_and_fails_nothing() {
+    let web = deployable(&format!(
+        "{NODE}  failed: {{ run: {{ local: ./alert }} }}\n"
+    ));
+    let (report, mut rx) = reporter();
+    let run = Run::new(&web, &report, deploy_steps(&web.config), Action::Deploy);
+    let ended = run.unchanged(Step::Pack, "v1.4.0");
+    assert!(matches!(&ended.outcome, Outcome::Unchanged { live } if live == "v1.4.0"));
+    assert!(ended.failed.is_none());
+    let mut skipped = Vec::new();
+    while let Ok(update) = rx.try_recv() {
+        if let OpEvent::Step { step, state, .. } = update.event {
+            assert_eq!(state, report::StepState::Skipped);
+            skipped.push(step);
+        }
+    }
+    // Pack (2) through Done (10); Failed (11) is left to `failed`.
+    assert_eq!(skipped, (2..=10).collect::<Vec<_>>());
+}

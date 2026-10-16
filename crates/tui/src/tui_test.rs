@@ -13,7 +13,7 @@ use shipdeck_engine::config::{DeployConfig, Deployable, Discovery, parse};
 use shipdeck_engine::deploy::deploy_step_names;
 
 use shipdeck_engine::deploy::report::{
-    LogKind, OpEvent, OpUpdate, Outcome, RollbackQuestion, StepState, Unit,
+    LogKind, OpEvent, OpUpdate, Outcome, RollbackQuestion, StepState, UnchangedQuestion, Unit,
 };
 use shipdeck_engine::release::ReleaseName;
 use shipdeck_engine::remote::{Archive, Kind, Listing, ReleaseEntry, Status};
@@ -628,4 +628,48 @@ async fn draws_an_empty_root() {
         fetched,
     );
     render(&mut app, 100, 30, "empty");
+}
+
+#[tokio::test]
+async fn an_unchanged_release_asks_first_and_no_is_the_default() {
+    for (key, deploys) in [
+        (KeyCode::Enter, false),
+        (KeyCode::Esc, false),
+        (KeyCode::Char('n'), false),
+        (KeyCode::Char('y'), true),
+    ] {
+        let mut app = app();
+        app.screen = Screen::Deployables;
+        let steps = deploy_step_names(&app.deployables[0].config);
+        app.op = Some(Operation::new(1, OpKind::Deploy, 0, &steps));
+        let (reply, answer) = tokio::sync::oneshot::channel();
+        send(
+            &mut app,
+            OpEvent::AskUnchanged(UnchangedQuestion {
+                release: "v0.3.2-77aa001-20261014.160501".into(),
+                live: RELEASES[0].into(),
+                reply,
+            }),
+        );
+        assert!(matches!(
+            app.modals.front(),
+            Some(Modal::AskUnchanged { .. })
+        ));
+        assert_eq!(app.screen, Screen::Operation);
+        render(&mut app, 100, 30, "ask-unchanged");
+        press(&mut app, key);
+        assert!(app.modals.is_empty(), "{key:?}");
+        assert_eq!(answer.await, Ok(deploys), "{key:?}");
+    }
+
+    let mut app = app();
+    let steps = deploy_step_names(&app.deployables[0].config);
+    app.op = Some(Operation::new(1, OpKind::Deploy, 0, &steps));
+    send(
+        &mut app,
+        OpEvent::Finished(Outcome::Unchanged {
+            live: RELEASES[0].into(),
+        }),
+    );
+    render(&mut app, 100, 30, "deploy-unchanged");
 }

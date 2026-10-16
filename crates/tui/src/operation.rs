@@ -46,7 +46,13 @@ fn banner(frame: &mut Frame, area: Rect, app: &App, op: &Operation) {
     let (title, color) = match (&op.kind, &op.finished) {
         (_, None) => (op_title(op), ACCENT),
         (_, Some((Outcome::Succeeded { .. }, _))) => (op_title(op), OK),
-        (_, Some((Outcome::RolledBack { .. } | Outcome::Kept { .. }, _))) => (op_title(op), WARN),
+        (
+            _,
+            Some((
+                Outcome::RolledBack { .. } | Outcome::Kept { .. } | Outcome::Unchanged { .. },
+                _,
+            )),
+        ) => (op_title(op), WARN),
         (_, Some(_)) => (op_title(op), ERR),
     };
     let block = Block::bordered()
@@ -91,10 +97,9 @@ fn banner(frame: &mut Frame, area: Rect, app: &App, op: &Operation) {
     let second = match &op.finished {
         None => {
             let running = op.steps.iter().find(|s| s.state == StepState::Running);
-            let asking = app
-                .modals
-                .iter()
-                .any(|m| matches!(m, Modal::AskRollback { op: id, .. } if *id == op.id));
+            let asking = app.modals.iter().any(|m| {
+                matches!(m, Modal::AskRollback { op: id, .. } | Modal::AskUnchanged { op: id, .. } if *id == op.id)
+            });
             let what = match running {
                 _ if asking => "Waiting for your answer",
                 Some(step) => step.name,
@@ -180,6 +185,14 @@ fn outcome_line(op: &Operation, outcome: &Outcome) -> Line<'static> {
                 theme::bold(ERR),
             ),
             Span::styled("  · check the server now", theme::bold(WARN)),
+        ]),
+        Outcome::Unchanged { live } => Line::from(vec![
+            theme::badge("NOTHING CHANGED", WARN),
+            Span::styled(
+                format!("  {live} already holds this release"),
+                theme::bold(WARN),
+            ),
+            Span::styled("  · nothing on the server was touched", theme::muted()),
         ]),
     }
 }
@@ -284,7 +297,10 @@ fn progress(frame: &mut Frame, area: Rect, op: &Operation, tick: u64) {
     let color = match &op.finished {
         None => ACCENT,
         Some((Outcome::Succeeded { .. }, _)) => OK,
-        Some((Outcome::RolledBack { .. } | Outcome::Kept { .. }, _)) => WARN,
+        Some((
+            Outcome::RolledBack { .. } | Outcome::Kept { .. } | Outcome::Unchanged { .. },
+            _,
+        )) => WARN,
         Some(_) => ERR,
     };
     frame.render_widget(

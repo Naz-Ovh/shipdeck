@@ -62,6 +62,11 @@ pub enum Outcome {
         release: String,
         error: String,
     },
+    /// The release held exactly what `live` does, and you chose not to
+    /// deploy a duplicate; nothing on the server changed.
+    Unchanged {
+        live: String,
+    },
 }
 
 /// The deploy asks whether to roll back. No answer within `seconds` (or
@@ -77,6 +82,18 @@ pub struct RollbackQuestion {
     pub error: String,
     pub seconds: u64,
     /// `true` rolls back; `false` keeps the new release.
+    pub reply: oneshot::Sender<bool>,
+}
+
+/// The deploy asks whether to go on with a release that holds exactly
+/// what the live one does. No answer (nobody to answer) means no.
+#[derive(Debug)]
+pub struct UnchangedQuestion {
+    /// The release the deploy would make.
+    pub release: String,
+    /// The live release with the same content.
+    pub live: String,
+    /// `true` deploys it anyway, as a duplicate of `live`.
     pub reply: oneshot::Sender<bool>,
 }
 
@@ -101,6 +118,7 @@ pub enum OpEvent {
     /// The id of the release this operation works on, once it is known.
     Release(String),
     AskRollback(RollbackQuestion),
+    AskUnchanged(UnchangedQuestion),
     Finished(Outcome),
 }
 
@@ -206,6 +224,18 @@ impl Reporter {
             step,
             error: error.to_string(),
             seconds,
+            reply,
+        }));
+        answer
+    }
+
+    /// Asks whether to deploy a release the live one already holds; the
+    /// answer arrives on the receiver.
+    pub fn ask_unchanged(&self, release: &str, live: &str) -> oneshot::Receiver<bool> {
+        let (reply, answer) = oneshot::channel();
+        self.send(OpEvent::AskUnchanged(UnchangedQuestion {
+            release: release.to_string(),
+            live: live.to_string(),
             reply,
         }));
         answer

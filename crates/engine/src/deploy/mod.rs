@@ -470,6 +470,12 @@ impl<'a> Run<'a> {
             Err(err) => return self.stop(Step::Pack, err),
         };
         manifest.content = Some(fingerprint);
+        if let (Some(live), Some(_)) = (&facts.current, &facts.content)
+            && facts.content == manifest.content
+            && !self.deploy_unchanged(live).await
+        {
+            return self.unchanged(Step::Pack, live);
+        }
         let packed = async {
             let on_server = self
                 .on_server(&server, &id, &contents, facts.current.as_deref())
@@ -631,6 +637,46 @@ impl<'a> Run<'a> {
 
         self.done(&server).await;
         Ended::ok(&id)
+    }
+
+    /// Asks whether to deploy a release `live` already holds. With nobody
+    /// to answer, it does not.
+    async fn deploy_unchanged(&self, live: &str) -> bool {
+        let report = self.report;
+        let id = self.release.clone().unwrap_or_default();
+        report.log(
+            LogKind::Info,
+            format!(
+                "nothing changed since {live}, the live release; asking whether to deploy anyway"
+            ),
+        );
+        match report.ask_unchanged(&id, live).await {
+            Ok(true) => {
+                report.log(
+                    LogKind::Info,
+                    format!("deploying anyway, as a duplicate of {live}"),
+                );
+                true
+            }
+            Ok(false) | Err(_) => false,
+        }
+    }
+
+    /// Stops a deploy whose release `live` already holds; nothing on the
+    /// server was touched.
+    fn unchanged(&self, step: Step, live: &str) -> Ended {
+        self.report.skip(self.at(step), "nothing changed");
+        self.skip_rest(step, "nothing changed");
+        self.report.log(
+            LogKind::Info,
+            format!("nothing was deployed; {live} stays live"),
+        );
+        Ended {
+            outcome: Outcome::Unchanged {
+                live: live.to_string(),
+            },
+            failed: None,
+        }
     }
 
     /// What `current` already has of `contents`, hashed by the server just

@@ -14,7 +14,8 @@ use shipdeck_engine::bundle::files::{self, Source};
 use shipdeck_engine::config::{Deployable, Discovery};
 use shipdeck_engine::deploy;
 use shipdeck_engine::deploy::report::{
-    LogKind, OpEvent, OpId, OpUpdate, Outcome, Reporter, RollbackQuestion, StepState, Unit,
+    LogKind, OpEvent, OpId, OpUpdate, Outcome, Reporter, RollbackQuestion, StepState,
+    UnchangedQuestion, Unit,
 };
 use shipdeck_engine::remote::{Archive, Kind, Listing, Server, Status};
 use shipdeck_engine::ssh::{Pool, Question};
@@ -172,8 +173,8 @@ impl Operation {
             .count()
     }
 
-    /// Applies one event; a rollback question is handed back for a dialog.
-    fn apply(&mut self, event: OpEvent) -> Option<RollbackQuestion> {
+    /// Applies one event; a question is handed back for a dialog.
+    fn apply(&mut self, event: OpEvent) -> Option<Asked> {
         match event {
             OpEvent::Step {
                 step,
@@ -232,11 +233,18 @@ impl Operation {
                 }
             }
             OpEvent::Release(id) => self.release = Some(id),
-            OpEvent::AskRollback(question) => return Some(question),
+            OpEvent::AskRollback(question) => return Some(Asked::Rollback(question)),
+            OpEvent::AskUnchanged(question) => return Some(Asked::Unchanged(question)),
             OpEvent::Finished(outcome) => self.finished = Some((outcome, Instant::now())),
         }
         None
     }
+}
+
+/// A question a running operation asks.
+enum Asked {
+    Rollback(RollbackQuestion),
+    Unchanged(UnchangedQuestion),
 }
 
 #[derive(Debug, Clone)]
@@ -273,6 +281,13 @@ pub enum Modal {
         deployable: usize,
         question: RollbackQuestion,
         deadline: Instant,
+    },
+    /// The release holds what the live one does: deploy a duplicate? The
+    /// deploy waits; no means it stops.
+    AskUnchanged {
+        op: OpId,
+        deployable: usize,
+        question: UnchangedQuestion,
     },
     Secret {
         title: String,
@@ -515,21 +530,34 @@ impl App {
         };
         let finished = matches!(update.event, OpEvent::Finished(_));
         let index = op.deployable;
-        if let Some(question) = op.apply(update.event) {
-            let deadline = Instant::now() + Duration::from_secs(question.seconds);
-            // In front of everything else: the countdown is already running.
-            self.modals.push_front(Modal::AskRollback {
-                op: update.op,
-                deployable: index,
-                question,
-                deadline,
-            });
-            self.screen = Screen::Operation;
+        match op.apply(update.event) {
+            Some(Asked::Rollback(question)) => {
+                let deadline = Instant::now() + Duration::from_secs(question.seconds);
+                // In front of everything else: the countdown is already running.
+                self.modals.push_front(Modal::AskRollback {
+                    op: update.op,
+                    deployable: index,
+                    question,
+                    deadline,
+                });
+                self.screen = Screen::Operation;
+            }
+            Some(Asked::Unchanged(question)) => {
+                // The deploy waits for it.
+                self.modals.push_front(Modal::AskUnchanged {
+                    op: update.op,
+                    deployable: index,
+                    question,
+                });
+                self.screen = Screen::Operation;
+            }
+            None => {}
         }
         if finished {
             let op_id = update.op;
-            self.modals
-                .retain(|modal| !matches!(modal, Modal::AskRollback { op, .. } if *op == op_id));
+            self.modals.retain(|modal| {
+                !matches!(modal, Modal::AskRollback { op, .. } | Modal::AskUnchanged { op, .. } if *op == op_id)
+            });
             self.refresh_status(index);
             if self
                 .releases
@@ -901,6 +929,19 @@ impl App {
                 };
                 if let Some(Modal::AskRollback { question, .. }) = self.modals.pop_front() {
                     // The deploy may have stopped waiting a moment ago.
+                    let _ = question.reply.send(answer);
+                }
+            }
+            Modal::AskUnchanged { .. } => {
+                let answer = match key.code {
+                    KeyCode::Char('y') | KeyCode::Char('Y') => true,
+                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc | KeyCode::Enter => {
+                        false
+                    }
+                    _ if ctrl_c => false,
+                    _ => return,
+                };
+                if let Some(Modal::AskUnchanged { question, .. }) = self.modals.pop_front() {
                     let _ = question.reply.send(answer);
                 }
             }
