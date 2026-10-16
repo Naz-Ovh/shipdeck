@@ -51,3 +51,17 @@ fn manifest_records_the_build_time_in_utc() {
     assert_eq!(manifest.id, "v0.3.1-ab12cd3-20261014.153012");
     assert_eq!(manifest.built_at, "2026-10-14T15:30:12+00:00");
 }
+
+#[test]
+fn a_manifest_from_before_fingerprints_still_reads() {
+    let old = r#"{"id":"x","version":"0.3.1","git":"ab12cd3","dirty":false,"built_at":"t","deployed_by":"me"}"#;
+    let manifest: Manifest = serde_json::from_str(old).unwrap();
+    assert_eq!(manifest.content, None);
+    let name = ReleaseName::new("0.3.1", "ab12cd3", false, at(2026, 10, 14, 15, 30, 12));
+    let json = serde_json::to_string(&Manifest {
+        content: Some("sha256:00".into()),
+        ..Manifest::new(&name, "me")
+    })
+    .unwrap();
+    assert!(json.contains(r#""content":"sha256:00""#), "{json}");
+}

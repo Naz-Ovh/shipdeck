@@ -8,7 +8,7 @@ mod rollback;
 
 pub use rollback::{rollback, rollback_step_names, rollback_steps};
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -437,8 +437,8 @@ impl<'a> Run<'a> {
         self.start(Step::Pack, "packing the release");
         let index = self.at(Step::Pack);
         let deployer = build::deployer(&deployable.project_dir()).await;
-        let manifest = Manifest::new(&name, &deployer);
-        let packed = async {
+        let mut manifest = Manifest::new(&name, &deployer);
+        let gathered = async {
             let start_path = start_path(deployable, &facts);
             let own = bundle::service_file(deployable, &name, start_path.as_deref())?;
             report.log(
@@ -450,15 +450,28 @@ impl<'a> Run<'a> {
             );
             let (owned, reporter) = (deployable.clone(), report.clone());
             let mut throttle = Throttle::default();
-            let bundle = tokio::task::spawn_blocking(move || {
-                bundle::pack(&owned, &manifest, own.as_ref(), |done, total| {
+            let contents = tokio::task::spawn_blocking(move || {
+                bundle::gather(&owned, own.as_ref(), |done, total| {
                     if throttle.ready(done, total) {
-                        reporter.progress(index, done, total, Unit::Bytes, "compressing");
+                        reporter.progress(index, done, total, Unit::Bytes, "hashing");
                     }
                 })
             })
             .await
             .map_err(|err| anyhow!("packing stopped: {err}"))??;
+            let fingerprint = contents.fingerprint(deployable, start_path.as_deref())?;
+            Ok::<_, anyhow::Error>((Arc::new(contents), fingerprint))
+        }
+        .await;
+        let (contents, fingerprint) = match gathered {
+            Ok(found) => found,
+            Err(err) => return self.stop(Step::Pack, err),
+        };
+        manifest.content = Some(fingerprint);
+        let packed = async {
+            let bundle = self
+                .pack(&contents, &manifest, HashMap::new(), Step::Pack)
+                .await?;
             if let Some(free) = facts.free_bytes {
                 let needed = bundle.data.len() as u64 * 2 + bundle.input_bytes;
                 if free < needed {
@@ -476,7 +489,7 @@ impl<'a> Run<'a> {
             Ok(bundle) => bundle,
             Err(err) => return self.stop(Step::Pack, err),
         };
-        for path in &bundle.unused_ecosystem {
+        for path in &contents.unused_ecosystem {
             report.log(
                 LogKind::Warn,
                 format!(
@@ -486,7 +499,7 @@ impl<'a> Run<'a> {
                 ),
             );
         }
-        for path in &bundle.replaced {
+        for path in &contents.replaced {
             report.log(
                 LogKind::Info,
                 format!("{path} from the deploy folder replaces the project's {path}"),
@@ -628,6 +641,30 @@ impl<'a> Run<'a> {
 
         self.done(&server).await;
         Ended::ok(&id)
+    }
+
+    /// Packs `contents` in the background, leaving out what `on_server`
+    /// already has; progress goes to `row`.
+    async fn pack(
+        &self,
+        contents: &Arc<bundle::Contents>,
+        manifest: &Manifest,
+        on_server: HashMap<String, String>,
+        row: Step,
+    ) -> Result<bundle::Bundle> {
+        let index = self.at(row);
+        let (contents, manifest, reporter) =
+            (contents.clone(), manifest.clone(), self.report.clone());
+        let mut throttle = Throttle::default();
+        tokio::task::spawn_blocking(move || {
+            bundle::pack(&contents, &manifest, &on_server, |done, total| {
+                if throttle.ready(done, total) {
+                    reporter.progress(index, done, total, Unit::Bytes, "compressing");
+                }
+            })
+        })
+        .await
+        .map_err(|err| anyhow!("packing stopped: {err}"))?
     }
 
     /// Whether `pipeline.setup` has anything to run.

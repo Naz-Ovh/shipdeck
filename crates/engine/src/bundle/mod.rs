@@ -1,20 +1,27 @@
 //! Packing a release into one `.tar.zst` in memory: the binary, the files
 //! `pipeline.pack.files` picks, `release.json` and the service's own file
-//! (the systemd unit or the PM2 app file).
+//! (the systemd unit or the PM2 app file). Files the live release already
+//! has stay out; the server copies them from it.
 
+pub mod content;
 pub mod files;
 pub mod pm2;
 pub mod unit;
 
+pub use content::{Contents, listable};
+
+use std::collections::{BTreeMap, HashMap};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::thread;
 
 use anyhow::{Context, Result, bail};
+use sha2::{Digest, Sha256};
 use zstd::stream::write::Encoder;
 
 use crate::config::{Deployable, Manager, is_ecosystem_file, release_path};
 use crate::release::{MANIFEST_FILE, Manifest, ReleaseName};
+use content::Hashing;
 use files::{Kind, Selection};
 
 /// zstd level for the bundle. On a 25 MB Rust binary, 9 packs to 8.6 MB in
@@ -26,18 +33,32 @@ const LEVEL: i32 = 9;
 #[derive(Debug)]
 pub struct Bundle {
     pub data: Vec<u8>,
+    /// Files in the release, sent or reused.
     pub files: usize,
-    /// Every path in it, as it lands in the release.
+    /// Every path in the release, as it lands there, sent or reused.
     pub paths: Vec<String>,
-    /// Size before compression.
+    /// The release's size before compression, reused files included.
     pub input_bytes: u64,
-    /// Project files a file from the deploy folder replaced.
-    pub replaced: Vec<String>,
-    /// Ecosystem files in the release PM2 never reads, because shipdeck
-    /// writes the app file from `pm2.options`.
-    pub unused_ecosystem: Vec<String>,
+    /// Files the live release already has: the server copies them from
+    /// `current` instead of unpacking them.
+    pub reused: usize,
+    pub reused_bytes: u64,
+    /// `sha256sum -c` input for every file of the release whose name it
+    /// reads back: `<hex>  ./<path>` lines.
+    pub receipt: Vec<u8>,
+    /// The reused files by the mode each gets: `./<path>` names, each
+    /// ending in a NUL.
+    pub reuse: BTreeMap<u32, Vec<u8>>,
 }
 
+impl Bundle {
+    /// Files in the archive itself.
+    pub fn sent(&self) -> usize {
+        self.files - self.reused
+    }
+}
+
+#[derive(Debug, Clone)]
 enum Source {
     File(PathBuf),
     Bytes(Vec<u8>),
@@ -46,11 +67,14 @@ enum Source {
     Link(PathBuf),
 }
 
+#[derive(Debug, Clone)]
 struct Entry {
     path: String,
     source: Source,
     mode: u32,
     size: u64,
+    /// For a file, once hashed.
+    sha256: Option<String>,
 }
 
 /// The file shipdeck writes into a release for its manager.
@@ -93,14 +117,13 @@ pub fn start_line(deployable: &Deployable, start_path: Option<&str>) -> String {
     }
 }
 
-/// Packs the release. `progress(done, total)` is called as input bytes are
-/// compressed.
-pub fn pack(
+/// Picks what goes into the release and hashes every file in it.
+/// `progress(done, total)` follows the bytes read.
+pub fn gather(
     deployable: &Deployable,
-    manifest: &Manifest,
     own: Option<&ServiceFile>,
-    mut progress: impl FnMut(u64, u64),
-) -> Result<Bundle> {
+    progress: impl FnMut(u64, u64),
+) -> Result<Contents> {
     let selection = files::select(deployable)?;
     let replaced = selection.replaced.clone();
     let service = &deployable.config.service;
@@ -114,13 +137,58 @@ pub fn pack(
     } else {
         Vec::new()
     };
-    let entries = collect(deployable, manifest, own, selection)?;
+    let mut entries = collect(deployable, own, selection)?;
+    content::hash_all(&mut entries, progress)?;
+    Ok(Contents {
+        entries,
+        own: own.map(|file| file.name.clone()),
+        replaced,
+        unused_ecosystem,
+    })
+}
+
+/// Packs the release with `manifest` as its `release.json`. A file whose
+/// SHA-256 `on_server` has under its path stays out of the archive, to be
+/// copied from the live release. `progress(done, total)` is called as
+/// input bytes are compressed.
+pub fn pack(
+    contents: &Contents,
+    manifest: &Manifest,
+    on_server: &HashMap<String, String>,
+    mut progress: impl FnMut(u64, u64),
+) -> Result<Bundle> {
+    let json = serde_json::to_vec_pretty(manifest)?;
+    let manifest = Entry {
+        path: MANIFEST_FILE.into(),
+        size: json.len() as u64,
+        sha256: Some(content::sha256(&json)),
+        source: Source::Bytes(json),
+        mode: 0o644,
+    };
+    let entries: Vec<&Entry> = std::iter::once(&manifest)
+        .chain(&contents.entries)
+        .collect();
+    let is_reused = |entry: &Entry| {
+        entry.is_candidate()
+            && entry.sha256.is_some()
+            && on_server.get(&entry.path) == entry.sha256.as_ref()
+    };
     let paths = entries.iter().map(|e| e.path.clone()).collect();
-    let total: u64 = entries.iter().map(|e| e.size).sum();
-    let files = entries
-        .iter()
-        .filter(|e| !matches!(e.source, Source::Dir | Source::Link(_)))
-        .count();
+    let is_file = |e: &&&Entry| !matches!(e.source, Source::Dir | Source::Link(_));
+    let files = entries.iter().filter(is_file).count();
+    let input_bytes: u64 = entries.iter().map(|e| e.size).sum();
+    let mut reuse: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
+    let (mut reused, mut reused_bytes) = (0, 0);
+    for entry in entries.iter().filter(|e| is_reused(e)) {
+        let list = reuse.entry(entry.mode).or_default();
+        list.extend_from_slice(b"./");
+        list.extend_from_slice(entry.path.as_bytes());
+        list.push(0);
+        reused += 1;
+        reused_bytes += entry.size;
+    }
+    let receipt = content::receipt(entries.iter().copied());
+    let total = input_bytes - reused_bytes;
 
     let mtime = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -130,21 +198,21 @@ pub fn pack(
     let mut done = 0u64;
     progress(0, total);
 
-    for entry in entries {
+    for entry in entries.iter().filter(|e| !is_reused(e)) {
         let mut header = tar::Header::new_gnu();
         header.set_mode(entry.mode);
         header.set_mtime(mtime);
         header.set_uid(0);
         header.set_gid(0);
         header.set_size(entry.size);
-        match entry.source {
+        match &entry.source {
             Source::Dir => {
                 header.set_entry_type(tar::EntryType::Directory);
                 tar.append_data(&mut header, &entry.path, io::empty())?;
             }
             Source::Link(target) => {
                 header.set_entry_type(tar::EntryType::Symlink);
-                tar.append_link(&mut header, &entry.path, &target)
+                tar.append_link(&mut header, &entry.path, target)
                     .with_context(|| format!("packing the link {}", entry.path))?;
             }
             Source::Bytes(bytes) => {
@@ -155,17 +223,27 @@ pub fn pack(
             }
             Source::File(local) => {
                 header.set_entry_type(tar::EntryType::Regular);
-                let file = std::fs::File::open(&local)
+                let file = std::fs::File::open(local)
                     .with_context(|| format!("opening {}", local.display()))?;
-                let reader = Counting {
-                    inner: file,
+                let mut reader = Counting {
+                    inner: Hashing {
+                        inner: file,
+                        hash: Sha256::new(),
+                    },
                     on_read: |n| {
                         done += n;
                         progress(done, total);
                     },
                 };
-                tar.append_data(&mut header, &entry.path, reader)
+                tar.append_data(&mut header, &entry.path, &mut reader)
                     .with_context(|| format!("packing {}", local.display()))?;
+                let packed = format!("{:x}", reader.inner.hash.finalize());
+                if Some(&packed) != entry.sha256.as_ref() {
+                    bail!(
+                        "{} changed while the release was packed; deploy again once nothing writes to it",
+                        local.display()
+                    );
+                }
             }
         }
     }
@@ -178,9 +256,11 @@ pub fn pack(
         data,
         files,
         paths,
-        input_bytes: total,
-        replaced,
-        unused_ecosystem,
+        input_bytes,
+        reused,
+        reused_bytes,
+        receipt,
+        reuse,
     })
 }
 
@@ -194,15 +274,14 @@ fn encoder() -> Result<Encoder<'static, Vec<u8>>> {
     Ok(encoder)
 }
 
-/// Everything that goes into the archive, in order, with its mode.
+/// Everything that goes into the release but `release.json`, in order,
+/// with its mode.
 fn collect(
     deployable: &Deployable,
-    manifest: &Manifest,
     own: Option<&ServiceFile>,
     selection: Selection,
 ) -> Result<Vec<Entry>> {
     let service = &deployable.config.service;
-    let manifest_json = serde_json::to_vec_pretty(manifest)?;
 
     let mut entries = Vec::new();
     if let (Some(binary), Some(name)) = (deployable.binary_path(), deployable.binary_name()) {
@@ -221,6 +300,7 @@ fn collect(
             source: Source::File(binary),
             mode: 0o755,
             size,
+            sha256: None,
         });
     }
     if let Some(file) = &service.pm2.ecosystem {
@@ -253,18 +333,13 @@ fn collect(
             );
         }
     }
-    entries.push(Entry {
-        path: MANIFEST_FILE.into(),
-        size: manifest_json.len() as u64,
-        source: Source::Bytes(manifest_json),
-        mode: 0o644,
-    });
     if let Some(own) = own {
         entries.push(Entry {
             path: own.name.clone(),
             size: own.text.len() as u64,
             source: Source::Bytes(own.text.as_bytes().to_vec()),
             mode: 0o644,
+            sha256: None,
         });
     }
 
@@ -275,18 +350,21 @@ fn collect(
                 source: Source::Dir,
                 mode: 0o755,
                 size: 0,
+                sha256: None,
             },
             Kind::Link(target) => Entry {
                 path,
                 source: Source::Link(target),
                 mode: 0o777,
                 size: 0,
+                sha256: None,
             },
             Kind::File { size, mode } => Entry {
                 path,
                 source: Source::File(item.local),
                 mode,
                 size,
+                sha256: None,
             },
         });
     }

@@ -113,6 +113,10 @@ pub struct Manifest {
     pub dirty: bool,
     pub built_at: String,
     pub deployed_by: String,
+    /// `sha256:<hex>` over what the release holds and how it runs (see
+    /// `bundle::Contents::fingerprint`); releases from before it have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
 }
 
 impl Manifest {
@@ -124,6 +128,7 @@ impl Manifest {
             dirty: name.dirty,
             built_at: name.stamp.and_utc().to_rfc3339(),
             deployed_by: deployed_by.to_string(),
+            content: None,
         }
     }
 }

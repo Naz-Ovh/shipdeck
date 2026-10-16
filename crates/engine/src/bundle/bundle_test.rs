@@ -1,5 +1,6 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::Read;
+use std::os::unix::fs::PermissionsExt;
 
 use chrono::{TimeZone, Utc};
 use zstd::stream::read::Decoder;
@@ -89,27 +90,23 @@ fn unit_file() -> ServiceFile {
     }
 }
 
+/// Gathers and packs as a deploy does, with nothing on the server.
+fn bundle_of(deployable: &Deployable, own: Option<&ServiceFile>) -> Result<(Contents, Bundle)> {
+    let contents = gather(deployable, own, |_, _| {})?;
+    let manifest = Manifest::new(&release(), "tester");
+    let bundle = pack(&contents, &manifest, &HashMap::new(), |_, _| {})?;
+    Ok((contents, bundle))
+}
+
 fn packed(deployable: &Deployable) -> (Bundle, Entries) {
-    let bundle = pack(
-        deployable,
-        &Manifest::new(&release(), "tester"),
-        Some(&unit_file()),
-        |_, _| {},
-    )
-    .unwrap();
+    let (_, bundle) = bundle_of(deployable, Some(&unit_file())).unwrap();
     let files = unpack(&bundle.data);
     (bundle, files)
 }
 
 fn pack_error(deployable: &Deployable) -> String {
     let own = service_file(deployable, &release(), None).unwrap();
-    let err = pack(
-        deployable,
-        &Manifest::new(&release(), "t"),
-        own.as_ref(),
-        |_, _| {},
-    )
-    .unwrap_err();
+    let err = bundle_of(deployable, own.as_ref()).unwrap_err();
     format!("{err:#}")
 }
 
@@ -125,8 +122,9 @@ fn packs_binary_files_manifest_and_unit_with_modes() {
         "    binary: out/demo\n    files:\n      include:\n        project: [./files/]\n        deploy: [\".env\"]",
     );
     let manifest = Manifest::new(&release(), "tester");
+    let contents = gather(&deployable, Some(&unit_file()), |_, _| {}).unwrap();
     let mut last = (0, 0);
-    let bundle = pack(&deployable, &manifest, Some(&unit_file()), |done, total| {
+    let bundle = pack(&contents, &manifest, &HashMap::new(), |done, total| {
         last = (done, total)
     })
     .unwrap();
@@ -230,12 +228,13 @@ fn globs_pick_files_and_a_deploy_file_replaces_the_project_one() {
         project: [\"dist/**/*.{js,json}\", config.json]
         deploy: [config.json]",
     );
-    let (bundle, files) = packed(&deployable);
+    let (contents, bundle) = bundle_of(&deployable, Some(&unit_file())).unwrap();
+    let files = unpack(&bundle.data);
     assert!(files.contains_key("dist/main.js"));
     assert!(files.contains_key("dist/vendor/lib.js"));
     assert!(!files.contains_key("dist/style.css"));
     assert_eq!(files["config.json"].1, b"prod");
-    assert_eq!(bundle.replaced, ["config.json"]);
+    assert_eq!(contents.replaced, ["config.json"]);
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -439,9 +438,9 @@ fn pm2_file_runs_from_current_with_the_options() {
         "pm2 app web: /usr/bin/node dist/main.js"
     );
     write(dir.join("app/dist/main.js"), "");
-    let (bundle, files) = packed_with(&deployable, &own);
+    let (contents, files) = packed_with(&deployable, &own);
     assert!(files.contains_key("demo.pm2.json"));
-    assert!(bundle.unused_ecosystem.is_empty());
+    assert!(contents.unused_ecosystem.is_empty());
 
     // An ecosystem file shipped by mistake is named, since PM2 never reads it.
     write(dir.join("app/ecosystem.config.js"), "module.exports = {}");
@@ -451,8 +450,8 @@ fn pm2_file_runs_from_current_with_the_options() {
         "    files:\n      include:\n        project: [dist, ecosystem.config.js]",
     );
     let own = service_file(&shipped, &release(), None).unwrap().unwrap();
-    let (bundle, _) = packed_with(&shipped, &own);
-    assert_eq!(bundle.unused_ecosystem, ["ecosystem.config.js"]);
+    let (contents, _) = packed_with(&shipped, &own);
+    assert_eq!(contents.unused_ecosystem, ["ecosystem.config.js"]);
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -481,27 +480,251 @@ fn pm2_ecosystem_must_ship_and_needs_no_file_of_ours() {
         err.contains("the release has no ecosystem.config.js"),
         "{err}"
     );
-    let bundle = pack(
-        &deployable,
-        &Manifest::new(&release(), "t"),
-        None,
-        |_, _| {},
-    )
-    .unwrap();
+    let (_, bundle) = bundle_of(&deployable, None).unwrap();
     let files = unpack(&bundle.data);
     assert!(files.contains_key("ecosystem.config.js"));
     assert!(!files.keys().any(|path| path.ends_with(".service")));
     std::fs::remove_dir_all(dir).unwrap();
 }
 
-fn packed_with(deployable: &Deployable, own: &ServiceFile) -> (Bundle, Entries) {
+fn packed_with(deployable: &Deployable, own: &ServiceFile) -> (Contents, Entries) {
+    let (contents, bundle) = bundle_of(deployable, Some(own)).unwrap();
+    let files = unpack(&bundle.data);
+    (contents, files)
+}
+
+fn sha(text: &str) -> String {
+    content::sha256(text.as_bytes())
+}
+
+/// A small release: a folder with a file, a link, and a file at the root.
+fn delta_deployable(dir: &Path) -> Deployable {
+    write(dir.join("app/same.txt"), "same");
+    write(dir.join("app/lib/changed.js"), "new");
+    for file in ["app/same.txt", "app/lib/changed.js"] {
+        std::fs::set_permissions(dir.join(file), std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    std::os::unix::fs::symlink("changed.js", dir.join("app/lib/link.js")).unwrap();
+    deployable(
+        dir,
+        "start: node lib/changed.js",
+        "    files:\n      include:\n        project: [same.txt, lib]",
+    )
+}
+
+#[test]
+fn sends_only_what_the_server_lacks_and_still_lists_every_path() {
+    let dir = scratch("delta");
+    let deployable = delta_deployable(&dir);
+    let contents = gather(&deployable, Some(&unit_file()), |_, _| {}).unwrap();
+    assert_eq!(contents.candidates(), ["lib/changed.js", "same.txt"]);
+    let on_server = HashMap::from([
+        ("same.txt".to_string(), sha("same")),
+        ("lib/changed.js".to_string(), sha("old")),
+        // shipdeck's own files always go, whatever the server says.
+        ("demo.service".to_string(), sha("[Unit]\n")),
+    ]);
+    let manifest = Manifest::new(&release(), "tester");
+    let bundle = pack(&contents, &manifest, &on_server, |_, _| {}).unwrap();
+    let files = unpack(&bundle.data);
+
+    assert!(!files.contains_key("same.txt"));
+    assert_eq!(files["lib/changed.js"].1, b"new");
+    assert!(files.contains_key("lib"));
+    assert_eq!(files["lib/link.js"].2.as_deref(), Some("changed.js"));
+    assert!(files.contains_key("release.json"));
+    assert!(files.contains_key("demo.service"));
+
+    let mut paths = bundle.paths.clone();
+    paths.sort();
+    assert_eq!(
+        paths,
+        [
+            "demo.service",
+            "lib",
+            "lib/changed.js",
+            "lib/link.js",
+            "release.json",
+            "same.txt"
+        ]
+    );
+    assert_eq!((bundle.files, bundle.reused, bundle.sent()), (4, 1, 3));
+    assert_eq!(bundle.reused_bytes, 4);
+    assert_eq!(
+        bundle.reuse,
+        BTreeMap::from([(0o644, b"./same.txt\0".to_vec())])
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn the_receipt_lists_every_file_sent_or_reused() {
+    let dir = scratch("receipt");
+    let deployable = delta_deployable(&dir);
+    let contents = gather(&deployable, Some(&unit_file()), |_, _| {}).unwrap();
+    let on_server = HashMap::from([("same.txt".to_string(), sha("same"))]);
+    let manifest = Manifest::new(&release(), "tester");
+    let bundle = pack(&contents, &manifest, &on_server, |_, _| {}).unwrap();
+    let json = serde_json::to_vec_pretty(&manifest).unwrap();
+    let expected = format!(
+        "{}  ./demo.service\n{}  ./lib/changed.js\n{}  ./release.json\n{}  ./same.txt\n",
+        sha("[Unit]\n"),
+        sha("new"),
+        content::sha256(&json),
+        sha("same"),
+    );
+    assert_eq!(String::from_utf8(bundle.receipt).unwrap(), expected);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn reused_files_keep_the_mode_this_release_gives_them() {
+    let dir = scratch("modes");
+    write(dir.join("app/a.sh"), "a");
+    write(dir.join("app/b.txt"), "b");
+    std::fs::set_permissions(dir.join("app/a.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::set_permissions(
+        dir.join("app/b.txt"),
+        std::fs::Permissions::from_mode(0o640),
+    )
+    .unwrap();
+    let deployable = deployable(
+        &dir,
+        "start: ./a.sh",
+        "    files:\n      include:\n        project: [a.sh, b.txt]",
+    );
+    let contents = gather(&deployable, None, |_, _| {}).unwrap();
+    let on_server = HashMap::from([
+        ("a.sh".to_string(), sha("a")),
+        ("b.txt".to_string(), sha("b")),
+    ]);
     let bundle = pack(
-        deployable,
-        &Manifest::new(&release(), "tester"),
-        Some(own),
+        &contents,
+        &Manifest::new(&release(), "t"),
+        &on_server,
+        |_, _| {},
+    )
+    .unwrap();
+    assert_eq!(
+        bundle.reuse,
+        BTreeMap::from([
+            (0o640, b"./b.txt\0".to_vec()),
+            (0o755, b"./a.sh\0".to_vec()),
+        ])
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn names_sha256sum_cannot_read_back_always_ship_and_go_unlisted() {
+    let dir = scratch("odd-names");
+    write(dir.join("app/files/back\\slash"), "x");
+    write(dir.join("app/files/new\nline"), "x");
+    write(dir.join("app/files/plain"), "x");
+    let deployable = deployable(
+        &dir,
+        "start: ./files/plain",
+        "    files:\n      include:\n        project: [files]",
+    );
+    let contents = gather(&deployable, None, |_, _| {}).unwrap();
+    assert_eq!(contents.candidates(), ["files/plain"]);
+    let on_server: HashMap<String, String> =
+        ["files/back\\slash", "files/new\nline", "files/plain"]
+            .into_iter()
+            .map(|path| (path.to_string(), sha("x")))
+            .collect();
+    let bundle = pack(
+        &contents,
+        &Manifest::new(&release(), "t"),
+        &on_server,
         |_, _| {},
     )
     .unwrap();
     let files = unpack(&bundle.data);
-    (bundle, files)
+    assert!(files.contains_key("files/back\\slash"));
+    assert!(files.contains_key("files/new\nline"));
+    assert!(!files.contains_key("files/plain"));
+    let receipt = String::from_utf8(bundle.receipt).unwrap();
+    assert!(receipt.contains("./files/plain\n"), "{receipt}");
+    assert!(
+        !receipt.contains("slash") && !receipt.contains("new"),
+        "{receipt}"
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn a_file_that_changes_after_it_was_hashed_is_not_packed() {
+    let dir = scratch("changed-under");
+    let deployable = delta_deployable(&dir);
+    let contents = gather(&deployable, None, |_, _| {}).unwrap();
+    write(dir.join("app/lib/changed.js"), "newer");
+    let err = pack(
+        &contents,
+        &Manifest::new(&release(), "t"),
+        &HashMap::new(),
+        |_, _| {},
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("changed while"), "{err}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn the_fingerprint_follows_content_and_settings_not_the_release_name() {
+    let dir = scratch("fingerprint");
+    let deployable = delta_deployable(&dir);
+    let print = |deployable: &Deployable, name: &ReleaseName| {
+        let own = service_file(deployable, name, None).unwrap();
+        let contents = gather(deployable, own.as_ref(), |_, _| {}).unwrap();
+        contents.fingerprint(deployable, None).unwrap()
+    };
+    let first = print(&deployable, &release());
+    assert!(
+        first.starts_with("sha256:") && first.len() == 7 + 64,
+        "{first}"
+    );
+    assert_eq!(print(&deployable, &release()), first);
+    let later = ReleaseName::new(
+        "0.4.0",
+        "9f8e7d6",
+        true,
+        Utc.with_ymd_and_hms(2026, 11, 1, 8, 0, 0).unwrap(),
+    );
+    assert_eq!(print(&deployable, &later), first, "the name changed it");
+
+    write(dir.join("app/same.txt"), "edited");
+    assert_ne!(print(&deployable, &release()), first, "a file");
+    write(dir.join("app/same.txt"), "same");
+    assert_eq!(print(&deployable, &release()), first);
+
+    std::fs::set_permissions(
+        dir.join("app/same.txt"),
+        std::fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+    assert_ne!(print(&deployable, &release()), first, "a mode");
+    std::fs::set_permissions(
+        dir.join("app/same.txt"),
+        std::fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
+    assert_eq!(print(&deployable, &release()), first);
+
+    let mut edited = deployable.clone();
+    edited.yaml.push_str("# a comment\n");
+    assert_ne!(print(&edited, &release()), first, "deploy.yaml");
+
+    // The same text, but the unit runs with another variable.
+    let mut env = deployable.clone();
+    env.config
+        .service
+        .env
+        .insert("NODE_ENV".into(), "production".into());
+    assert_ne!(print(&env, &release()), first, "the service's environment");
+
+    std::fs::remove_file(dir.join("app/lib/link.js")).unwrap();
+    std::os::unix::fs::symlink("same.txt", dir.join("app/lib/link.js")).unwrap();
+    assert_ne!(print(&deployable, &release()), first, "a link's target");
+    std::fs::remove_dir_all(dir).unwrap();
 }
