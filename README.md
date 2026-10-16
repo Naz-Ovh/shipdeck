@@ -99,7 +99,7 @@ For scripts and CI, three commands do the same work with no screen. They
 print progress to stderr as plain lines and never wait for an answer.
 
 ```sh
-shipdeck deploy   ./scripts/deploy my-api [my-web ...] [--on-failure rollback|keep]
+shipdeck deploy   ./scripts/deploy my-api [my-web ...] [--on-failure rollback|keep] [--allow-unchanged]
 shipdeck rollback ./scripts/deploy my-api --to v0.3.0-9f8e7d6-20261012.091000
 shipdeck releases ./scripts/deploy my-api     # the table on stdout, newest first
 ```
@@ -120,6 +120,7 @@ What the TUI would ask comes from flags instead:
 | --- | --- |
 | Deploy this? | Running the command is the yes. |
 | Roll back after a failed switch, restart or health check? | `--on-failure rollback` (the default) rolls back at once; `--on-failure keep` keeps the failed release live. Either overrides `pipeline.failed.rollback`. |
+| Nothing changed since the live release: deploy anyway? | No: the deploy stops with exit code `6` and touches nothing. `--allow-unchanged` deploys it anyway, as a duplicate. |
 | Trust a server seen for the first time? | No, unless `--trust-new-host`. A changed host key is always refused. |
 | A password or key passphrase? | Never asked: use `--key` or `SHIPDECK_SSH_KEY` (with `SHIPDECK_KEY_PASSPHRASE` for an encrypted key), `--password` or `SHIPDECK_PASSWORD`. |
 
@@ -133,6 +134,7 @@ The exit code says how it ended:
 | `3` | The new release failed and the previous one is live again. |
 | `4` | The new release failed and stays live (`--on-failure keep`). |
 | `5` | The new release failed and putting the old one back failed too: look at the server now. |
+| `6` | Nothing changed since the live release, so nothing was deployed (`--allow-unchanged` deploys anyway). |
 | `130` | Ctrl-C twice. The first one only warns, since stopping can leave the server between two releases. |
 
 `ssh.host` may be an alias from `~/.ssh/config`, so `host: prod` works like
@@ -236,9 +238,9 @@ pipeline:
 | --- | --- | --- | --- |
 | 1 | preflight | checks your PC and the server | `run.server` → `run.local` |
 | 2 | build | names the release | `run.local` |
-| 3 | pack | packs the binary and files | — |
-| 4 | upload | sends the archive to the server | — |
-| 5 | unpack | unpacks it into `releases/<id>`, links `service.shared` | — |
+| 3 | pack | hashes every file, asks the live release which it has, packs the rest | — |
+| 4 | upload | sends the archive and its receipt to the server | — |
+| 5 | unpack | unpacks it into `releases/<id>`, copies the unchanged files from `current`, checks every file, links `service.shared` | — |
 | 6 | setup | nothing: the old release is still live | `run.server` → `check.server` |
 | 7 | backup | packs `backup.files` into `backups/<id>.tar.zst` | — |
 | 8 | switch | points `current` at `releases/<id>`, installs its unit | — |
@@ -266,6 +268,47 @@ commands only where it can run them:
 
 Local commands run in `project`. Every command is one shell line (`sh -c`),
 so `&&`, pipes and `$VARS` work; give one, or a list.
+
+### Only what changed is sent
+
+Pack hashes every file of the release (SHA-256) and asks the server for the
+hashes of the same paths in the live release, computed there and then.
+Files with the same path and hash stay out of the archive: unpack copies
+them from `current` (keeping their mtimes, never as hard links, so the
+release you would roll back to stays as it is) and gives them this
+release's modes. Then `sha256sum -c` checks every file of the new release
+against a receipt before it is moved into place. If a copied file does not
+match, because the live release changed meanwhile, the release is removed
+and sent whole once. With nothing live yet, or a server that cannot hash,
+the whole release goes, as before. Folders, links, `release.json` and the
+service file always go, and so do files whose names hold a newline, a
+carriage return or a backslash.
+
+```
+✔ Pack    312 files · 309 already on the server · 3 to send · 25.0 MiB → 1.2 MiB
+✔ Unpack  releases/v1.4.1-ab12cd3-20261015.120000 · 3 unpacked · 309 copied · verified
+```
+
+Each release's `release.json` also holds a fingerprint of what it is: its
+files, modes and links, its service file (without the release's name) and
+`deploy.yaml`. When the new release's fingerprint equals the live one's,
+nothing changed, and shipdeck asks before making a duplicate:
+
+```
+╭ my-api · nothing changed ─────────────────────────────────────────────╮
+│ Nothing changed since v1.4.0-ab12cd3-20261014.120000 (live).          │
+│                                                                       │
+│ Deploying again makes a duplicate release.                            │
+│                                                                       │
+│ Deploy anyway?                                                        │
+│                                                                       │
+│  y  deploy anyway     n  stop here                                    │
+╰───────────────────────────────────────────────────────────────────────╯
+```
+
+`n`, Enter or Esc stop before anything on the server changes. Without the
+TUI the answer is no, unless `--allow-unchanged`. An edited comment in
+`deploy.yaml` counts as a change.
 
 ### Fields
 
@@ -595,11 +638,15 @@ must be able to:
 | `systemctl daemon-reload`, `systemctl enable <service>`, `systemctl restart <service>` | install and restart the app |
 | `install -m 0644 <dir>/current/<service>.service /etc/systemd/system/<service>.service` | put the release's unit in place |
 | `journalctl -u <service> -n 30 --no-pager` | show the log when a release fails |
+| `systemctl stop <service>`, `systemctl start <service>`, `journalctl -u <service> -f -n 200 --no-pager` | `:stop`, `:start` and `:logs` in the TUI; a deploy never needs them |
 
-As root these simply run. Any other user runs the last three through
+As root these simply run. Any other user runs all but the first row through
 `sudo -n`, so it needs sudo without a password for them. Preflight checks
-each one and, when something is missing, stops and names it. With PM2 only
-the first row applies.
+each one a deploy needs and, when something is missing, stops and names it.
+The last row is checked when you use it: a server set up before shipdeck
+could stop, start and follow the service still deploys, and `:stop` says to
+run `server-setup.sh` again, with the command. With PM2 only the first row
+applies.
 
 `server-setup.sh` sets this up for one app. Run it once on the server as
 root, with your values:
@@ -613,7 +660,8 @@ curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.5.0/server-setu
 It creates the user, authorizes the key, creates `service.dir` owned by that
 user and installs a sudo rule for exactly the commands above (or, with PM2,
 starts that user's PM2 at boot). Running it again changes nothing already in
-place.
+place, and brings an older sudo rule up to date; `--key` can then be left
+out.
 
 ## On the server
 
@@ -626,11 +674,14 @@ place.
 ```
 
 A release id is `v<version>-<git sha>[-dirty]-<UTC yyyymmdd.hhmmss>`. Each
-release carries `release.json` (who deployed what, from which commit) and its
-own unit, whose `Description=` holds the version, so `systemctl status`
-shows what is live. Each release also installs its own dependencies in
-setup, so a rollback to an open release finds them already in place; one
-kept only as a backup gets them from setup again.
+release carries `release.json` (who deployed what, from which commit, and
+the fingerprint of what it holds) and its own unit, whose `Description=`
+holds the version, so `systemctl status` shows what is live. While a
+release is sent, `releases/` also holds its archive, receipt and copy lists
+(`.<id>.tar.zst`, `.<id>.sha256`, `.<id>.reuse.<mode>`); unpack removes
+them. Each release also installs its own dependencies in setup, so a
+rollback to an open release finds them already in place; one kept only as
+a backup gets them from setup again.
 
 ## Screens
 
@@ -641,6 +692,7 @@ kept only as a backup gets them from setup again.
 | `⏎` | deploy (asks first) | | roll back to the selected release (asks first) |
 | `r` | open releases | open releases | refresh |
 | `s` | refresh the connected ones | | |
+| `:` | a command for the selected service: `:logs`, `:restart`, `:stop`, `:start` | | |
 | `G` | | follow the log again | |
 | `esc` | | back | back |
 | `tab`, `1` `2` `3` | switch screens | | |
@@ -653,6 +705,21 @@ on their own. Disconnecting closes the session, so every deployable on that
 
 When a release fails after the switch, the rollback question takes `y` (roll
 back now) or `n` (keep it live).
+
+`:` opens a command line at the bottom, as in vim. Tab completes a command
+(again for the next match), Enter runs it, Esc cancels, and an unknown one
+says which there are:
+
+| Command | Does |
+| --- | --- |
+| `:logs` | The service's last 200 log lines, then each new one live, over the whole screen: `journalctl -u <service> -f` (with `sudo -n` unless root), or `pm2 logs <app> --raw`. `↑` `↓` scroll, `G` follows again, `q` or `esc` closes it and ends the command on the server. |
+| `:restart` | Restarts the service, as a deploy's restart step does. Asks first. |
+| `:stop` | Stops it until it is started again, a deploy restarts it or the server reboots. Asks first. |
+| `:start` | Starts it; a running one is left as it is. |
+
+While a deploy or rollback of that deployable runs, only `:logs` works. A
+command the server's sudo rule does not allow says so, with the
+`server-setup.sh` command that renews the rule.
 
 ## Development
 
@@ -704,9 +771,11 @@ and push the tag:
 git tag v0.5.0 && git push origin main v0.5.0
 ```
 
-`setup_test.rs` fails if `server-setup.sh` and `remote::sudo_commands` ever
-disagree, and `config_test.rs` fails if the examples point at another
-version's schema.
+`setup_test.rs` fails if `server-setup.sh` and `remote::sudo_commands` or
+`remote::control_commands` ever disagree, and `config_test.rs` fails if the
+examples point at another version's schema. A change to `server-setup.sh`
+reaches servers only through a new release tag, since the command shipdeck
+shows is pinned to its own version's tag.
 
 The tag push runs `.github/workflows/release.yml`, which
 [dist](https://github.com/axodotdev/cargo-dist) generates from
