@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { Google_Sans_Flex, JetBrains_Mono } from 'next/font/google';
 import localFont from 'next/font/local';
 import { Provider } from '@/components/provider';
-import { appDescription, appName } from '@/lib/shared';
+import { appDescription, appName, author } from '@/lib/shared';
 import './global.css';
 
 const sans = Google_Sans_Flex({
@@ -39,6 +39,9 @@ export const metadata: Metadata = {
     default: `${appName}: build locally, deploy over SSH`,
   },
   description: appDescription,
+  authors: [{ name: author.name, url: author.url }],
+  creator: author.name,
+  twitter: { creator: `@${author.twitter}` },
 };
 
 export default function Layout({ children }: LayoutProps<'/'>) {

@@ -3,6 +3,12 @@ import { createGetUrl } from 'fumadocs-core/source';
 export const appName = 'shipdeck';
 export const appDescription =
   'A terminal app that builds your service locally, deploys it over SSH as a systemd service, and rolls back any release.';
+export const author = {
+  name: 'H Nazmul Hasan Rakib',
+  url: 'https://naz.ovh',
+  twitter: 'hnazmulhasan',
+  github: 'hnazmul',
+};
 export const docsRoute = '/docs';
 export const docsImageRoute = '/og/docs';
 export const docsContentRoute = '/llms.mdx/docs';

@@ -3,6 +3,7 @@ import { ArrowRight, Boxes, FileCheck2, KeyRound, Layers, RotateCcw, ServerCog }
 import { Terminal } from '@/components/home/terminal';
 import { CopyCommand } from '@/components/home/copy-command';
 import { PipelineSteps } from '@/components/pipeline-steps';
+import { author } from '@/lib/shared';
 import { shipdeckVersion } from '@/lib/version';
 
 const install = 'curl -LsSf https://shipdeck.naz.ovh/install.sh | sh';
@@ -277,7 +278,12 @@ export default function HomePage() {
         </div>
         <footer className="border-t border-sd-line">
           <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-3 px-6 py-6 font-mono text-[0.74rem] text-sd-ink-faint">
-            <span>shipdeck {version}</span>
+            <span>
+              shipdeck {version} · made by{' '}
+              <a href={author.url} rel="author" className="underline-offset-4 transition-colors hover:text-sd-ink hover:underline">
+                {author.name}
+              </a>
+            </span>
             <span>Build locally, deploy over SSH as a systemd service, roll back any release.</span>
           </div>
         </footer>
