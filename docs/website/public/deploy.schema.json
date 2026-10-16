@@ -1,0 +1,626 @@
+{
+  "$id": "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.5.0/deploy.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "Backup": {
+      "additionalProperties": false,
+      "properties": {
+        "files": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/BackupFiles"
+            }
+          ],
+          "description": "What of the release goes into the backup."
+        },
+        "keep": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Keep"
+            }
+          ],
+          "description": "How many releases stay on the server."
+        }
+      },
+      "type": "object"
+    },
+    "BackupFiles": {
+      "additionalProperties": false,
+      "description": "Paths in the release, in the syntax of `pipeline.pack.files`. The release's own `release.json` and service file are always in; `service.shared` folders never are.",
+      "properties": {
+        "deployed": {
+          "default": true,
+          "description": "The files shipdeck shipped: the binary and what `pipeline.pack.files` picked. Default: true.",
+          "type": "boolean"
+        },
+        "exclude": {
+          "default": [],
+          "description": "What to leave out, shipped or not. A folder leaves out everything in it; `\"!pattern\"` keeps what it matches.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "include": {
+          "default": [],
+          "description": "More from the release, such as a file setup made that it cannot make again. A folder brings everything in it; `\"!pattern\"` leaves out what it matches.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "Build": {
+      "additionalProperties": false,
+      "properties": {
+        "run": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/LocalOnly"
+            }
+          ],
+          "description": "Builds the project on your PC, in `project`."
+        },
+        "version_from": {
+          "default": null,
+          "description": "The file whose version names the release, relative to `project`: Cargo.toml, package.json, pyproject.toml, or any file whose first line is the version. Default: the first of those in `project`, else the latest git tag.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Commands": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      ],
+      "description": "One shell command, or a list run in order that stops at the first failure."
+    },
+    "Done": {
+      "additionalProperties": false,
+      "properties": {
+        "run": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/LocalAndServer"
+            }
+          ],
+          "description": "`server` runs first, in `current`; then `local`, in `project`."
+        }
+      },
+      "type": "object"
+    },
+    "Failed": {
+      "additionalProperties": false,
+      "properties": {
+        "rollback": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Rollback"
+            }
+          ],
+          "description": "What happens when the switch, the restart or the health check fails: put back the release that was live before. Default: ask."
+        },
+        "run": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/LocalOnly"
+            }
+          ],
+          "description": "Runs on your PC, in `project`. The server may be out of reach when a step fails, so there is no `server` here."
+        }
+      },
+      "type": "object"
+    },
+    "Files": {
+      "additionalProperties": false,
+      "description": "Paths or globs, fast-glob and Tailwind style: `*` and `?` inside one folder, `**/` for any number of folders, `[a-z]`, `{js,ts}`. A pattern starting with `!` turns it around. `.git` is never shipped.",
+      "properties": {
+        "exclude": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Sources"
+            }
+          ],
+          "description": "What to leave out of `include`. A folder leaves out everything in it; `\"!pattern\"` keeps what it matches."
+        },
+        "include": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Sources"
+            }
+          ],
+          "description": "What to ship. A folder brings everything in it; `\"!pattern\"` leaves out what it matches."
+        }
+      },
+      "type": "object"
+    },
+    "Health": {
+      "additionalProperties": false,
+      "properties": {
+        "check": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/LocalAndServer"
+            }
+          ],
+          "description": "Commands that must pass: `server` in `current`, then `local` in `project`. Retried until `timeout_secs`."
+        },
+        "timeout_secs": {
+          "default": 20,
+          "description": "Seconds the release has to become healthy. Default: 20.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "url": {
+          "default": null,
+          "description": "Fetched on the server with curl or wget; it must answer 2xx. Such as `http://127.0.0.1:3000/health`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Keep": {
+      "additionalProperties": false,
+      "description": "Old releases kept on the server, for rollback.",
+      "properties": {
+        "compressed": {
+          "default": 15,
+          "description": "Older releases kept only as their backup in `backups/`. 0 keeps none, and then no backup is made. Default: 15.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "open": {
+          "default": 5,
+          "description": "Releases kept unpacked and ready to switch to, counting the live one. Default: 5.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "LocalAndServer": {
+      "additionalProperties": false,
+      "properties": {
+        "local": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Commands"
+            }
+          ],
+          "description": "On your PC, in `project`."
+        },
+        "server": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Commands"
+            }
+          ],
+          "description": "On the server."
+        }
+      },
+      "type": "object"
+    },
+    "LocalOnly": {
+      "additionalProperties": false,
+      "properties": {
+        "local": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Commands"
+            }
+          ],
+          "description": "On your PC, in `project`."
+        }
+      },
+      "type": "object"
+    },
+    "Manager": {
+      "description": "What keeps the app running on the server.",
+      "oneOf": [
+        {
+          "const": "systemd",
+          "description": "A systemd unit, installed and restarted with sudo.",
+          "type": "string"
+        },
+        {
+          "const": "pm2",
+          "description": "PM2, run as the SSH user: no sudo. Reloaded with `pm2 startOrReload`, then saved with `pm2 save`.",
+          "type": "string"
+        }
+      ]
+    },
+    "Pack": {
+      "additionalProperties": false,
+      "properties": {
+        "binary": {
+          "default": null,
+          "description": "A compiled program, relative to `project`. It lands at the release root and is checked against the server's CPU and glibc.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "files": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Files"
+            }
+          ],
+          "description": "Files and folders to put in the release, each at its own path."
+        }
+      },
+      "type": "object"
+    },
+    "Pipeline": {
+      "additionalProperties": false,
+      "description": "The steps of a deploy that take settings.",
+      "properties": {
+        "backup": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Backup"
+            }
+          ],
+          "description": "Step 7: shipdeck packs the set-up release into `backups/<id>.tar.zst`, which stays when the release folder goes. A rollback to it unpacks it and runs setup again, so what setup makes, such as node_modules, can stay out. A failure removes the new release."
+        },
+        "build": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Build"
+            }
+          ],
+          "description": "Step 2. Runs `run.local` in `project`. A failure stops the deploy."
+        },
+        "done": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Done"
+            }
+          ],
+          "description": "Step 11: the new release is live. shipdeck tidies old releases (see `backup.keep`), then runs `run.server` in `current`, then `run.local`. A failure is only a warning. A manual rollback runs it too, with SHIPDECK_ACTION=rollback."
+        },
+        "failed": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Failed"
+            }
+          ],
+          "description": "Runs when any step fails, after a rollback if there was one. SHIPDECK_STEP names the step that failed."
+        },
+        "health": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Health"
+            }
+          ],
+          "description": "Step 10, after shipdeck switches `current` and restarts the service. Waits until the service is active, `url` answers and every check passes; when it does not, see `failed.rollback`."
+        },
+        "pack": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Pack"
+            }
+          ],
+          "description": "Step 3. What goes into the release: the binary and the files."
+        },
+        "preflight": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Preflight"
+            }
+          ],
+          "description": "Step 1. shipdeck checks your PC and the server, then runs `run.server` in `service.dir`, then `run.local` in `project`. A failure stops the deploy before anything is built."
+        },
+        "setup": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Setup"
+            }
+          ],
+          "description": "Step 6, after shipdeck uploads and unpacks the release. Runs in `releases/<id>` on the server while the old release is still live: `run.server`, then `check.server`. A failure removes the new release."
+        }
+      },
+      "type": "object"
+    },
+    "Pm2": {
+      "additionalProperties": false,
+      "description": "How PM2 runs the app. Either shipdeck writes the app file from `service.start`, `service.env` and `options`, or `ecosystem` names your own.",
+      "properties": {
+        "app": {
+          "default": null,
+          "description": "The app's name in PM2, as `pm2 list` shows it. Default: `service.name`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ecosystem": {
+          "default": null,
+          "description": "Your own PM2 file in the release, such as `ecosystem.config.js`. shipdeck reloads the app `app` from it; `service.start` and `options` are not used. Ship it with `pipeline.pack.files`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "options": {
+          "additionalProperties": true,
+          "default": {},
+          "description": "More PM2 app settings for the file shipdeck writes, such as `instances: max`, `exec_mode: cluster` or `max_memory_restart: 300M`. shipdeck sets `name`, `cwd` and the environment itself.",
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "Preflight": {
+      "additionalProperties": false,
+      "properties": {
+        "requires": {
+          "default": [],
+          "description": "Programs the server must have, such as `node` or `npm`. Preflight stops if one is missing.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "run": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/LocalAndServer"
+            }
+          ],
+          "description": "`server` runs first, in `service.dir`; then `local`, in `project`."
+        }
+      },
+      "type": "object"
+    },
+    "Rollback": {
+      "oneOf": [
+        {
+          "const": "ask",
+          "description": "Ask before rolling back to the release that was live. With no answer within 30 seconds, roll back.",
+          "type": "string"
+        },
+        {
+          "const": "auto",
+          "description": "Roll back at once.",
+          "type": "string"
+        }
+      ]
+    },
+    "ServerOnly": {
+      "additionalProperties": false,
+      "properties": {
+        "server": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Commands"
+            }
+          ],
+          "description": "On the server."
+        }
+      },
+      "type": "object"
+    },
+    "Service": {
+      "additionalProperties": false,
+      "description": "The service shipdeck runs, and where its releases live.",
+      "properties": {
+        "dir": {
+          "description": "An absolute folder on the server, such as `/opt/my-api`. It holds `current` (the live release), `releases/`, `backups/` and `shared/`.",
+          "type": "string"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "Environment variables for the service and for server commands.",
+          "type": "object"
+        },
+        "env_file": {
+          "default": null,
+          "description": "A `KEY=value` file in the release, such as `.env`. The service gets it as its environment, and server commands load it too.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "manager": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Manager"
+            }
+          ],
+          "description": "What keeps the app running: `systemd`, a unit shipdeck installs with sudo, or `pm2`, run as the SSH user without sudo. Default: systemd."
+        },
+        "name": {
+          "description": "The unit's name without `.service`: `my-api` becomes my-api.service. With PM2, also the app's name unless `pm2.app` is set.",
+          "type": "string"
+        },
+        "pm2": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Pm2"
+            }
+          ],
+          "description": "How PM2 runs the app, with `manager: pm2`."
+        },
+        "run_as": {
+          "default": null,
+          "description": "The user the service runs as. Default: the SSH user. PM2 always runs the app as the SSH user.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "shared": {
+          "default": [],
+          "description": "Folders kept across releases, such as `uploads`. Each lives in `shared/` and is linked into every release.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "start": {
+          "default": null,
+          "description": "The command the service runs, from the release folder: `./my-api -E=.env` or `node dist/main.js`. A bare program name such as `node` is looked up on the server. Default: `./<binary>` from `pipeline.pack.binary`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "dir"
+      ],
+      "type": "object"
+    },
+    "Setup": {
+      "additionalProperties": false,
+      "properties": {
+        "check": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ServerOnly"
+            }
+          ],
+          "description": "Commands that must pass after `run`, such as `node --check dist/main.js`."
+        },
+        "run": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ServerOnly"
+            }
+          ],
+          "description": "Commands in the new release on the server, such as `npm ci --omit=dev` or migrations."
+        }
+      },
+      "type": "object"
+    },
+    "Sources": {
+      "additionalProperties": false,
+      "description": "Each path keeps its place inside the release.",
+      "properties": {
+        "deploy": {
+          "default": [],
+          "description": "Relative to this deploy.yaml's folder, for files that belong to this deployment, such as `.env`. A file here replaces a project file at the same path.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "project": {
+          "default": [],
+          "description": "Relative to `project`, such as `dist` or `\"src/**/*.{js,json}\"`. `.` is the whole project.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "SshTarget": {
+      "additionalProperties": false,
+      "description": "How to log in. `host` may be an alias from `~/.ssh/config`; `port` and `user` then come from it unless set here.",
+      "properties": {
+        "host": {
+          "description": "The server's address, or an alias from `~/.ssh/config`.",
+          "type": "string"
+        },
+        "port": {
+          "default": null,
+          "description": "Default: the alias's Port, else 22.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "shell_env": {
+          "default": true,
+          "description": "Give server commands the environment a terminal has: shipdeck starts the login shell once per connection, so `~/.bashrc`, `~/.zshrc` or `config.fish` set up PATH (nvm and the like). Default: true.",
+          "type": "boolean"
+        },
+        "user": {
+          "default": null,
+          "description": "The user shipdeck logs in and deploys as. Default: the alias's User.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "host"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "One deployable: what it is, where it runs, and the pipeline that ships it.",
+  "properties": {
+    "name": {
+      "description": "The name shipdeck shows, such as `My API (prod)`. Also the systemd unit's description.",
+      "type": "string"
+    },
+    "pipeline": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/Pipeline"
+        }
+      ],
+      "description": "The steps of a deploy, in order: preflight, build, pack, setup, backup, health, done, and failed when a step fails. upload, unpack, switch and restart are done by shipdeck and take no settings."
+    },
+    "project": {
+      "default": ".",
+      "description": "Your source folder, relative to this deploy.yaml. Local commands run here, and `pipeline.pack` takes project files from here. Default: the folder of this deploy.yaml.",
+      "type": "string"
+    },
+    "service": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/Service"
+        }
+      ],
+      "description": "The service on the server (a systemd unit or a PM2 app), and where its releases live."
+    },
+    "ssh": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/SshTarget"
+        }
+      ],
+      "description": "How to log in to the server."
+    }
+  },
+  "required": [
+    "name",
+    "ssh",
+    "service"
+  ],
+  "title": "shipdeck deploy.yaml",
+  "type": "object"
+}

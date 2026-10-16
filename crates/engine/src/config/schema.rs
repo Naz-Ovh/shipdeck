@@ -9,6 +9,8 @@ use super::DeployConfig;
 
 /// The file at the root of the shipdeck repository.
 pub const FILE_NAME: &str = "deploy.schema.json";
+/// The same file, served by the website at `/deploy.schema.json`.
+pub const WEBSITE_COPY: &str = "docs/website/public/deploy.schema.json";
 
 /// Where editors fetch the schema for this version of shipdeck.
 pub fn url() -> String {

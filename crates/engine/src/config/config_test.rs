@@ -912,19 +912,18 @@ fn examples_parse_and_point_at_this_schema() {
     assert!(seen >= 4, "expected the rust, go, node and python examples");
 }
 
-/// `deploy.schema.json` at the repository root is what these types say.
+/// `deploy.schema.json` at the repository root, and the website's copy, are
+/// what these types say.
 #[test]
 fn the_published_schema_is_current() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(schema::FILE_NAME);
-    let committed = std::fs::read_to_string(&path).unwrap_or_default();
-    assert!(
-        committed == schema::text(),
-        "{} is out of date; run: cargo run -q -p shipdeck -- --schema > {}",
-        schema::FILE_NAME,
-        schema::FILE_NAME
-    );
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for file in [schema::FILE_NAME, schema::WEBSITE_COPY] {
+        let committed = std::fs::read_to_string(root.join(file)).unwrap_or_default();
+        assert!(
+            committed == schema::text(),
+            "{file} is out of date; run: just schema"
+        );
+    }
 }
 
 #[test]
