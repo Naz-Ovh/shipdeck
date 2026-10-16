@@ -25,7 +25,7 @@ use crate::config::{
 use crate::human;
 use crate::release::{MANIFEST_FILE, Manifest, ReleaseName};
 use crate::remote::{
-    CommandEnv, Facts, HttpCheck, Place, Server, check_version, pick, plan_rotation,
+    CommandEnv, Facts, HttpCheck, Place, Server, Unpacked, check_version, pick, plan_rotation,
 };
 use crate::ssh::{Pool, ShellEnv};
 use report::{LogKind, Outcome, Reporter, Unit};
@@ -132,9 +132,11 @@ impl Action {
 
 /// Below this much free space on the server, preflight stops.
 const MIN_FREE: u64 = 100 * 1024 * 1024;
-/// What shipdeck itself runs on the server: the bundle is unpacked with
-/// `tar -I zstd`.
-const SERVER_TOOLS: [&str; 2] = ["tar", "zstd"];
+/// What shipdeck itself runs on the server, with the package each comes
+/// in: the bundle is unpacked with `tar -I zstd` and checked with
+/// `sha256sum`.
+const SERVER_TOOLS: [(&str, &str); 3] =
+    [("tar", "tar"), ("zstd", "zstd"), ("sha256sum", "coreutils")];
 /// Consecutive healthy probes, one second apart, before a release counts as up.
 const STABLE_PROBES: u32 = 3;
 /// The pause before a failed health check runs again.
@@ -469,8 +471,11 @@ impl<'a> Run<'a> {
         };
         manifest.content = Some(fingerprint);
         let packed = async {
+            let on_server = self
+                .on_server(&server, &id, &contents, facts.current.as_deref())
+                .await;
             let bundle = self
-                .pack(&contents, &manifest, HashMap::new(), Step::Pack)
+                .pack(&contents, &manifest, on_server, Step::Pack)
                 .await?;
             if let Some(free) = facts.free_bytes {
                 let needed = bundle.data.len() as u64 * 2 + bundle.input_bytes;
@@ -505,50 +510,29 @@ impl<'a> Run<'a> {
                 format!("{path} from the deploy folder replaces the project's {path}"),
             );
         }
+        let sizes = format!(
+            "{} → {}",
+            human::bytes(bundle.input_bytes),
+            human::bytes(bundle.data.len() as u64)
+        );
         self.finish(
             Step::Pack,
-            format!(
-                "{} files · {} → {}",
-                bundle.files,
-                human::bytes(bundle.input_bytes),
-                human::bytes(bundle.data.len() as u64)
-            ),
+            if bundle.reused == 0 {
+                format!("{} · {sizes}", count(bundle.files, "file"))
+            } else {
+                format!(
+                    "{} · {} already on the server · {} to send · {sizes}",
+                    count(bundle.files, "file"),
+                    bundle.reused,
+                    bundle.sent()
+                )
+            },
         );
 
         // Upload
         self.start(Step::Upload, "sending the release");
-        let index = self.at(Step::Upload);
         let started = Instant::now();
-        let uploaded = async {
-            server.prepare(report).await?;
-            let target = server.upload_path(&id);
-            report.log(
-                LogKind::Command,
-                format!(
-                    "{} › upload {} to {target}",
-                    server.session().label,
-                    human::bytes(bundle.data.len() as u64)
-                ),
-            );
-            let mut throttle = Throttle::default();
-            server
-                .session()
-                .upload(&bundle.data, &target, |sent, total| {
-                    if throttle.ready(sent, total) {
-                        let speed = sent as f64 / started.elapsed().as_secs_f64().max(0.001);
-                        report.progress(
-                            index,
-                            sent,
-                            total,
-                            Unit::Bytes,
-                            format!("{}/s", human::bytes(speed as u64)),
-                        );
-                    }
-                })
-                .await
-        }
-        .await;
-        if let Err(err) = uploaded {
+        if let Err(err) = self.send(&server, &id, &bundle, Step::Upload).await {
             let _ = server.discard(&id, report).await;
             return self.stop(Step::Upload, err);
         }
@@ -565,21 +549,27 @@ impl<'a> Run<'a> {
         self.start(Step::Unpack, &format!("unpacking into releases/{id}"));
         let shared = &self.config().service.shared;
         let unpacked = async {
-            server.unpack(&id, report).await?;
-            server.link_shared(&id, shared, report).await
+            let summary = self
+                .unpack(&server, &id, &contents, &manifest, &bundle)
+                .await?;
+            server.link_shared(&id, shared, report).await?;
+            Ok::<_, anyhow::Error>(summary)
         }
         .await;
-        if let Err(err) = unpacked {
-            let _ = server.discard(&id, report).await;
-            return self.stop(Step::Unpack, err);
-        }
+        let summary = match unpacked {
+            Ok(summary) => summary,
+            Err(err) => {
+                let _ = server.discard(&id, report).await;
+                return self.stop(Step::Unpack, err);
+            }
+        };
         self.finish(
             Step::Unpack,
             if shared.is_empty() {
-                format!("releases/{id}")
+                format!("releases/{id} · {summary}")
             } else {
                 format!(
-                    "releases/{id} · {} linked",
+                    "releases/{id} · {summary} · {} linked",
                     count(shared.len(), "shared folder")
                 )
             },
@@ -641,6 +631,139 @@ impl<'a> Run<'a> {
 
         self.done(&server).await;
         Ended::ok(&id)
+    }
+
+    /// What `current` already has of `contents`, hashed by the server just
+    /// now. Nothing, with a note why, when nothing is live or the server
+    /// cannot say: then every file is sent.
+    async fn on_server(
+        &self,
+        server: &Server,
+        id: &str,
+        contents: &bundle::Contents,
+        live: Option<&str>,
+    ) -> HashMap<String, String> {
+        let report = self.report;
+        let Some(live) = live else {
+            report.log(LogKind::Info, "nothing is live yet, so every file is sent");
+            return HashMap::new();
+        };
+        let candidates = contents.candidates();
+        report.progress(
+            self.at(Step::Pack),
+            0,
+            0,
+            Unit::Items,
+            format!("asking {live} which files it has"),
+        );
+        match server.current_hashes(id, &candidates).await {
+            Ok(found) => found,
+            Err(err) => {
+                report.log(
+                    LogKind::Info,
+                    format!("{err:#}; every file is sent instead"),
+                );
+                HashMap::new()
+            }
+        }
+    }
+
+    /// Uploads `bundle` into `releases/`, with the receipt and the lists of
+    /// files to copy from `current`; progress goes to `row`.
+    async fn send(
+        &self,
+        server: &Server,
+        id: &str,
+        bundle: &bundle::Bundle,
+        row: Step,
+    ) -> Result<()> {
+        let report = self.report;
+        let index = self.at(row);
+        let started = Instant::now();
+        server.prepare(report).await?;
+        let target = server.upload_path(id);
+        report.log(
+            LogKind::Command,
+            format!(
+                "{} › upload {} to {target}",
+                server.session().label,
+                human::bytes(bundle.data.len() as u64)
+            ),
+        );
+        let mut throttle = Throttle::default();
+        server
+            .session()
+            .upload(&bundle.data, &target, |sent, total| {
+                if throttle.ready(sent, total) {
+                    let speed = sent as f64 / started.elapsed().as_secs_f64().max(0.001);
+                    report.progress(
+                        index,
+                        sent,
+                        total,
+                        Unit::Bytes,
+                        format!("{}/s", human::bytes(speed as u64)),
+                    );
+                }
+            })
+            .await?;
+        server.upload_plan(id, &bundle.receipt, &bundle.reuse).await
+    }
+
+    /// Unpacks `bundle` into `releases/<id>` and checks every file. When a
+    /// file copied from `current` does not match, the whole release is
+    /// packed, sent and unpacked once more. Returns the step's summary.
+    async fn unpack(
+        &self,
+        server: &Server,
+        id: &str,
+        contents: &Arc<bundle::Contents>,
+        manifest: &Manifest,
+        bundle: &bundle::Bundle,
+    ) -> Result<String> {
+        let report = self.report;
+        let modes: Vec<u32> = bundle.reuse.keys().copied().collect();
+        let names = match server.unpack(id, &modes, report).await? {
+            Unpacked::Verified if bundle.reused == 0 => {
+                return Ok(format!("{} unpacked · verified", bundle.sent()));
+            }
+            Unpacked::Verified => {
+                return Ok(format!(
+                    "{} unpacked · {} copied · verified",
+                    bundle.sent(),
+                    bundle.reused
+                ));
+            }
+            Unpacked::Mismatch(names) => names,
+        };
+        if bundle.reused == 0 {
+            bail!(
+                "releases/{id} does not match what was packed: {}",
+                some(&names)
+            );
+        }
+        report.log(
+            LogKind::Warn,
+            if names.is_empty() {
+                "copying files from current failed; sending the whole release".to_string()
+            } else {
+                format!(
+                    "{} copied from current did not match: {}; sending the whole release",
+                    count(names.len(), "file"),
+                    some(&names)
+                )
+            },
+        );
+        let whole = self
+            .pack(contents, manifest, HashMap::new(), Step::Unpack)
+            .await?;
+        self.send(server, id, &whole, Step::Unpack).await?;
+        match server.unpack(id, &[], report).await? {
+            Unpacked::Verified => Ok(format!("{} unpacked · verified · sent whole", whole.sent())),
+            Unpacked::Mismatch(names) => bail!(
+                "releases/{id} does not match what was packed, even sent whole: {}",
+                some(&names)
+            ),
+        }
     }
 
     /// Packs `contents` in the background, leaving out what `on_server`
@@ -1062,7 +1185,7 @@ async fn preflight(
     }
     let server = Server::new(session, &config.service);
     let mut tools = deployable.required_tools();
-    for tool in SERVER_TOOLS {
+    for (tool, _) in SERVER_TOOLS {
         if !tools.iter().any(|t| t == tool) {
             tools.push(tool.into());
         }
@@ -1136,18 +1259,27 @@ fn check_tools(deployable: &Deployable, facts: &Facts, report: &Reporter) -> Res
     let mut ours = Vec::new();
     let mut missing = Vec::new();
     for (tool, path) in &facts.tools {
-        match path {
-            Some(path) => report.log(LogKind::Success, format!("{tool}: {path}")),
-            None if SERVER_TOOLS.contains(&tool.as_str()) => ours.push(tool.as_str()),
-            None => missing.push(tool.as_str()),
+        let package = SERVER_TOOLS
+            .iter()
+            .find(|(name, _)| name == tool)
+            .map(|(_, package)| *package);
+        match (path, package) {
+            (Some(path), _) => report.log(LogKind::Success, format!("{tool}: {path}")),
+            (None, Some(package)) => ours.push((tool.as_str(), package)),
+            (None, None) => missing.push(tool.as_str()),
         }
     }
     if !ours.is_empty() {
-        let packages = ours.join(" ");
+        let tools: Vec<&str> = ours.iter().map(|(tool, _)| *tool).collect();
+        let packages = ours
+            .iter()
+            .map(|(_, package)| *package)
+            .collect::<Vec<_>>()
+            .join(" ");
         bail!(
-            "the server has no {}, which shipdeck unpacks releases with; install {} \
+            "the server has no {}, which shipdeck unpacks and checks releases with; install {} \
              (apt install {packages}, or dnf install {packages})",
-            ours.join(" or "),
+            tools.join(" or "),
             if ours.len() == 1 { "it" } else { "them" }
         );
     }
@@ -1442,6 +1574,15 @@ fn count(n: usize, what: &str) -> String {
         format!("1 {what}")
     } else {
         format!("{n} {what}s")
+    }
+}
+
+/// Up to five names, and how many more.
+fn some(names: &[String]) -> String {
+    match names.len() {
+        0 => "no file named".to_string(),
+        n if n <= 5 => names.join(", "),
+        n => format!("{} and {} more", names[..5].join(", "), n - 5),
     }
 }
 

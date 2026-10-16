@@ -39,6 +39,7 @@ fn facts(tools: &[(&str, Option<&str>)]) -> Facts {
         dir_writable: true,
         free_bytes: None,
         current: None,
+        content: None,
         active: String::new(),
         systemd: String::new(),
         pm2_version: None,
@@ -216,6 +217,25 @@ fn a_server_without_zstd_is_told_to_install_it() {
     assert!(err.contains("has no zstd"), "{err}");
     assert!(
         err.contains("apt install zstd, or dnf install zstd"),
+        "{err}"
+    );
+}
+
+#[test]
+fn sha256sum_is_named_with_the_package_it_comes_in() {
+    let web = deployable(NODE);
+    let (report, _rx) = reporter();
+    let found = facts(&[
+        ("node", Some("/usr/bin/node")),
+        ("npm", Some("/usr/bin/npm")),
+        ("tar", Some("/usr/bin/tar")),
+        ("zstd", None),
+        ("sha256sum", None),
+    ]);
+    let err = check_tools(&web, &found, &report).unwrap_err().to_string();
+    assert!(err.contains("has no zstd or sha256sum"), "{err}");
+    assert!(
+        err.contains("apt install zstd coreutils, or dnf install zstd coreutils"),
         "{err}"
     );
 }

@@ -5,12 +5,14 @@
 //! (`.tar.gz` from before backups), `shared/`.
 
 mod backup;
+mod delta;
 mod health;
 mod pm2;
 mod preflight;
 mod releases;
 
 pub use backup::{Archive, Picked, ReleaseFile, pick};
+pub use delta::Unpacked;
 pub use health::{HttpCheck, Probe};
 pub use pm2::{PM2_NEWEST_MAJOR, app_state, check_version};
 pub use preflight::Facts;
@@ -117,9 +119,14 @@ exit 1",
     /// Runs `script`, logging `what` and every output line, and fails on a
     /// non-zero exit.
     async fn run(&self, what: &str, script: &str, report: &Reporter) -> Result<Output> {
+        self.exec_logged(what, script, report).await?.check(what)
+    }
+
+    /// Runs `script`, logging `what` and every output line; the caller
+    /// reads how it ended.
+    async fn exec_logged(&self, what: &str, script: &str, report: &Reporter) -> Result<Output> {
         report.log(LogKind::Command, format!("{} › {what}", self.session.label));
-        let out = self
-            .session
+        self.session
             .exec_with(script, |stream, line| {
                 let kind = match stream {
                     Stream::Out => LogKind::Out,
@@ -127,8 +134,7 @@ exit 1",
                 };
                 report.log(kind, line);
             })
-            .await?;
-        out.check(what)
+            .await
     }
 
     /// Creates `releases/`, `backups/` and `shared/` if they are missing.
@@ -143,37 +149,11 @@ exit 1",
         Ok(())
     }
 
-    /// Unpacks the uploaded bundle into `releases/<id>/`, through a hidden
-    /// folder so a half-written release never looks complete. `tar -I zstd`
-    /// rather than `--zstd`, which needs GNU tar 1.31; tar fails when zstd does.
-    pub async fn unpack(&self, id: &str, report: &Reporter) -> Result<()> {
-        ensure_id(id)?;
-        let script = format!(
-            "set -e
-cd {dir}/releases
-if [ -e {id} ]; then echo 'releases/{id} already exists' >&2; exit 1; fi
-rm -rf .{id}.partial
-mkdir .{id}.partial
-tar -I zstd -xpf .{id}.tar.zst -C .{id}.partial
-rm -f .{id}.tar.zst
-mv .{id}.partial {id}
-echo \"unpacked $(find {id} -type f | wc -l) files into releases/{id}\"",
-            dir = self.q_dir(),
-        );
-        self.run(&format!("unpack into releases/{id}"), &script, report)
-            .await?;
-        Ok(())
-    }
-
     /// Removes every trace of a release that did not make it, its backup
-    /// included.
+    /// and the files sent to unpack it included.
     pub async fn discard(&self, id: &str, report: &Reporter) -> Result<()> {
         ensure_id(id)?;
-        let script = format!(
-            "cd {dir} && rm -rf releases/{id} releases/.{id}.partial releases/.{id}.tar.zst \
-backups/{id}.tar.zst backups/.{id}.tar.zst.part backups/.{id}.files",
-            dir = self.q_dir()
-        );
+        let script = discard_script(&self.dir, id);
         self.run(&format!("remove releases/{id}"), &script, report)
             .await?;
         Ok(())
@@ -431,6 +411,16 @@ pub fn sudo_commands(dir: &str, service: &str) -> Vec<String> {
         format!("install -m 0644 {dir}/current/{svc}.service /etc/systemd/system/{svc}.service"),
         format!("journalctl -u {svc} -n 30 --no-pager"),
     ]
+}
+
+/// Removes `releases/<id>`, everything sent to make it, and its backup.
+fn discard_script(dir: &str, id: &str) -> String {
+    format!(
+        "cd {dir} && rm -rf releases/{id} releases/.{id}.partial releases/.{id}.tar.zst \
+releases/.{id}.paths releases/.{id}.sha256 releases/.{id}.checked releases/.{id}.reuse.* \
+backups/{id}.tar.zst backups/.{id}.tar.zst.part backups/.{id}.files",
+        dir = sh_quote(dir)
+    )
 }
 
 fn ensure_id(id: &str) -> Result<()> {

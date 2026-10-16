@@ -18,6 +18,9 @@ pub struct Facts {
     pub free_bytes: Option<u64>,
     /// The release `current` points to.
     pub current: Option<String>,
+    /// The live release's content fingerprint, from its `release.json`;
+    /// `None` when it has none or it cannot be read.
+    pub content: Option<String>,
     /// The service's state: `systemctl is-active` output, or PM2's state
     /// in the same words.
     pub active: String,
@@ -40,6 +43,12 @@ impl Facts {
             .find(|(name, _)| name == tool)
             .and_then(|(_, path)| path.as_deref())
     }
+}
+
+/// The `content` of a `release.json` read as one line.
+pub(super) fn content(json: &str) -> Option<String> {
+    let manifest: serde_json::Value = serde_json::from_str(json).ok()?;
+    Some(manifest.get("content")?.as_str()?.to_string())
 }
 
 impl Server {
@@ -78,6 +87,7 @@ if [ -w \"$dir\" ]; then echo writable=yes; else echo writable=no; fi
 p=\"$dir\"; while [ ! -d \"$p\" ]; do p=$(dirname \"$p\"); done
 echo \"free_kb=$(df -Pk \"$p\" | awk 'NR==2 {{print $4}}')\"
 echo \"current=$(readlink \"$dir/current\" 2>/dev/null)\"
+echo \"manifest=$(tr -d '\\n' 2>/dev/null < \"$dir/current/release.json\")\"
 echo \"active=$(systemctl is-active {svc} 2>&1 | head -n1)\"
 {pm2}{lookups}{checks}",
             dir = self.q_dir(),
@@ -116,6 +126,7 @@ echo \"active=$(systemctl is-active {svc} 2>&1 | head -n1)\"
             current: Some(get("current"))
                 .filter(|c| !c.is_empty())
                 .map(|c| c.rsplit('/').next().unwrap_or(&c).to_string()),
+            content: content(&get("manifest")),
             active,
             systemd,
             pm2_version: (self.manager == Manager::Pm2).then(|| get("pm2")),
