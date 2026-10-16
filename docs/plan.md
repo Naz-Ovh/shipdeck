@@ -23,7 +23,7 @@ live.
 | SSH session | One session per deployable, opened once and reused for every command and upload |
 | SSH login | `--key <path>` or `--password <value>`; with neither flag, the alias's `IdentityFile` from `~/.ssh/config`, then a password asked in the TUI |
 | SSH host | `ssh.host` may be a `~/.ssh/config` alias (`host: prod`); its `HostName`, `Port`, `User` and `IdentityFile` apply, and `deploy.yaml` wins |
-| Server setup | None needed: shipdeck deploys as `ssh.user`, whoever the owner picks (root, ubuntu, ...). The first deploy of an app creates its folder; a missing permission is named at preflight. `server-setup.sh` (`u`) can still create a user with exactly those rights for one app; a per-server setup is planned (Still open) |
+| Server setup | None needed: shipdeck deploys as `ssh.user`, whoever the owner picks (root, ubuntu, ...). The first deploy of an app creates its folder; a missing permission is named at preflight. `server-setup.sh`, run by hand as root, can still create a user with exactly those rights for one app; the TUI never runs it. A per-server setup is planned (Still open) |
 | Configuration | One folder per deployable under a root folder passed on the command line, each with a `deploy.yaml` (0.1 used `deploy.json`; 0.2 a flat format; both are refused with where each key went) |
 | Config check | Every `deploy.yaml` is read before the TUI starts. Any mistake, in any file, stops shipdeck with every problem printed at once, compiler style, in colour: file, line, caret, hint |
 | Editor completion | The config types generate `deploy.schema.json` (draft-07), published at each release tag; examples start with the `yaml-language-server` line. The launch check walks the same schema, and a test keeps the file current |
@@ -35,13 +35,16 @@ live.
 | Shared folders | `service.shared: [uploads]` lives in `shared/` and is linked into every release at unpack |
 | Server location | `/opt/<app>` |
 | Release layout | `releases/<id>/` folders plus a `current` symlink; systemd only uses `current/...` |
+| Upload | Only what the live release lacks. Pack hashes every file (SHA-256) and asks the server for the hashes of the same paths in `current/`, computed there and then (regular files only, never a link; nothing stored is trusted). A file with the same path and hash stays out of the bundle; folders, links, `release.json` and the service file always go. Unpack copies the rest from `current` with a tar pipe (mtimes kept, never a hard link: the rollback target stays intact), gives each file this release's mode, and checks every file with `sha256sum -c` against a receipt before the release goes into place. A mismatch (current changed meanwhile) sends the whole release once. Nothing live, or a server that cannot hash, sends it whole. Names with a newline, a carriage return or a backslash always go, since GNU and busybox `sha256sum` escape them differently |
+| Nothing changed | `release.json` carries `content`, a SHA-256 fingerprint of the file list (paths, modes and hashes, link targets, folders), the service file rendered without the release's name, and `deploy.yaml` as read. Equal to the live release's, the deploy asks first: the TUI defaults to No and stops before the server is touched; headless stops with its own exit code unless `--allow-unchanged`. A comment edited in `deploy.yaml` counts as a change; a change never counts as none |
+| Service by hand | `:` on the Deployables screen, as in vim: `:logs` follows the journal or `pm2 logs` live, on a terminal so closing the view ends the command on the server; `:restart`, `:stop` (both ask first) and `:start`. While that deployable deploys, only `:logs`. With systemd, stopping, starting and the log follow are sudo rights of their own (`remote::control_commands`), apart from what a deploy needs, so a server set up before them still deploys and only these say to run `server-setup.sh` again |
 | Retention | `pipeline.backup.keep`, per deployable: `open` releases unpacked, then `compressed` releases kept only as their backup. The default is 5 + 15, so 20 versions in total |
 | Backups | After setup, `pipeline.backup.files` picks what of the release goes into `backups/<id>.tar.zst`: by default the shipped files, not what setup made (node_modules, .venv), so a backup is about the size of the upload. `include` adds files setup made that it cannot make again; `exclude` leaves out. Rolling back to a backup unpacks it, links `service.shared` and runs setup again. Releases from before backups are compressed whole into `.tar.gz`, as 0.5 did |
 | Version visibility | Each release carries `release.json` and its own systemd unit, with the version in `Description=`, so `systemctl status` shows it |
 | Failure handling | A failed switch, restart or health check asks whether to roll back (`failed.rollback: ask`, the default) and rolls back after 30 s with no answer; `rollback: auto` never asks. `n` keeps the new release live. `failed` runs after any failure |
 | Manual rollback | Unpacks and sets up a backup first, then runs health and `done`, all with `SHIPDECK_ACTION=rollback` |
 | PM2 | `service.manager: pm2` instead of systemd, as the SSH user with no sudo. Each release carries `<service>.pm2.json` (`cwd` is `current`), or ships the user's `pm2.ecosystem`; restart is `pm2 startOrReload --only <app> --update-env` with the service's environment loaded, then `pm2 save`. Health reads `pm2 jlist`. PM2 newer than the major version shipdeck is tested with (6) is refused at preflight |
-| Without the TUI | `deploy`, `rollback` and `releases` subcommands run the same engine flows and print what it reports as lines. Nothing waits for a person: rolling back is a flag (`--on-failure`), a new host key needs `--trust-new-host`, a password comes from `--password` or `SHIPDECK_PASSWORD`. Each `Outcome` has its own exit code, which is a contract with the scripts that call shipdeck |
+| Without the TUI | `deploy`, `rollback` and `releases` subcommands run the same engine flows and print what it reports as lines. Nothing waits for a person: rolling back is a flag (`--on-failure`), deploying an unchanged release is a flag (`--allow-unchanged`), a new host key needs `--trust-new-host`, a password comes from `--password` or `SHIPDECK_PASSWORD`. Each `Outcome` has its own exit code, which is a contract with the scripts that call shipdeck: codes are added, never renumbered |
 
 ## Running it
 
@@ -158,19 +161,23 @@ and releases are ordered by it, never by the version text.
   "git": "ab12cd3",
   "dirty": false,
   "built_at": "2026-10-14T15:30:12Z",
-  "deployed_by": "me"
+  "deployed_by": "me",
+  "content": "sha256:9c1e…"
 }
 ```
+
+`content` is the release's fingerprint (see Nothing changed above);
+releases from before it have none, and always count as changed.
 
 ## The deploy, step by step
 
 | # | Step | shipdeck does | Your commands | If it fails |
 | --- | --- | --- | --- | --- |
-| 1 | Preflight | Over the SSH session: CPU architecture, glibc, free disk space, `sudo -n` rights, the programs `service.start` and `preflight.requires` name, service state. Then the deploy-folder files | `run.server` in `service.dir`, then `run.local` | Stops. Nothing has been touched |
+| 1 | Preflight | Over the SSH session: CPU architecture, glibc, free disk space, `sudo -n` rights, `tar`, `zstd` and `sha256sum`, the programs `service.start` and `preflight.requires` name, service state, the live release's fingerprint. Then the deploy-folder files | `run.server` in `service.dir`, then `run.local` | Stops. Nothing has been touched |
 | 2 | Build | Names the release; afterwards checks every project pattern found something and the binary's architecture and glibc against the server | `run.local` in `project`; output streams into the TUI | Stops |
-| 3 | Pack | Binary + files + `release.json` + rendered unit, into one `.tar.zst` in memory (zstd level 9, every core) | — | Stops |
-| 4 | Upload | Uploads over SFTP into `releases/.<id>.tar.zst` | — | Removes `<id>`. Nothing changed |
-| 5 | Unpack | Unpacks into `releases/<id>/` through a hidden folder; links `service.shared` | — | Removes `<id>`. Nothing changed |
+| 3 | Pack | Hashes every file and fingerprints the release; the same as the live one asks first. Asks `current/` for the hashes of the same paths, then packs what differs, plus folders, links, `release.json` and the rendered unit, into one `.tar.zst` in memory (zstd level 9, every core) | — | Stops. No to an unchanged release stops too, with nothing touched |
+| 4 | Upload | Uploads over SFTP into `releases/.<id>.tar.zst`, with the receipt (`.<id>.sha256`) and, per mode, the files to copy from `current` (`.<id>.reuse.<mode>`) | — | Removes `<id>`. Nothing changed |
+| 5 | Unpack | Unpacks into `releases/<id>/` through a hidden folder, copies the unchanged files from `current/`, sets their modes, checks every file with `sha256sum -c`; links `service.shared`. The files sent for it are removed | — | A copy that does not match sends the whole release once. Otherwise removes `<id>`. Nothing changed |
 | 6 | Setup | Nothing: the live version keeps running | `run.server` then `check.server` in `releases/<id>/` (`npm ci --omit=dev`, migrations) | Removes `<id>`. Nothing changed |
 | 7 | Backup | Lists `releases/<id>/`, picks what `backup.files` names (shipdeck's own files always, `service.shared` never), and packs it on the server into `backups/<id>.tar.zst` | — | Removes `<id>` and its backup. Nothing changed |
 | 8 | Switch | Points `current` at `<id>` in one rename, installs the unit from `current/`, `daemon-reload`, `enable`. The old process keeps serving | — | Asks, then rolls back |
@@ -197,7 +204,15 @@ its `service.shared` links and runs setup again; the backup stays.
 ## The screens
 
 **Deployables.** The folders found under the root. For each: its name, host,
-the version live on the server and whether the service is running.
+the version live on the server and whether the service is running. `:`
+opens a command line at the bottom, as in vim, for the selected
+deployable's service: `:logs`, `:restart`, `:stop` and `:start`, with Tab
+to complete and Esc to cancel. `:stop` and `:restart` ask first; while that
+deployable deploys or rolls back, only `:logs` runs.
+
+**Logs.** `:logs` covers the screen with the service's last 200 log lines,
+then follows it live (`journalctl -u <service> -f`, or `pm2 logs <app>`).
+`q` or Esc closes it, and the command on the server ends with it.
 
 **Deploy.** The steps as a checklist with live status (eleven, plus Failed
 when the deployable has `failed` commands), scrolled to keep the running one in view; a progress
@@ -212,9 +227,9 @@ current one marked. Select one to roll back to it.
 
 ## One-time server setup
 
-Only root can create the deploy user, so this runs once as root.
-`server-setup.sh` lives at the root of this repository. Press `u` on a
-deployable and shipdeck shows the command to run on the server:
+Only root can create the deploy user, so this runs once as root, by hand.
+`server-setup.sh` lives at the root of this repository; the TUI has no key
+for it:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v<version>/server-setup.sh \
@@ -222,23 +237,30 @@ curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v<version>/server-
 ```
 
 The link is pinned to the release tag of the shipdeck build, so what runs as
-root changes only with a release. The script validates every value with the
+root changes only with a release: a change to the script reaches servers
+only through a new release tag. The script validates every value with the
 same rules as `deploy.yaml`, then:
 
 1. Creates the deploy user, with key login only.
 2. Authorizes the key shipdeck logs in with (its public half).
 3. Creates `/opt/<app>` and makes the deploy user its owner.
 4. Installs `/etc/sudoers.d/shipdeck-<service>` after `visudo` accepts it,
-   allowing only: `systemctl daemon-reload`, `systemctl enable <service>`,
+   allowing only what a deploy runs (`remote::sudo_commands`):
+   `systemctl daemon-reload`, `systemctl enable <service>`,
    `systemctl restart <service>`, installing
    `<dir>/current/<service>.service` as `/etc/systemd/system/<service>.service`,
-   and reading the service's last 30 journal lines. Dots in the service name
-   become `_` in the file name, because sudo skips files whose names contain one.
+   and reading the service's last 30 journal lines; and what runs the
+   service by hand (`remote::control_commands`): `systemctl stop <service>`,
+   `systemctl start <service>` and `journalctl -u <service> -f -n 200
+   --no-pager`. Dots in the service name become `_` in the file name,
+   because sudo skips files whose names contain one.
 
-A test fails if the script's sudo commands and shipdeck's own list differ.
-Running it again changes nothing already in place. Every file operation
-inside `/opt/<app>` then runs as the deploy user without sudo. Preflight
-checks all of this and shows the setup command when something is missing.
+A test fails if the script's two lists and shipdeck's own differ. Running
+it again changes nothing already in place and brings an older rule up to
+date. Every file operation inside `/opt/<app>` then runs as the deploy user
+without sudo. Preflight checks what a deploy needs and names what is
+missing; `:stop`, `:start` and `:logs` check their own and show the setup
+command to run again.
 
 ## Code layout
 
@@ -248,18 +270,21 @@ so the TUI recompiles on its own.
 ```
 bin/shipdeck/src/
 └── main.rs        flags, login, the config check, then the TUI or a command
-crates/tui/src/    app state, the three screens, dialogs, theme
+crates/tui/src/    app state, the three screens, the log view, the `:` line, dialogs, theme
 crates/headless/src/
 └── lib.rs         deploy, rollback and releases without the TUI: lines, answers, exit codes
 crates/engine/src/
 ├── config/        the deploy.yaml types (= the JSON Schema), the YAML tree with line numbers,
 │                  the schema walk and value rules, the problem report, globs, discovery
 ├── build/         release name, running local commands, ELF arch and glibc checks
-├── bundle/        picking the files, tar.zst, rendering the systemd unit
+├── bundle/        picking the files, hashing them, the fingerprint and the receipt,
+│                  tar.zst, rendering the systemd unit
 ├── release.rs     release ids and release.json
 ├── ssh/           the russh session, ~/.ssh/config aliases, login, host keys, commands, SFTP upload
-├── remote/        preflight, unpack, shared links, server commands, switch, unit, health,
-│                  backups (picking the files, packing, unpacking), rotate
+├── remote/        preflight, the delta (hashes in current, unpack with copies and the
+│                  check), shared links, server commands, switch, unit, health,
+│                  backups (picking the files, packing, unpacking), rotate, the
+│                  service by hand (stop, start, restart, the live log)
 ├── setup.rs       the server setup command (the script is server-setup.sh at the root)
 └── deploy/        the deploy and rollback flows, and the progress reports
 ```
@@ -313,5 +338,5 @@ worker shipping `.` minus `!cmd`, `dist` and `go.mod`, with `.git` left out.
 - **Server glibc.** Run `ldd --version | head -1` on the server. If the build
   needs a newer glibc than the server has, the Build step stops and prints the
   `cargo zigbuild` target to use instead.
-- **Later, not in the first version.** A live `journalctl -f` view, deploying
-  static sites, and several hosts per deployable.
+- **Later, not in the first version.** Deploying static sites, and several
+  hosts per deployable.

@@ -23,8 +23,9 @@ rolls back any release. Design and decisions: `docs/plan.md`. Usage: `README.md`
 - `crates/engine/` (`shipdeck-engine`): `config` (deploy.yaml: types that
   are the JSON Schema, the line-aware YAML tree, the launch check, globs),
   `build` (version, local commands, ELF checks), `bundle` (picking files,
-  tar.zst, unit), `ssh` (sessions,
-  login, host keys, `~/.ssh/config` aliases), `remote` (server scripts; the backup and which files go in it),
+  their hashes, the fingerprint and the receipt, tar.zst, unit), `ssh` (sessions,
+  login, host keys, `~/.ssh/config` aliases), `remote` (server scripts; the backup and which files go in it;
+  the delta and its check at unpack; the service by hand),
   `release` (ids, release.json), `setup` (the server-setup.sh URL),
   `deploy` (the deploy and rollback flows, `report` for progress),
   `init` (the presets and the new deployable folder).
@@ -58,9 +59,12 @@ rolls back any release. Design and decisions: `docs/plan.md`. Usage: `README.md`
 - Remote scripts are POSIX `sh`; they run through `sh -c`, whatever the login
   shell, after the variables the login shell's startup files export
   (`ssh::shell_env`, off with `ssh.shell_env: false` or `--no-shell-env`).
-- The sudo commands in `remote::sudo_commands` are a contract with the sudoers
-  line people install. Changing one breaks every existing server, and
-  `server-setup.sh` must change with it (`setup_test.rs` checks they match).
+- The sudo commands in `remote::sudo_commands` and `remote::control_commands`
+  are a contract with the sudoers line people install. Changing one breaks
+  every existing server, and `server-setup.sh` must change with it
+  (`setup_test.rs` checks they match). Preflight requires all of
+  `sudo_commands`, so a command a deploy can do without goes in
+  `control_commands`, and older servers keep deploying.
 - `server-setup.sh` at the repository root is public and runs as root through
   `curl | bash`, pinned to a release tag. It validates every argument before
   doing anything; keep it that way, and tag every release (`v<version>`).
