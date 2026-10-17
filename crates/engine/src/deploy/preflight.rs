@@ -12,7 +12,7 @@ use crate::bundle::files::{self, Kind, Source};
 use crate::config::{Deployable, Manager, Program};
 use crate::human;
 use crate::release::ReleaseName;
-use crate::remote::{Facts, Server, check_version};
+use crate::remote::{Facts, PM2_NEWEST_MAJOR, Server, parse_version};
 use crate::ssh::{Pool, ShellEnv};
 
 /// Below this much free space on the server, preflight stops.
@@ -188,12 +188,22 @@ pub(super) fn check_tools(deployable: &Deployable, facts: &Facts, report: &Repor
     Ok(())
 }
 
-/// PM2 is a version shipdeck knows, and no systemd unit of the same name
-/// still runs the app.
+/// PM2 is there, with a warning when it is newer than shipdeck is tested
+/// with, and no systemd unit of the same name still runs the app.
 pub(super) fn check_pm2(deployable: &Deployable, facts: &Facts, report: &Reporter) -> Result<()> {
     let output = facts.pm2_version.as_deref().unwrap_or_default();
-    let version = check_version(output).map_err(|why| anyhow!(why))?;
-    report.log(LogKind::Success, format!("pm2 {version}"));
+    let (version, major) = parse_version(output).map_err(|why| anyhow!(why))?;
+    if major > PM2_NEWEST_MAJOR {
+        report.log(
+            LogKind::Warn,
+            format!(
+                "pm2 {version} is newer than this shipdeck is tested with \
+                 ({PM2_NEWEST_MAJOR}.x); deploying anyway"
+            ),
+        );
+    } else {
+        report.log(LogKind::Success, format!("pm2 {version}"));
+    }
     let name = &deployable.config.service.name;
     if matches!(
         facts.systemd.as_str(),

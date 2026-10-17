@@ -265,19 +265,44 @@ fn a_start_program_under_home_is_refused_with_the_default_unit() {
 }
 
 #[test]
-fn pm2_must_be_known_and_alone() {
+fn pm2_must_be_there_and_alone() {
     let web = deployable(&NODE.replace(
         "start: node dist/main.js",
         "start: node dist/main.js, manager: pm2",
     ));
-    let (report, _rx) = reporter();
+    let (report, mut rx) = reporter();
     let mut found = facts(&[]);
-    found.pm2_version = Some("7.0.4".into());
-    check_pm2(&web, &found, &report).unwrap();
+    let warnings = |rx: &mut UnboundedReceiver<OpUpdate>| {
+        let mut warnings = Vec::new();
+        while let Ok(update) = rx.try_recv() {
+            if let OpEvent::Log {
+                kind: LogKind::Warn,
+                text,
+            } = update.event
+            {
+                warnings.push(text);
+            }
+        }
+        warnings
+    };
+    for older in ["5.4.3", "7.0.4"] {
+        found.pm2_version = Some(older.into());
+        check_pm2(&web, &found, &report).unwrap();
+        assert!(warnings(&mut rx).is_empty(), "{older}");
+    }
 
+    // Newer than tested still deploys, with a warning.
     found.pm2_version = Some(format!("{}.0.0", crate::remote::PM2_NEWEST_MAJOR + 1));
+    check_pm2(&web, &found, &report).unwrap();
+    let warned = warnings(&mut rx);
+    assert!(
+        warned[0].contains("newer than this shipdeck is tested with (7.x)"),
+        "{warned:?}"
+    );
+
+    found.pm2_version = Some(String::new());
     let err = check_pm2(&web, &found, &report).unwrap_err().to_string();
-    assert!(err.contains("newer than this shipdeck supports"), "{err}");
+    assert!(err.contains("did not print a version"), "{err}");
 
     found.pm2_version = Some("7.0.4".into());
     found.systemd = "active".into();

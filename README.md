@@ -640,8 +640,9 @@ instead, ship it and name it:
 Health reads `pm2 jlist`: the app is up when every instance is `online`,
 and a rising restart count is a crash. A failure shows `pm2 logs`.
 
-Preflight refuses a PM2 newer than the major version this shipdeck knows
-(7.x), and a systemd unit of the same name that is still running (`sudo
+Preflight takes any PM2 version, since shipdeck uses only these basic commands; one
+newer than the tested 7.x gets a warning at preflight, and the deploy goes on.
+Preflight refuses a systemd unit of the same name that is still running (`sudo
 systemctl disable --now <name>` first). `server-setup.sh --manager pm2`
 skips the sudo rule and runs `pm2 startup` for the deploy user, once PM2 is
 installed. PM2 7 requires Node.js 18 or newer. To install the tested release,

@@ -6,25 +6,20 @@ use serde_json::Value;
 
 use super::Server;
 
-/// The newest PM2 major version shipdeck is tested with. A newer one is
-/// refused at preflight rather than trusted to behave the same.
+/// The newest PM2 major version shipdeck is tested with. shipdeck uses
+/// only PM2's basic commands, so a newer one still deploys; preflight
+/// warns that it is untested.
 pub const PM2_NEWEST_MAJOR: u64 = 7;
 
-/// Checks the output of `pm2 -v`, which is the version alone, against
-/// [`PM2_NEWEST_MAJOR`].
-pub fn check_version(output: &str) -> Result<String, String> {
+/// Reads the output of `pm2 -v`, which is the version alone, as the
+/// version and its major number.
+pub fn parse_version(output: &str) -> Result<(String, u64), String> {
     let version = output.trim();
     let parts: Option<Vec<u64>> = version.split('.').map(|part| part.parse().ok()).collect();
     let Some([major, _, _]) = parts.as_deref() else {
         return Err(format!("`pm2 -v` did not print a version: {version:?}"));
     };
-    if *major > PM2_NEWEST_MAJOR {
-        return Err(format!(
-            "the server has PM2 {version}, newer than this shipdeck supports \
-             (up to {PM2_NEWEST_MAJOR}.x); update shipdeck, or install pm2@{PM2_NEWEST_MAJOR}"
-        ));
-    }
-    Ok(version.to_string())
+    Ok((version.to_string(), *major))
 }
 
 /// The app's state from `pm2 jlist`, which prints the process list as

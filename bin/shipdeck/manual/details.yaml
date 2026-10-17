@@ -960,8 +960,8 @@ step.preflight:
     - another needed program is missing from the PATH;
     - with systemd and the built-in unit, the start program was found under /home or /root: the
       unit's ProtectHome=true would hide it from the service (see systemd);
-    - with PM2: PM2 is newer than 7.x, or a systemd unit of the same name is still running and
-      would hold the app's port;
+    - with PM2: pm2 is missing, or a systemd unit of the same name is still running and would
+      hold the app's port (a PM2 newer than 7.x is only a warning);
     - the server has less than 100 MiB free.
 
     Then your commands: pipeline.preflight.run.server in service.dir (with the live release's
@@ -1437,17 +1437,19 @@ pm2:
     to update the running daemon too.
 
     Preflight runs `pm2 -v` with the login shell's environment (see shell-env, which shows how
-    to run the same check by hand). It requires pm2 on that PATH, version 7.x or
-    older; it refuses a running systemd unit with the same name (it would hold the port; stop it
-    with `sudo systemctl disable --now <service>`), a service.template, a service.run_as other
-    than ssh.user, and an app name that is all digits (PM2 reads that as a process id).
+    to run the same check by hand). It requires pm2 on that PATH, any version: shipdeck
+    uses only the commands above, which PM2 has long had. A PM2 newer than the one tested
+    (7.x) gets a warning, and the deploy goes on. It refuses a running systemd unit with the
+    same name (it would hold the port; stop it with `sudo systemctl disable --now <service>`), a
+    service.template, a service.run_as other than ssh.user, and an app name that is all digits
+    (PM2 reads that as a process id).
 
 server:
   see: [permissions, server-setup, step.preflight]
   text: |
     What the server needs; preflight checks all of it and names what is missing:
     - Linux with sshd and a POSIX sh. Debian, Ubuntu, Fedora, Alpine and others work.
-    - systemd for manager: systemd (the default), or PM2 7.x or older for manager: pm2.
+    - systemd for manager: systemd (the default), or PM2 for manager: pm2.
     - tar, zstd and sha256sum, used to unpack and verify releases (packages tar, zstd,
       coreutils; busybox works).
     - curl or wget when pipeline.health.url is set.
@@ -1762,8 +1764,9 @@ troubleshooting:
       ~/.bashrc but ~/.bash_profile does not source it; preflight warned that the startup files
       failed or took too long; ssh.shell_env is false. Fix the startup file, or install pm2 for
       the deploy user.
-    - "the server has PM2 8.x, newer than this shipdeck supports (up to 7.x)": update shipdeck,
-      or install pm2@7 on the server.
+    - "pm2 8.0.0 is newer than this shipdeck is tested with (7.x); deploying anyway": a warning,
+      not an error. If health or restart then fails on PM2 itself, install pm2@7 or update
+      shipdeck.
     - "the systemd service my-api is still running and would clash with PM2": run
       `sudo systemctl disable --now my-api` on the server, then deploy.
     - "only 80.0 MiB free on the server": free space, or keep fewer releases
