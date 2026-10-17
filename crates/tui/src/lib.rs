@@ -8,6 +8,7 @@ mod deployables;
 mod logs;
 mod modal;
 mod operation;
+mod release_details;
 mod releases;
 mod theme;
 mod wrap;
@@ -98,6 +99,9 @@ fn draw(frame: &mut Frame, app: &mut App) {
     match &app.command {
         Some(line) => command::draw(frame, footer, line),
         None => chrome::footer(frame, footer, app),
+    }
+    if app.screen == Screen::Releases && app.logs.is_none() {
+        release_details::draw(frame, app);
     }
     modal::draw(frame, frame.area(), app);
 }

@@ -31,6 +31,18 @@ impl App {
                     };
                 }
             }
+            Fetched::Contents {
+                index,
+                id,
+                source,
+                result,
+            } => self.on_contents(index, &id, source, result),
+            Fetched::FileText {
+                index,
+                id,
+                path,
+                result,
+            } => self.on_file_text(index, &id, &path, result),
             Fetched::Controlled {
                 index,
                 action,

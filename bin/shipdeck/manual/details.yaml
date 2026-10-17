@@ -284,7 +284,14 @@ cli.tui:
     Keys on Operation: ↑ ↓ / k j scroll the log, PgUp PgDn by 20, g or Home to the top, G or End
     to follow again, r open releases, Esc or Backspace back.
     Keys on Releases: ↑ ↓ / k j select, Enter roll back to the selected release (asks first),
-    r refresh, Esc or Backspace back.
+    D details, r refresh, Esc or Backspace back.
+    D opens the selected release over the screen, read-only. Tab switches its two tabs: Details
+    (release.json, its folder and backup on the server, sizes, how many files) and Files (every
+    path with its mode, size and link target). A release kept only as a backup is read from
+    backups/<id>.tar.zst as a stream, never unpacked; b switches an unpacked release that also
+    has a backup between the two. Enter on a file shows its first 512 KiB (a binary file is not
+    shown); ↑ ↓, PgUp PgDn, g G scroll; Esc goes back to the files, then closes. Listing a
+    folder uses GNU find, as on Debian, Ubuntu and Fedora.
     Anywhere: q or Ctrl-C quits; while a deploy or rollback runs it asks first, since quitting
     then can leave the server between two releases.
 

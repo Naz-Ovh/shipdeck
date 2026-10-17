@@ -31,6 +31,12 @@ impl App {
             self.on_logs_key(key);
             return;
         }
+        if self.screen == Screen::Releases
+            && self.releases.as_ref().is_some_and(|v| v.details.is_some())
+        {
+            self.on_details_key(key);
+            return;
+        }
         match key.code {
             KeyCode::Char('q') => return self.request_quit(),
             KeyCode::Tab => return self.cycle_screen(1),
@@ -250,6 +256,7 @@ impl App {
                 self.fetch_releases(index);
             }
             KeyCode::Enter => self.ask_rollback(),
+            KeyCode::Char('D') => self.open_details(),
             KeyCode::Esc | KeyCode::Backspace => self.screen = Screen::Deployables,
             _ => {}
         }

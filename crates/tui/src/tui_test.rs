@@ -125,7 +125,7 @@ fn with_config(slug: &str, host: &str, config: DeployConfig) -> Deployable {
     }
 }
 
-fn app() -> App {
+pub(super) fn app() -> App {
     let (questions, _) = unbounded_channel();
     let (ops, _) = unbounded_channel();
     let (fetched, _) = unbounded_channel();
@@ -159,7 +159,7 @@ fn app() -> App {
     app
 }
 
-fn render(app: &mut App, width: u16, height: u16, name: &str) {
+pub(super) fn render(app: &mut App, width: u16, height: u16, name: &str) {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal.draw(|frame| draw(frame, app)).unwrap();
     if let Ok(dir) = std::env::var("SHIPDECK_DUMP") {
@@ -260,7 +260,7 @@ fn running_deploy(app: &mut App) {
     }
 }
 
-fn listing() -> Listing {
+pub(super) fn listing() -> Listing {
     let entries = RELEASES
         .iter()
         .enumerate()
@@ -352,6 +352,7 @@ async fn draws_every_screen_at_common_and_small_sizes() {
             deployable: 0,
             listing: Fetch::Ready(listing()),
             table: ratatui::widgets::TableState::default().with_selected(Some(2)),
+            details: None,
         });
         app.screen = Screen::Releases;
         render(&mut app, width, height, "releases");
@@ -562,7 +563,7 @@ async fn an_unanswered_question_closes_when_its_time_is_up() {
     assert!(app.modals.is_empty());
 }
 
-fn press(app: &mut App, code: KeyCode) {
+pub(super) fn press(app: &mut App, code: KeyCode) {
     app.on_event(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)));
 }
 

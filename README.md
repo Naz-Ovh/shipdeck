@@ -703,6 +703,7 @@ a backup gets them from setup again.
 | `↑` `↓` | select | scroll the log | select |
 | `c` | connect, or disconnect when connected | | |
 | `⏎` | deploy (asks first) | | roll back to the selected release (asks first) |
+| `D` | | | the release's details and every file in it, read-only; a backup is read without unpacking it |
 | `r` | open releases | open releases | refresh |
 | `s` | refresh the connected ones | | |
 | `:` | a command for the selected service: `:logs`, `:restart`, `:stop`, `:start` | | |

@@ -2,6 +2,7 @@
 //! and keys each have their own file here.
 
 mod actions;
+mod details;
 mod events;
 mod keys;
 
@@ -18,7 +19,9 @@ use shipdeck_engine::config::{Deployable, Discovery};
 use shipdeck_engine::deploy::report::{
     LogKind, OpEvent, OpId, OpUpdate, Outcome, RollbackQuestion, StepState, UnchangedQuestion, Unit,
 };
-use shipdeck_engine::remote::{Control, Listing, Status};
+use shipdeck_engine::remote::{
+    Control, FileInfo, FileText, Listing, ReleaseContents, ReleaseEntry, Source, Status,
+};
 use shipdeck_engine::ssh::Pool;
 
 use crate::command::CommandLine;
@@ -55,6 +58,20 @@ pub enum Fetched {
     Releases {
         index: usize,
         result: Result<Listing, String>,
+    },
+    /// What release `id` holds, for the details popup.
+    Contents {
+        index: usize,
+        id: String,
+        source: Source,
+        result: Result<ReleaseContents, String>,
+    },
+    /// The start of one file of release `id`.
+    FileText {
+        index: usize,
+        id: String,
+        path: String,
+        result: Result<FileText, String>,
     },
     /// A `:stop`, `:start` or `:restart` is done.
     Controlled {
@@ -280,6 +297,34 @@ pub struct ReleasesView {
     pub deployable: usize,
     pub listing: Fetch<Listing>,
     pub table: TableState,
+    /// The release shown in the details popup (`D`).
+    pub details: Option<ReleaseDetails>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DetailsTab {
+    Details,
+    Files,
+}
+
+/// One release looked at closely: its `release.json` and where it lives,
+/// and every file it holds, from its folder or from inside its backup.
+pub struct ReleaseDetails {
+    pub entry: ReleaseEntry,
+    pub tab: DetailsTab,
+    pub source: Source,
+    pub contents: Fetch<ReleaseContents>,
+    /// The file picked in the Files tab.
+    pub selected: usize,
+    /// The file being read, over the list.
+    pub file: Option<OpenFile>,
+}
+
+pub struct OpenFile {
+    pub info: FileInfo,
+    pub text: Fetch<FileText>,
+    /// The first line shown.
+    pub scroll: usize,
 }
 
 /// Where the log view is.

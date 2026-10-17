@@ -184,6 +184,7 @@ impl App {
             deployable: index,
             listing: Fetch::Loading,
             table,
+            details: None,
         });
         self.screen = Screen::Releases;
         self.fetch_releases(index);

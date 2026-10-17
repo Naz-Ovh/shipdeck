@@ -150,9 +150,31 @@ pub fn footer(frame: &mut Frame, area: Rect, app: &App) {
                 ("esc", "back"),
                 ("q", "quit"),
             ],
+            Screen::Releases
+                if app
+                    .releases
+                    .as_ref()
+                    .and_then(|v| v.details.as_ref())
+                    .is_some_and(|d| d.file.is_some()) =>
+            {
+                &[
+                    ("↑↓", "scroll"),
+                    ("pgup/pgdn", "page"),
+                    ("g/G", "top/end"),
+                    ("esc", "back to the files"),
+                ]
+            }
+            Screen::Releases if app.releases.as_ref().is_some_and(|v| v.details.is_some()) => &[
+                ("tab", "details/files"),
+                ("↑↓", "move"),
+                ("⏎", "open file"),
+                ("b", "folder/backup"),
+                ("esc", "close"),
+            ],
             Screen::Releases => &[
                 ("↑↓", "select"),
                 ("⏎", "roll back"),
+                ("D", "details"),
                 ("r", "refresh"),
                 ("esc", "back"),
                 ("q", "quit"),
