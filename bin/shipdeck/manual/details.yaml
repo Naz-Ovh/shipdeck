@@ -578,6 +578,21 @@ shell-env:
     server command of that session. The shell's input and output are cut off, so a startup file
     that prints a banner or reads input does no harm.
 
+    Which files that is depends on the shell, as it does for a terminal:
+    - bash: /etc/profile, then the first of ~/.bash_profile, ~/.bash_login, ~/.profile. bash
+      does not read ~/.bashrc itself here; it is read only when that file sources it (Debian's and
+      Ubuntu's ~/.profile do). A ~/.bash_profile that does not source ~/.bashrc hides nvm.
+    - zsh: ~/.zshenv, ~/.zprofile, ~/.zshrc, ~/.zlogin (and their /etc/zsh copies).
+    - fish: ~/.config/fish/config.fish and conf.d.
+    The shell is the user's login shell from /etc/passwd ($SHELL), not the one on your machine.
+
+    Everything shipdeck looks for is found this way: pm2 (`pm2 -v` at preflight, then every pm2
+    command), node, npm, a bare service.start program, preflight.requires entries. To see what
+    shipdeck sees, run the same thing yourself:
+      ssh deploy@prod '"$SHELL" -i -l -c "command -v pm2; pm2 -v"'
+    A plain `ssh deploy@prod pm2 -v` reads none of those files, so it can say "command not found"
+    while shipdeck finds pm2; do not judge by it.
+
     It affects every server command from deploy.yaml and preflight's look-up of programs: a bare
     service.start program or a preflight.requires entry is found on that PATH. It does not affect
     the service itself: systemd starts it with its own environment, and the built-in unit hides
@@ -1421,7 +1436,8 @@ pm2:
     `npm install -g pm2@7.0.4`; after upgrading, run `pm2 update` as the deploy user
     to update the running daemon too.
 
-    Preflight requires pm2 on the user's PATH (the login shell's, see shell-env), version 7.x or
+    Preflight runs `pm2 -v` with the login shell's environment (see shell-env, which shows how
+    to run the same check by hand). It requires pm2 on that PATH, version 7.x or
     older; it refuses a running systemd unit with the same name (it would hold the port; stop it
     with `sudo systemctl disable --now <service>`), a service.template, a service.run_as other
     than ssh.user, and an app name that is all digits (PM2 reads that as a process id).
@@ -1736,10 +1752,16 @@ troubleshooting:
       packages (tar, zstd, coreutils).
     - "deploy cannot find node on the server in the PATH the login shell's startup files set":
       install it, or fix service.start or preflight.requires. With nvm, keep ssh.shell_env true
-      and make sure ~/.bashrc loads nvm.
+      and make sure ~/.bashrc loads nvm and the login file sources ~/.bashrc (see shell-env).
     - "node is at /home/deploy/.nvm/..., but the built-in unit hides home folders from the service
       (ProtectHome=true)": install node system-wide, use manager: pm2, or a service.template
       without ProtectHome.
+    - "`pm2 -v` did not print a version: """: pm2 is not on the PATH the login shell's startup
+      files set (see shell-env). Check with `ssh deploy@prod '"$SHELL" -i -l -c "command -v
+      pm2"'`. Usual causes: pm2 is installed for another user (root); nvm is loaded in
+      ~/.bashrc but ~/.bash_profile does not source it; preflight warned that the startup files
+      failed or took too long; ssh.shell_env is false. Fix the startup file, or install pm2 for
+      the deploy user.
     - "the server has PM2 8.x, newer than this shipdeck supports (up to 7.x)": update shipdeck,
       or install pm2@7 on the server.
     - "the systemd service my-api is still running and would clash with PM2": run

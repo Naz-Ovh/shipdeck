@@ -332,7 +332,7 @@ TUI the answer is no, unless `--allow-unchanged`. An edited comment in
 | `ssh.host` | | An address or a `~/.ssh/config` alias |
 | `ssh.user` | alias `User` | Who to log in and deploy as. Required if the alias has no `User`. |
 | `ssh.port` | alias `Port`, else `22` | |
-| `ssh.shell_env` | `true` | Server commands get the environment a terminal has: shipdeck starts the login shell once per connection, so `~/.bashrc`, `~/.zshrc` or `config.fish` set up `PATH` (nvm and the like). `false` skips them. See [Tools on the server](#tools-on-the-server). |
+| `ssh.shell_env` | `true` | Server commands get the environment a terminal has: shipdeck starts the login shell once per connection, so its startup files (`~/.profile` and the `~/.bashrc` it sources, `~/.zshrc`, `config.fish`) set up `PATH` (nvm and the like). `false` skips them. See [Tools on the server](#tools-on-the-server). |
 | `service.name` | | The systemd unit, without `.service`; with PM2, also the app's name |
 | `service.dir` | | The app's folder on the server, such as `/opt/my-app` |
 | `service.manager` | `systemd` | What keeps the app running: `systemd` (a unit, installed with sudo) or `pm2` (run as `ssh.user`, no sudo). See [PM2](#pm2). |
@@ -567,6 +567,26 @@ fish, ... each read their own files) and gives every server command the
 variables it exports. The shell's output and input are cut off, so a
 startup file that prints or reads does no harm; one that fails, or takes
 more than 20 s, is reported at preflight, and commands run without it.
+
+Everything shipdeck looks for on the server is found this way: `pm2`,
+`node`, `npm`, a bare `service.start` program and `preflight.requires`.
+Which files are read depends on the user's login shell, as for a terminal:
+
+| Shell | Reads |
+| --- | --- |
+| bash | `/etc/profile`, then the first of `~/.bash_profile`, `~/.bash_login`, `~/.profile`. `~/.bashrc` only when that file sources it (Debian's and Ubuntu's `~/.profile` do). |
+| zsh | `~/.zshenv`, `~/.zprofile`, `~/.zshrc`, `~/.zlogin` |
+| fish | `~/.config/fish/config.fish` and `conf.d` |
+
+So nvm set up in `~/.bashrc` is missed when a `~/.bash_profile` does not
+source `~/.bashrc`. To see what shipdeck sees, run the same thing yourself:
+
+```sh
+ssh deploy@prod '"$SHELL" -i -l -c "command -v pm2; pm2 -v"'
+```
+
+A plain `ssh deploy@prod pm2 -v` reads none of those files, so it can say
+"command not found" while shipdeck finds `pm2`.
 
 It costs a second or two per connection. To skip it, set
 `ssh.shell_env: false` for one server, or pass `--no-shell-env` for a whole

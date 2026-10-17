@@ -28,7 +28,7 @@
   topics:
     - { key: login, brief: "keys, passwords, passphrases, their order" }
     - { key: hosts, brief: "~/.ssh/config aliases, host keys, sessions" }
-    - { key: shell-env, brief: "server commands load ~/.bashrc (nvm, PATH)" }
+    - { key: shell-env, brief: "server commands load the login shell's files (nvm, PATH); how pm2 is found" }
 
 - section: deploy.yaml (properties - shipdeck man configs)
   topics:
