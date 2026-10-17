@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Install the prebuilt shipdeck with one command, pin a version, or build it from source with cargo.
+description: Install the prebuilt shipdeck with the install script, cargo-binstall or bin, pin a version, or build it from source with cargo.
 ---
 
 shipdeck runs on Linux and macOS; on Windows, use WSL. The quickest way in is the prebuilt binary. Building from source with cargo works too.
@@ -28,6 +28,30 @@ curl -LsSf https://shipdeck.naz.ovh/install.sh | sh -s -- -V=v0.3.1
 ```
 
 To upgrade, run the install command again. `sh -s -- --help` lists the options.
+
+### With cargo-binstall
+
+If you use [cargo-binstall](https://github.com/cargo-bins/cargo-binstall), it installs the same prebuilt binary into cargo's bin folder, without compiling:
+
+```sh
+cargo binstall --git https://github.com/Naz-Ovh/shipdeck shipdeck
+```
+
+shipdeck is not on crates.io, so `--git` is needed: binstall reads the version from the repository and downloads that release's archive. It picks the build itself: gnu on Linux with glibc, musl on Alpine and other musl systems, and the build for your CPU on macOS.
+
+To upgrade, run the same command again once a new release is out.
+
+### With bin
+
+[bin](https://github.com/marcosnils/bin) installs the latest release from GitHub and keeps track of it for `bin update`:
+
+```sh
+bin install github.com/Naz-Ovh/shipdeck
+```
+
+On Linux it asks which archive to use. Pick the `linux-gnu` one, unless the system is Alpine or another musl distribution, or its glibc is older than 2.28; then pick `linux-musl`.
+
+To upgrade, run `bin update shipdeck`.
 
 ## Build with cargo
 

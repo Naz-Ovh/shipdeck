@@ -170,12 +170,20 @@ install:
     (Alpine, older distributions). Builds exist for x86_64 and aarch64 Linux and both macOS
     architectures.
 
+    With cargo-binstall, the same prebuilt binary into cargo's bin folder:
+      cargo binstall --git https://github.com/Naz-Ovh/shipdeck shipdeck
+    binstall picks the build itself: gnu on Linux with glibc, musl on musl systems such as Alpine.
+
+    With bin (github.com/marcosnils/bin):
+      bin install github.com/Naz-Ovh/shipdeck
+    On Linux it asks which archive: linux-gnu, or linux-musl on Alpine or glibc older than 2.28.
+
     From source, with a stable Rust toolchain (1.88 or newer):
       cargo install --git https://github.com/Naz-Ovh/shipdeck shipdeck
 
     Windows is not supported (shipdeck relies on Unix file modes and sh); WSL works.
 
-    Updating: run the install script again. Then:
+    Updating: run the install script or `cargo binstall` again, or `bin update shipdeck`. Then:
     - update the `# yaml-language-server: $schema=...` line of each deploy.yaml to the new tag, so
       editors complete the new version's fields;
     - read the release notes. If a release changes the sudo rule, run server-setup.sh again on

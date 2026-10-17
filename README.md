@@ -31,6 +31,12 @@ field is under [deploy.yaml](#deployyaml).
 curl -LsSf https://shipdeck.naz.ovh/install.sh | sh
 curl -LsSf https://shipdeck.naz.ovh/install.sh | sh -s -- -V=v0.6.1
 
+# with cargo-binstall: the same prebuilt binary, no compiling
+cargo binstall --git https://github.com/Naz-Ovh/shipdeck shipdeck
+
+# with bin (github.com/marcosnils/bin): on Linux, pick gnu unless it is Alpine
+bin install github.com/Naz-Ovh/shipdeck
+
 # from source
 cargo install --git https://github.com/Naz-Ovh/shipdeck shipdeck
 ```
