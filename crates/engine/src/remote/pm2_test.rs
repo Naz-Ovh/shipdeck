@@ -49,7 +49,12 @@ fn output_that_is_not_json_is_an_error_that_shows_it() {
 
 #[test]
 fn refuses_a_pm2_newer_than_it_knows() {
-    assert_eq!(check_version("5.4.3\n").as_deref(), Ok("5.4.3"));
+    for version in ["5.4.3", "6.0.14", "7.0.0", "7.0.4"] {
+        assert_eq!(
+            check_version(&format!("{version}\n")).as_deref(),
+            Ok(version)
+        );
+    }
     assert_eq!(
         check_version(&format!("{PM2_NEWEST_MAJOR}.0.1")),
         Ok(format!("{PM2_NEWEST_MAJOR}.0.1"))
@@ -59,6 +64,8 @@ fn refuses_a_pm2_newer_than_it_knows() {
         newer.contains("newer than this shipdeck supports"),
         "{newer}"
     );
+    assert!(newer.contains("up to 7.x"), "{newer}");
+    assert!(newer.contains("install pm2@7"), "{newer}");
     for odd in ["", "6", "6.0", "6.0.x", "notice\n6.0.8"] {
         let err = check_version(odd).unwrap_err();
         assert!(err.contains("did not print a version"), "{odd:?}: {err}");

@@ -8,7 +8,7 @@ use super::Server;
 
 /// The newest PM2 major version shipdeck is tested with. A newer one is
 /// refused at preflight rather than trusted to behave the same.
-pub const PM2_NEWEST_MAJOR: u64 = 6;
+pub const PM2_NEWEST_MAJOR: u64 = 7;
 
 /// Checks the output of `pm2 -v`, which is the version alone, against
 /// [`PM2_NEWEST_MAJOR`].
