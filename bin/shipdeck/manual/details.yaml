@@ -834,6 +834,8 @@ config.problems:
     - `pipeline.preflight.run` must be a map (say where it runs): write
       `run: { local: npm test }`, not `run: npm test`.
     - ... reads as a YAML tag: a value starting with `!` needs quotes, as in "!src/old".
+    - deploy.yaml has Windows line endings (CRLF): lines must end in LF. Save the file with LF;
+      in Git, `*.yaml text eol=lf` in .gitattributes keeps it that way on Windows checkouts.
     - `service.name` is the name without .service; `service.dir` must be an absolute path.
     - `service.start` is needed when there is no `pipeline.pack.binary`: say what the service
       runs, such as `node dist/main.js`.

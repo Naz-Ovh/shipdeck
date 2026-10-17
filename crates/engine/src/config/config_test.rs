@@ -217,6 +217,18 @@ fn release_paths_are_stored_without_dots_or_slashes() {
 }
 
 #[test]
+fn refuses_crlf_line_endings() {
+    let problems = parse(&SAMPLE.replace('\n', "\r\n")).unwrap_err();
+    assert_eq!(problems.len(), 1);
+    assert!(problems[0].message.contains("CRLF"), "{}", problems[0]);
+    let first = SAMPLE.lines().next().unwrap().chars().count();
+    assert_eq!(problems[0].at, Some(Span::point(1, first)));
+
+    let lone = parse("project: .\nname: my-api\r").unwrap_err();
+    assert_eq!(lone[0].at, Some(Span::point(2, 12)));
+}
+
+#[test]
 fn user_may_come_from_ssh_config() {
     let config =
         parse(&SAMPLE.replace("{ host: example.com, user: deploy }", "{ host: prod }")).unwrap();

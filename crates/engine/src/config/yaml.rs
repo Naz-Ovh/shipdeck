@@ -109,8 +109,20 @@ impl Node {
     }
 }
 
-/// Reads one YAML document. An empty file is an empty map.
+/// Reads one YAML document. An empty file is an empty map. Lines end in LF
+/// only: a CR anywhere is refused.
 pub fn parse(text: &str) -> Result<Node, Problem> {
+    if let Some(at) = text.find('\r') {
+        let before = &text[..at];
+        let line = before.matches('\n').count() + 1;
+        let col = before.rsplit('\n').next().unwrap_or(before).chars().count();
+        return Err(
+            Problem::new("deploy.yaml has Windows line endings (CRLF); shipdeck reads LF only")
+                .at(Some(Span::point(line, col)))
+                .label("a CR here")
+                .help("save it with LF line endings; in Git, `*.yaml text eol=lf` in .gitattributes keeps them"),
+        );
+    }
     let mut reader = Reader {
         parser: Parser::new_from_str(text),
         anchors: HashMap::new(),
