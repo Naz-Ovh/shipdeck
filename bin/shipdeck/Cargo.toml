@@ -32,3 +32,10 @@ mimalloc = "0.1.52"
 # dist skips packages with publish = false unless told otherwise
 dist = true
 
+# `cargo binstall --git <repo> shipdeck` downloads the archive dist attached to
+# the GitHub Release instead of compiling
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }{ archive-suffix }"
+bin-dir = "{ name }-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "txz"
+
