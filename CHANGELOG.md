@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.6.1 (2026-10-17)
+
+### Upgrading from 0.6.0
+
+- Change the schema line in your `deploy.yaml` files to `v0.6.1`.
+
+### Changed
+
+- **Any PM2 version deploys.** Preflight used to refuse a PM2 newer than
+  6.x. shipdeck uses only PM2's basic commands, so it now takes any
+  version and only warns when it is newer than the tested 7.x.
+
+### Docs
+
+- **How tools are found on the server.** `shipdeck man details shell-env`
+  and the README list which startup files each login shell reads (bash
+  reads `~/.bashrc` only through `~/.profile` or `~/.bash_profile`) and
+  give the command that sees what shipdeck sees:
+  `ssh deploy@prod '"$SHELL" -i -l -c "command -v pm2; pm2 -v"'`. A
+  plain `ssh deploy@prod pm2 -v` can say "not found" while shipdeck
+  finds pm2.
+
 ## 0.6.0 (2026-10-17)
 
 ### Upgrading from 0.5
