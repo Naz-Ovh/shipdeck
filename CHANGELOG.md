@@ -21,6 +21,12 @@
   `ssh deploy@prod '"$SHELL" -i -l -c "command -v pm2; pm2 -v"'`. A
   plain `ssh deploy@prod pm2 -v` can say "not found" while shipdeck
   finds pm2.
+- **When pm2 is not found.** Troubleshooting now explains the
+  ``"`pm2 -v` did not print a version"`` error and its usual causes: pm2
+  installed for another user, a `~/.bash_profile` that skips `~/.bashrc`
+  (and nvm with it), or `ssh.shell_env: false`.
+- **PM2 7** needs Node.js 18 or newer; the tested release is
+  `pm2@7.0.4`. After upgrading PM2, run `pm2 update` as the deploy user.
 
 ## 0.6.0 (2026-10-17)
 

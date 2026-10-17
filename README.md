@@ -800,8 +800,10 @@ just schema
 `server-setup.sh` is fetched, and editors fetch
 `deploy.schema.json`, at the tag `v<version>`, so every release needs its tag
 pushed. Bump `[workspace.package] version` in `Cargo.toml`, update the schema
-line in `examples/` and this README, run `just schema`, commit,
-and push the tag:
+line in `examples/` and this README, run `just schema`, and add the
+release's notes to `CHANGELOG.md`. Commit it all in one commit named
+`Release version v<version>`, so the tag carries its own notes, then tag
+that commit and push:
 
 ```sh
 git tag v0.6.1 && git push origin main v0.6.1
