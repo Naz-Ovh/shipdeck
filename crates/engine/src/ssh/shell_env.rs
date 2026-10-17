@@ -50,6 +50,7 @@ pub fn prelude(code: u32, stdout: &str) -> Result<String, String> {
     Ok(prelude)
 }
 
-#[cfg(test)]
+// The tests run the server's script with this machine's sh and bash.
+#[cfg(all(test, unix))]
 #[path = "shell_env_test.rs"]
 mod tests;

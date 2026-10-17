@@ -181,7 +181,19 @@ install:
     From source, with a stable Rust toolchain (1.88 or newer):
       cargo install --git https://github.com/Naz-Ovh/shipdeck shipdeck
 
-    Windows is not supported (shipdeck relies on Unix file modes and sh); WSL works.
+    Windows: no prebuilt binary yet; install from source as above (Rust's MSVC toolchain). Linux
+    is the main platform, then Windows, then macOS. On Windows:
+    - Git for Windows is required: local commands run in its sh.exe, so the same deploy.yaml
+      works on every PC. shipdeck takes the first sh.exe of: --gitshell-path or
+      SHIPDECK_GITSHELL_PATH; the one `git var GIT_SHELL_PATH` names; sh.exe in a folder on
+      PATH; %ProgramFiles%\Git\usr\bin, %LOCALAPPDATA%\Programs\Git\usr\bin and scoop's git.
+      A link to sh.exe works too, for example in %LOCALAPPDATA%\Microsoft\WindowsApps (on PATH
+      by default): shipdeck follows it and runs sh.exe from Git's folder, next to cp, rm and
+      the rest.
+    - Files have no Unix modes, so every shipped file gets 0644; .env files 0600 and
+      pipeline.pack.binary 0755 as on Linux. A script that must run on the server needs a
+      `chmod +x` in pipeline.setup.run.server.
+    - deploy.yaml must use LF line endings, and paths in it use `/`.
 
     Updating: run the install script or `cargo binstall` again, or `bin update shipdeck`. Then:
     - update the `# yaml-language-server: $schema=...` line of each deploy.yaml to the new tag, so
@@ -229,11 +241,14 @@ cli:
       --allow-unchanged   deploy: deploy even when nothing changed since the live release;
                           without it such a deploy stops with exit code 6
       --to <RELEASE>      rollback: the release id to make live, as `releases` prints it
+      --gitshell-path <PATH>  Windows only: the sh.exe that runs local commands, instead of
+                          Git for Windows' own (see install)
 
     Environment variables:
       SHIPDECK_SSH_KEY         a private key's text (a CI secret), kept out of `ps` and logs
       SHIPDECK_PASSWORD        the password, kept out of the shell history
       SHIPDECK_KEY_PASSPHRASE  the passphrase of an encrypted key, so nothing is asked
+      SHIPDECK_GITSHELL_PATH   Windows only: the same as --gitshell-path
       NO_COLOR                 any value turns colour off
     Empty values count as unset.
 
@@ -702,9 +717,11 @@ config.files:
 
     Always:
     - .git is never shipped, at any depth.
-    - Files whose name starts with .env get mode 0600; every other file keeps its mode.
+    - Files whose name starts with .env get mode 0600; every other file keeps its mode (0644
+      from Windows, which has no modes).
     - Symbolic links stay links. A link named by an include pattern's exact path is followed
-      instead, so `dist -> build/out` ships the folder.
+      instead, so `dist -> build/out` ships the folder. On Windows a link's `\` become `/`, and
+      a link to a drive or a root (C:\app, \app) is refused: it means nothing on the server.
     - Sockets and pipes are skipped.
 
     Refused at launch: including release.json or the service's own file (<service>.service, or
@@ -751,7 +768,8 @@ config.commands:
     `check` must pass: in setup it runs once after `run` and a failure removes the release; in
     health it is retried every 2 seconds until timeout_secs.
 
-    Local commands run with `sh -c` in project, with stdin closed and their output streamed into
+    Local commands run with `sh -c` (on Windows, Git for Windows' sh.exe; see install) in
+    project, with stdin closed and their output streamed into
     the log. They inherit shipdeck's own environment plus the SHIPDECK_* variables, and
     CARGO_TERM_PROGRESS_WHEN=always, CARGO_TERM_PROGRESS_WIDTH=120 and CARGO_TERM_COLOR=never so
     cargo's progress bar becomes the step's progress bar. They do not get service.env or

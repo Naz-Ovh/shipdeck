@@ -416,9 +416,19 @@ pub fn project_from(root: &Path, name: &str, project: &Path) -> Result<String> {
     if !project.is_dir() {
         bail!("{} is not a folder", project.display());
     }
-    Ok(relative(&root.join(name), &project)
-        .to_string_lossy()
-        .into_owned())
+    if root.components().next() != project.components().next() {
+        bail!(
+            "{} is on another drive than {}; a deploy folder reaches its project by a relative path",
+            project.display(),
+            root.display()
+        );
+    }
+    // deploy.yaml writes paths with `/` on every OS.
+    let parts: Vec<String> = relative(&root.join(name), &project)
+        .components()
+        .map(|part| part.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    Ok(parts.join("/"))
 }
 
 /// The path from the folder `from` to `to`; both absolute and without `..`.

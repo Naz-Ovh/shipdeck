@@ -2,7 +2,6 @@
 //! project and to the deploy folder.
 
 use std::collections::BTreeMap;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -205,9 +204,9 @@ impl Walk<'_> {
             let verdict = self.rules.judge(verdict, &path, is_dir, &mut self.hits);
             if verdict.ships() {
                 let kind = if meta.file_type().is_symlink() {
-                    Some(Kind::Link(std::fs::read_link(&child).with_context(
-                        || format!("reading the link {}", child.display()),
-                    )?))
+                    let target = std::fs::read_link(&child)
+                        .with_context(|| format!("reading the link {}", child.display()))?;
+                    Some(Kind::Link(link_target(&child, target)?))
                 } else if is_dir {
                     Some(Kind::Dir)
                 } else if meta.is_file() {
@@ -217,7 +216,7 @@ impl Walk<'_> {
                             // Secrets stay readable by their owner only.
                             0o600
                         } else {
-                            meta.permissions().mode() & 0o777
+                            file_mode(&meta)
                         },
                     })
                 } else {
@@ -241,4 +240,45 @@ impl Walk<'_> {
         }
         Ok(())
     }
+}
+
+/// The mode a file ships with: on Unix, its own.
+#[cfg(unix)]
+fn file_mode(meta: &std::fs::Metadata) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    meta.permissions().mode() & 0o777
+}
+
+/// The mode a file ships with: Windows has no modes to copy, so every file
+/// is 0644. `pipeline.pack.binary` is made 0755 when it is packed.
+#[cfg(windows)]
+fn file_mode(_meta: &std::fs::Metadata) -> u32 {
+    0o644
+}
+
+/// A link's target as the server reads it: on Unix, as written.
+#[cfg(unix)]
+pub(super) fn link_target(_link: &Path, target: PathBuf) -> Result<PathBuf> {
+    Ok(target)
+}
+
+/// A link's target as the server reads it: each `\` becomes `/`. A drive or
+/// a root names a place on this PC, never on the server, so it is refused.
+#[cfg(windows)]
+pub(super) fn link_target(link: &Path, target: PathBuf) -> Result<PathBuf> {
+    use std::path::Component;
+    if target.has_root() || matches!(target.components().next(), Some(Component::Prefix(_))) {
+        bail!(
+            "the link {} points to {}, a path on this PC; make the link relative to its folder",
+            link.display(),
+            target.display()
+        );
+    }
+    let text = target.to_str().with_context(|| {
+        format!(
+            "the link {} points to a name that is not UTF-8",
+            link.display()
+        )
+    })?;
+    Ok(PathBuf::from(text.replace('\\', "/")))
 }

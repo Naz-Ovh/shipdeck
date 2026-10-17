@@ -79,6 +79,11 @@ struct LoginArgs {
     /// Run server commands without the login shell's startup files (~/.bashrc, ~/.zshrc, ...), on every server
     #[arg(long)]
     no_shell_env: bool,
+
+    /// Run local commands with this sh.exe instead of the one Git for Windows has
+    #[cfg(windows)]
+    #[arg(long, value_name = "PATH", env = "SHIPDECK_GITSHELL_PATH")]
+    gitshell_path: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -246,6 +251,10 @@ async fn main() -> Result<ExitCode> {
                 .root
                 .expect("clap requires DEPLOY_ROOT without --schema or a command");
             let shell_env = !cli.login.no_shell_env;
+            #[cfg(windows)]
+            if let Some(path) = &cli.login.gitshell_path {
+                shipdeck_engine::build::set_gitshell_path(path.clone());
+            }
             return run_tui(root, login(cli.login)?, shell_env).await;
         }
     };
@@ -256,6 +265,10 @@ async fn main() -> Result<ExitCode> {
         | ServerCommand::Releases { root, ssh, .. } => (root.as_path(), ssh),
     };
     let shell_env = !ssh.login.no_shell_env;
+    #[cfg(windows)]
+    if let Some(path) = &ssh.login.gitshell_path {
+        shipdeck_engine::build::set_gitshell_path(path.clone());
+    }
     let login = login(ssh.login.clone())?;
     let Some(discovery) = discover(root)? else {
         return Ok(ExitCode::FAILURE);

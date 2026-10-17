@@ -45,6 +45,14 @@ The script installs to `~/.local/bin`. On Linux it picks the gnu build when
 the system has glibc 2.28 or newer, and a static musl build otherwise
 (Alpine, or an older distribution).
 
+On Windows, install from source for now (no prebuilt binary yet).
+[Git for Windows](https://gitforwindows.org) is required: local commands run
+in its `sh.exe`, so one `deploy.yaml` works on every PC. shipdeck finds it
+with `git var GIT_SHELL_PATH`, on `PATH` or in the usual install folders;
+`--gitshell-path` or `SHIPDECK_GITSHELL_PATH` names another. Files shipped
+from Windows get mode `0644` (`.env*` `0600`, `pack.binary` `0755`), and
+`deploy.yaml` must have LF line endings. See `shipdeck man details install`.
+
 ## Run it
 
 ```sh
@@ -60,6 +68,7 @@ shipdeck --schema > deploy.schema.json    # the JSON Schema, for offline editors
 | `--key <path>` | Private key file. An encrypted key asks for its passphrase in the TUI, or takes it from `SHIPDECK_KEY_PASSPHRASE`. |
 | `--key-text <text>` | The private key itself, such as a CI secret. It shows in `ps`; `SHIPDECK_SSH_KEY` does the same without that. Store the key file's text exactly as it is. |
 | `--no-shell-env` | Server commands run without the login shell's startup files, on every server (see [Tools on the server](#tools-on-the-server)). |
+| `--gitshell-path <path>` | Windows only: the `sh.exe` that runs local commands, instead of Git for Windows' own. `SHIPDECK_GITSHELL_PATH` does the same. |
 | `--password <value>` | Password. It lands in your shell history; in zsh with `HIST_IGNORE_SPACE`, start the command with a space. `SHIPDECK_PASSWORD` does the same without the history. |
 | neither | The host's `IdentityFile` from `~/.ssh/config` if it has one; if there is none or the server refuses it, the TUI asks for the password once per `user@host` and keeps it in memory for the run. |
 
@@ -285,8 +294,9 @@ commands only where it can run them:
 | done | `run` | `run` | `current` | — | a warning only |
 | failed | `run` | ✘ | — | `rollback` | logged |
 
-Local commands run in `project`. Every command is one shell line (`sh -c`),
-so `&&`, pipes and `$VARS` work; give one, or a list.
+Local commands run in `project`. Every command is one shell line (`sh -c`;
+on Windows, Git for Windows' `sh.exe`), so `&&`, pipes and `$VARS` work;
+give one, or a list.
 
 ### Only what changed is sent
 

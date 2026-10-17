@@ -2,9 +2,15 @@
 //! the pipeline) and streaming their output.
 
 mod binary;
+#[cfg(windows)]
+mod gitshell;
 mod version;
 
 pub use binary::{BinaryInfo, GlibcVersion, inspect, normalize_arch};
+#[cfg(windows)]
+pub use gitshell::set_gitshell_path;
+#[cfg(windows)]
+use gitshell::sh;
 pub use version::{deployer, read_version, release_name};
 
 use std::path::Path;
@@ -12,12 +18,12 @@ use std::process::Stdio;
 
 use anyhow::{Context, Result, bail};
 use tokio::io::{AsyncRead, AsyncReadExt};
-use tokio::process::Command;
 
 use crate::deploy::report::{LogKind, Reporter, Unit};
 
-/// Runs one shell line with `sh -c` in `dir`. Cargo's progress bar becomes
-/// the step's progress; every other line goes to the log.
+/// Runs one shell line with `sh -c` in `dir`; on Windows, the sh of Git for
+/// Windows. Cargo's progress bar becomes the step's progress; every other
+/// line goes to the log.
 pub async fn run_local(
     command: &str,
     dir: &Path,
@@ -27,7 +33,8 @@ pub async fn run_local(
 ) -> Result<()> {
     let shown = command.trim();
     report.log(LogKind::Command, format!("{shown}  (in {})", dir.display()));
-    let mut child = Command::new("sh")
+    let mut child = sh()
+        .await?
         .arg("-c")
         .arg(command)
         .current_dir(dir)
@@ -60,6 +67,12 @@ pub async fn run_local(
         }
     }
     Ok(())
+}
+
+/// The shell for local commands: `sh` from PATH.
+#[cfg(unix)]
+async fn sh() -> Result<tokio::process::Command> {
+    Ok(tokio::process::Command::new("sh"))
 }
 
 /// Reads a stream, splitting on `\n` and on the `\r` cargo uses to redraw

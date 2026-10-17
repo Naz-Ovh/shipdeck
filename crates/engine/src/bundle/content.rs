@@ -4,7 +4,6 @@
 //! anything changed at all.
 
 use std::io::{self, Read};
-use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -67,7 +66,9 @@ impl Contents {
                 Source::Dir => field(&mut hash, b"d", entry.path.as_bytes()),
                 Source::Link(target) => {
                     field(&mut hash, b"l", entry.path.as_bytes());
-                    hash.update(target.as_os_str().as_bytes());
+                    // The bytes as written on Unix; UTF-8 for the `/` path a
+                    // Windows link becomes.
+                    hash.update(target.as_os_str().as_encoded_bytes());
                     hash.update(b"\0");
                 }
                 Source::File(_) | Source::Bytes(_) => {

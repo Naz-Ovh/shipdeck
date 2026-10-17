@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io::Read;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
 use chrono::{TimeZone, Utc};
@@ -238,6 +239,7 @@ fn globs_pick_files_and_a_deploy_file_replaces_the_project_one() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+#[cfg(unix)]
 #[test]
 fn follows_a_named_link_and_keeps_inner_links() {
     let dir = scratch("links");
@@ -262,6 +264,27 @@ fn follows_a_named_link_and_keeps_inner_links() {
     );
     assert!(!files.keys().any(|p| p.starts_with("out")));
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_links_point_with_slashes_and_stay_relative() {
+    let link = Path::new(r"app\node_modules\.bin\tool");
+    let target = |t: &str| files::link_target(link, PathBuf::from(t));
+    assert_eq!(
+        target(r"..\tool\cli.js").unwrap(),
+        Path::new("../tool/cli.js")
+    );
+    assert_eq!(target(r".\out").unwrap(), Path::new("./out"));
+    for absolute in [
+        r"C:\app\out",
+        r"\app\out",
+        r"\\?\C:\app\out",
+        r"\\server\share\out",
+    ] {
+        let err = target(absolute).unwrap_err().to_string();
+        assert!(err.contains("a path on this PC"), "{absolute}: {err}");
+    }
 }
 
 #[test]
@@ -493,11 +516,13 @@ fn packed_with(deployable: &Deployable, own: &ServiceFile) -> (Contents, Entries
     (contents, files)
 }
 
+#[cfg(unix)]
 fn sha(text: &str) -> String {
     content::sha256(text.as_bytes())
 }
 
 /// A small release: a folder with a file, a link, and a file at the root.
+#[cfg(unix)]
 fn delta_deployable(dir: &Path) -> Deployable {
     write(dir.join("app/same.txt"), "same");
     write(dir.join("app/lib/changed.js"), "new");
@@ -512,6 +537,7 @@ fn delta_deployable(dir: &Path) -> Deployable {
     )
 }
 
+#[cfg(unix)]
 #[test]
 fn sends_only_what_the_server_lacks_and_still_lists_every_path() {
     let dir = scratch("delta");
@@ -557,6 +583,7 @@ fn sends_only_what_the_server_lacks_and_still_lists_every_path() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+#[cfg(unix)]
 #[test]
 fn the_receipt_lists_every_file_sent_or_reused() {
     let dir = scratch("receipt");
@@ -577,6 +604,7 @@ fn the_receipt_lists_every_file_sent_or_reused() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+#[cfg(unix)]
 #[test]
 fn reused_files_keep_the_mode_this_release_gives_them() {
     let dir = scratch("modes");
@@ -615,6 +643,8 @@ fn reused_files_keep_the_mode_this_release_gives_them() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+// Windows file names cannot hold `\` or a newline.
+#[cfg(unix)]
 #[test]
 fn names_sha256sum_cannot_read_back_always_ship_and_go_unlisted() {
     let dir = scratch("odd-names");
@@ -653,6 +683,7 @@ fn names_sha256sum_cannot_read_back_always_ship_and_go_unlisted() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+#[cfg(unix)]
 #[test]
 fn a_file_that_changes_after_it_was_hashed_is_not_packed() {
     let dir = scratch("changed-under");
@@ -670,6 +701,7 @@ fn a_file_that_changes_after_it_was_hashed_is_not_packed() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+#[cfg(unix)]
 #[test]
 fn the_fingerprint_follows_content_and_settings_not_the_release_name() {
     let dir = scratch("fingerprint");
