@@ -549,8 +549,9 @@ hosts:
     deploy.yaml wins (ssh.port over Port, ssh.user over User). It reads the file the way ssh does:
     lines before the first Host apply to every host; a Host line applies when one of its patterns
     matches (`*`, `?`) and no `!pattern` does; the first value found for a keyword wins; Include
-    files are read in place (relative to ~/.ssh, wildcards allowed); `%h`, `%d`, `%u`, `%%` and
-    `~` are expanded in IdentityFile. Match blocks are not understood and never apply.
+    files are read in place (relative to ~/.ssh, wildcards allowed); `%h`, `%d`, `%u` (USER, or
+    USERNAME on Windows), `%%` and `~` are expanded in IdentityFile. Match blocks are not
+    understood and never apply.
     An alias that needs ProxyJump or ProxyCommand is refused when the config is read; jump hosts
     are not supported, so put the server's own address in ssh.host.
 

@@ -242,7 +242,10 @@ fn tokens(text: &str, host: &str, home: &Path) -> String {
         match chars.next() {
             Some('h') => out.push_str(host),
             Some('d') => out.push_str(&home.to_string_lossy()),
-            Some('u') => out.push_str(&std::env::var("USER").unwrap_or_default()),
+            Some('u') => {
+                let user = if cfg!(windows) { "USERNAME" } else { "USER" };
+                out.push_str(&std::env::var(user).unwrap_or_default());
+            }
             Some('%') => out.push('%'),
             Some(other) => {
                 out.push('%');

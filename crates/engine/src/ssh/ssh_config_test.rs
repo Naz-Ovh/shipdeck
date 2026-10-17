@@ -98,6 +98,16 @@ fn missing_config_means_no_settings() {
     assert_eq!(lookup_at(&home, "prod"), HostConfig::default());
 }
 
+#[cfg(windows)]
+#[test]
+fn u_is_the_windows_login_name() {
+    let name = std::env::var("USERNAME").unwrap();
+    assert_eq!(
+        tokens("%u@%h", "my-api", Path::new("/")),
+        format!("{name}@my-api")
+    );
+}
+
 #[test]
 fn wildcards() {
     assert!(wildcard("*", "anything"));

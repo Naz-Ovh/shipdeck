@@ -99,7 +99,10 @@ async fn latest_tag(dir: &Path) -> Option<String> {
 pub async fn deployer(dir: &Path) -> String {
     match git(dir, &["config", "user.name"]).await {
         Some(name) if !name.is_empty() => name,
-        _ => std::env::var("USER").unwrap_or_else(|_| "unknown".into()),
+        _ => {
+            let user = if cfg!(windows) { "USERNAME" } else { "USER" };
+            std::env::var(user).unwrap_or_else(|_| "unknown".into())
+        }
     }
 }
 
