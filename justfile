@@ -5,3 +5,6 @@ schema:
 
 deploy-doc: schema
     cd ./docs/website/ && pnpm run deploy
+
+dev-doc:
+    cd ./docs/website && pnpm run dev
