@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.6.0/deploy.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.6.1/deploy.schema.json
 # A Rust service: compiled here, only the binary and its .env travel.
 name: My API (prod)
 project: ../../../my-api          # your source, relative to this file

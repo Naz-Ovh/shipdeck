@@ -2752,7 +2752,7 @@ dependencies = [
 
 [[package]]
 name = "shipdeck"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2768,7 +2768,7 @@ dependencies = [
 
 [[package]]
 name = "shipdeck-engine"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "base16ct",
@@ -2790,7 +2790,7 @@ dependencies = [
 
 [[package]]
 name = "shipdeck-headless"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "shipdeck-engine",
  "tokio",
@@ -2798,7 +2798,7 @@ dependencies = [
 
 [[package]]
 name = "shipdeck-tui"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "crossterm",
