@@ -10,6 +10,7 @@ mod modal;
 mod operation;
 mod releases;
 mod theme;
+mod wrap;
 
 pub use app::{App, Fetched};
 

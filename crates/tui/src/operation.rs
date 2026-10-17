@@ -16,6 +16,7 @@ use shipdeck_engine::release::ReleaseName;
 
 use super::app::{App, Modal, OpKind, Operation, Progress, StepView};
 use super::theme::{self, ACCENT, BORDER, ERR, OK, SURFACE, TEXT, VIOLET, WARN};
+use super::wrap;
 
 pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
     let Some(op) = &app.op else {
@@ -474,27 +475,31 @@ fn log(frame: &mut Frame, area: Rect, op: &Operation) {
     let height = inner.height as usize;
     let total = op.logs.len();
     let end = total.saturating_sub(op.scroll);
-    let start = end.saturating_sub(height);
-    let lines: Vec<Line> = op
-        .logs
-        .range(start..end)
-        .map(|line| {
+    let (rows, shown) = wrap::bottom(
+        op.logs.range(..end).rev().map(|line| {
             let (marker, marker_style) = theme::log_marker(line.kind);
             let secs = line.at.as_secs();
-            Line::from(vec![
+            let prefix = vec![
                 Span::styled(
                     format!("{:02}:{:02} ", secs / 60, secs % 60),
                     theme::faint(),
                 ),
                 Span::styled(format!("{marker} "), marker_style),
-                Span::styled(line.text.clone(), theme::log_style(line.kind)),
-            ])
-        })
-        .collect();
-    frame.render_widget(Paragraph::new(lines), inner);
+            ];
+            wrap::rows(
+                prefix,
+                &line.text,
+                theme::log_style(line.kind),
+                inner.width as usize,
+            )
+        }),
+        height,
+    );
+    let start = end - shown;
+    frame.render_widget(Paragraph::new(rows), inner);
 
-    if total > height {
-        let mut state = ScrollbarState::new(total.saturating_sub(height)).position(start);
+    if start > 0 || end < total {
+        let mut state = ScrollbarState::new(total.saturating_sub(shown)).position(start);
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .thumb_style(Style::new().fg(ACCENT))

@@ -8,6 +8,7 @@ use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarStat
 
 use super::app::{App, LogsState};
 use super::theme::{self, ACCENT, BORDER, ERR, OK, WARN};
+use super::wrap;
 
 pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
     let Some(logs) = &app.logs else {
@@ -60,12 +61,14 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
     let height = lines_area.height as usize;
     let total = logs.lines.len();
     let end = total.saturating_sub(logs.scroll);
-    let start = end.saturating_sub(height);
-    let lines: Vec<Line> = logs
-        .lines
-        .range(start..end)
-        .map(|line| Line::from(Span::styled(line.clone(), theme::text())))
-        .collect();
+    let (lines, shown) = wrap::bottom(
+        logs.lines
+            .range(..end)
+            .rev()
+            .map(|line| wrap::rows(Vec::new(), line, theme::text(), width)),
+        height,
+    );
+    let start = end - shown;
     if lines.is_empty() && logs.state == LogsState::Connecting {
         frame.render_widget(
             Span::styled("Connecting to the server…", theme::muted()),
@@ -83,8 +86,8 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
         frame.render_widget(Paragraph::new(note).wrap(Wrap { trim: false }), note_area);
     }
 
-    if total > height {
-        let mut state = ScrollbarState::new(total.saturating_sub(height)).position(start);
+    if start > 0 || end < total {
+        let mut state = ScrollbarState::new(total.saturating_sub(shown)).position(start);
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .thumb_style(Style::new().fg(ACCENT))

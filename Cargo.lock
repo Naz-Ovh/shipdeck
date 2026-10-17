@@ -2786,6 +2786,7 @@ dependencies = [
  "ratatui",
  "shipdeck-engine",
  "tokio",
+ "unicode-width",
 ]
 
 [[package]]
