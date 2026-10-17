@@ -18,7 +18,7 @@ use shipdeck_engine::config::{Deployable, Discovery};
 use shipdeck_engine::deploy::report::{
     LogKind, OpEvent, OpId, OpUpdate, Outcome, RollbackQuestion, StepState, UnchangedQuestion, Unit,
 };
-use shipdeck_engine::remote::{Archive, Control, Listing, Status};
+use shipdeck_engine::remote::{Control, Listing, Status};
 use shipdeck_engine::ssh::Pool;
 
 use crate::command::CommandLine;
@@ -314,8 +314,8 @@ pub enum Modal {
     ConfirmRollback {
         deployable: usize,
         target: String,
-        /// What it is unpacked from first; `None` when it is open.
-        from: Option<Archive>,
+        /// Unpacked from its backup and set up first, as it is not open.
+        from_backup: bool,
         current: Option<String>,
     },
     ConfirmQuit,

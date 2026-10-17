@@ -11,13 +11,13 @@ fn listing(open: &[u32], backups: &[u32], current: Option<u32>) -> Listing {
     listing_of(open, backups, current, &[])
 }
 
-/// Like [`listing`]; `before_backups` are open releases from before
-/// shipdeck made backups, so they have none.
+/// Like [`listing`]; `without_backup` are open releases that have none, as
+/// when `keep.compressed` is 0.
 fn listing_of(
     open: &[u32],
     backups: &[u32],
     current: Option<u32>,
-    before_backups: &[u32],
+    without_backup: &[u32],
 ) -> Listing {
     let mut text = String::new();
     if let Some(day) = current {
@@ -25,12 +25,12 @@ fn listing_of(
     }
     for day in open {
         text.push_str(&format!("open\t{}\t100\t\n", id(*day)));
-        if !before_backups.contains(day) {
-            text.push_str(&format!("backup\t{}\t4\ttar.zst\n", id(*day)));
+        if !without_backup.contains(day) {
+            text.push_str(&format!("backup\t{}\t4\n", id(*day)));
         }
     }
     for day in backups {
-        text.push_str(&format!("backup\t{}\t40\ttar.zst\n", id(*day)));
+        text.push_str(&format!("backup\t{}\t40\n", id(*day)));
     }
     parse_listing(&text)
 }
@@ -47,25 +47,9 @@ fn parses_and_sorts_newest_first() {
     assert_eq!(listing.current, Some(id(7)));
     assert!(listing.entries[1].current);
     assert_eq!(listing.entries[0].size_bytes, Some(100 * 1024));
-    assert_eq!(listing.entries[0].backup, Some(Archive::Backup));
+    assert!(listing.entries[0].backup);
     assert_eq!(listing.entries[3].kind, Kind::Compressed);
     assert_eq!(listing.entries[3].size_bytes, Some(40 * 1024));
-}
-
-#[test]
-fn reads_whole_release_tarballs_from_before_backups() {
-    let text = format!(
-        "backup\t{}\t40\ttar.gz\nopen\t{}\t100\t\nbackup\t{}\t9\ttar.zst\nbackup\t{}\t40\ttar.gz\n",
-        id(1),
-        id(2),
-        id(2),
-        id(2)
-    );
-    let listing = parse_listing(&text);
-    assert_eq!(listing.entries.len(), 2);
-    assert_eq!(listing.entries[0].kind, Kind::Open);
-    assert_eq!(listing.entries[0].backup, Some(Archive::Backup));
-    assert_eq!(listing.entries[1].backup, Some(Archive::Whole));
 }
 
 #[test]
@@ -100,7 +84,7 @@ fn closes_beyond_open_and_drops_beyond_compressed() {
     let plan = plan_rotation(&listing, keep(5, 3));
     // 4 and 3 leave the open tier; their backups stay.
     assert_eq!(plan.close, [id(4), id(3)]);
-    assert!(plan.compress.is_empty() && plan.drop_open.is_empty());
+    assert!(plan.drop_open.is_empty());
     // Backups afterwards, newest first: 4, 3, 2 kept; 1 dropped.
     assert_eq!(plan.drop_backup, [id(1)]);
 }
@@ -116,11 +100,11 @@ fn an_open_release_too_old_for_a_backup_goes_with_its_backup() {
 }
 
 #[test]
-fn a_release_from_before_backups_is_compressed_whole() {
+fn an_open_release_without_a_backup_goes_when_it_leaves_the_open_tier() {
     let listing = listing_of(&[1, 2, 3], &[], Some(3), &[1]);
     let plan = plan_rotation(&listing, keep(1, 5));
     assert_eq!(plan.close, [id(2)]);
-    assert_eq!(plan.compress, [id(1)]);
+    assert_eq!(plan.drop_open, [id(1)]);
 }
 
 #[test]

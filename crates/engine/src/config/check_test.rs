@@ -119,28 +119,6 @@ fn unknown_keys_get_a_suggestion_or_the_list() {
 }
 
 #[test]
-fn keys_from_0_2_say_where_they_went_and_hold_back_other_checks() {
-    let found = messages(
-        "\
-name: Old
-ssh: { host: prod, user: deploy }
-remote: { dir: /opt/old, service: old }
-build: { command: cargo build, binary: target/release/old }
-hooks: { after: [echo hi] }
-",
-    );
-    // No "nothing to ship" or "`service` is missing": those follow from the move.
-    assert_eq!(
-        found,
-        [
-            "`remote` moved in shipdeck 0.3",
-            "`build` moved in shipdeck 0.3",
-            "`hooks` moved in shipdeck 0.3",
-        ]
-    );
-}
-
-#[test]
 fn missing_and_empty_values_are_named() {
     assert_eq!(
         messages(""),
@@ -167,27 +145,4 @@ fn yaml_mistakes_point_at_their_line() {
     let found = problems(&format!("{SAMPLE}name: Again\n"));
     assert_eq!(found[0].message, "`name` is written twice");
     assert_eq!(found[0].label, "first written on line 1");
-}
-
-#[test]
-fn keys_moved_since_point_to_their_new_place() {
-    let keep = SAMPLE.replace("dir: /opt/demo }", "dir: /opt/demo, keep: { open: 3 } }");
-    let found = problems(&keep);
-    assert_eq!(found[0].message, "`service.keep` moved");
-    assert!(
-        found[0]
-            .help
-            .as_deref()
-            .unwrap()
-            .contains("pipeline.backup.keep")
-    );
-    let found = problems(&format!("{SAMPLE}  health:\n    rollback: auto\n"));
-    assert_eq!(found[0].message, "`pipeline.health.rollback` moved");
-    assert!(
-        found[0]
-            .help
-            .as_deref()
-            .unwrap()
-            .contains("pipeline.failed.rollback")
-    );
 }

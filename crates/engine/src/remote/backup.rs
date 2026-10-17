@@ -13,25 +13,6 @@ use crate::config::glob::{Rules, Verdict};
 use crate::deploy::report::Reporter;
 use crate::ssh::sh_quote;
 
-/// How a release is kept in `backups/`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Archive {
-    /// `<id>.tar.zst`: what `pipeline.backup.files` picked, made after setup.
-    Backup,
-    /// `<id>.tar.gz`: the whole release folder, from before shipdeck made
-    /// backups. Unpacked, it is ready to switch to as it is.
-    Whole,
-}
-
-impl Archive {
-    pub fn extension(self) -> &'static str {
-        match self {
-            Self::Backup => "tar.zst",
-            Self::Whole => "tar.gz",
-        }
-    }
-}
-
 /// One path in a release folder on the server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseFile {
@@ -180,14 +161,12 @@ echo \"kb=$(du -k {done} | cut -f1)\"",
         Ok(kb * 1024)
     }
 
-    /// `backups/<id>.<archive>` → `releases/<id>/`, through a hidden folder
-    /// so a half-unpacked release never looks complete. A whole release's
-    /// tarball goes once unpacked, as before; a backup stays.
-    pub async fn restore(&self, id: &str, archive: Archive, report: &Reporter) -> Result<()> {
+    /// `backups/<id>.tar.zst` → `releases/<id>/`, through a hidden folder so
+    /// a half-unpacked release never looks complete. The backup stays.
+    pub async fn restore(&self, id: &str, report: &Reporter) -> Result<()> {
         ensure_id(id)?;
-        let script = match archive {
-            Archive::Backup => format!(
-                "set -e
+        let script = format!(
+            "set -e
 cd {dir}
 if [ -d releases/{id} ]; then echo 'releases/{id} is already unpacked'; exit 0; fi
 rm -rf releases/.{id}.partial
@@ -195,24 +174,10 @@ mkdir releases/.{id}.partial
 tar -I zstd -xpf backups/{id}.tar.zst -C releases/.{id}.partial
 mv releases/.{id}.partial releases/{id}
 echo 'unpacked backups/{id}.tar.zst into releases/{id}'",
-                dir = self.q_dir()
-            ),
-            Archive::Whole => format!(
-                "set -e
-cd {dir}
-if [ -d releases/{id} ]; then echo 'releases/{id} is already unpacked'; exit 0; fi
-rm -rf releases/.{id}.partial
-mkdir -p releases/.{id}.partial
-tar -xzpf backups/{id}.tar.gz -C releases/.{id}.partial
-mv releases/.{id}.partial/{id} releases/{id}
-rmdir releases/.{id}.partial
-rm -f backups/{id}.tar.gz
-echo 'unpacked backups/{id}.tar.gz into releases/{id}'",
-                dir = self.q_dir()
-            ),
-        };
-        let what = format!("unpack backups/{id}.{}", archive.extension());
-        self.run(&what, &script, report).await?;
+            dir = self.q_dir()
+        );
+        self.run(&format!("unpack backups/{id}.tar.zst"), &script, report)
+            .await?;
         Ok(())
     }
 }

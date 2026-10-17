@@ -3,7 +3,6 @@
 
 use anyhow::Result;
 
-use super::backup::Archive;
 use super::{Server, ensure_id};
 use crate::config::{Keep, Manager};
 use crate::deploy::report::Reporter;
@@ -26,8 +25,8 @@ pub struct ReleaseEntry {
     pub current: bool,
     /// The folder's size when open, else the tarball's.
     pub size_bytes: Option<u64>,
-    /// What `backups/` holds for it.
-    pub backup: Option<Archive>,
+    /// Whether `backups/<id>.tar.zst` holds it.
+    pub backup: bool,
     pub manifest: Option<Manifest>,
 }
 
@@ -50,8 +49,6 @@ pub struct Status {
 pub struct RotationPlan {
     /// Open releases whose folder goes; their backup stays.
     pub close: Vec<String>,
-    /// Open releases from before backups, to turn whole into a `.tar.gz`.
-    pub compress: Vec<String>,
     /// Open releases to delete outright (too old to keep even as a backup).
     pub drop_open: Vec<String>,
     /// Backups to delete.
@@ -64,7 +61,7 @@ impl RotationPlan {
     }
 
     pub fn len(&self) -> usize {
-        self.close.len() + self.compress.len() + self.drop_open.len() + self.drop_backup.len()
+        self.close.len() + self.drop_open.len() + self.drop_backup.len()
     }
 }
 
@@ -90,16 +87,17 @@ pub fn plan_rotation(listing: &Listing, keep: Keep) -> RotationPlan {
             open_slots -= 1;
         } else if backup_slots > 0 {
             backup_slots -= 1;
+            // An open release with no backup cannot stay as one.
             match (open, entry.backup) {
-                (true, Some(_)) => plan.close.push(id),
-                (true, None) => plan.compress.push(id),
+                (true, true) => plan.close.push(id),
+                (true, false) => plan.drop_open.push(id),
                 (false, _) => {}
             }
         } else {
             if open {
                 plan.drop_open.push(id.clone());
             }
-            if entry.backup.is_some() {
+            if entry.backup {
                 plan.drop_backup.push(id);
             }
         }
@@ -120,7 +118,7 @@ fn by_newest(entries: &mut [ReleaseEntry]) {
 /// `open` for each folder, `backup` for each tarball.
 pub(super) fn parse_listing(text: &str) -> Listing {
     let mut listing = Listing::default();
-    let mut backups: Vec<(&str, Option<u64>, Archive)> = Vec::new();
+    let mut backups: Vec<(&str, Option<u64>)> = Vec::new();
     let kb = |text: &str| text.trim().parse::<u64>().ok().map(|kb| kb * 1024);
     for line in text.lines() {
         let fields: Vec<&str> = line.split('\t').collect();
@@ -138,37 +136,26 @@ pub(super) fn parse_listing(text: &str) -> Listing {
                     kind: Kind::Open,
                     current: false,
                     size_bytes: kb(size),
-                    backup: None,
+                    backup: false,
                     manifest: rest
                         .first()
                         .and_then(|json| serde_json::from_str(json).ok()),
                 });
             }
-            ["backup", id, size, extension] if is_safe_id(id) => {
-                let archive = match *extension {
-                    "tar.zst" => Archive::Backup,
-                    "tar.gz" => Archive::Whole,
-                    _ => continue,
-                };
-                backups.push((id, kb(size), archive));
-            }
+            ["backup", id, size] if is_safe_id(id) => backups.push((id, kb(size))),
             _ => {}
         }
     }
-    // A backup made after setup wins over an old whole-release tarball.
-    backups.sort_by_key(|(_, _, archive)| *archive != Archive::Backup);
-    for (id, size, archive) in backups {
+    for (id, size) in backups {
         match listing.entries.iter_mut().find(|e| e.id == id) {
-            Some(entry) => {
-                entry.backup.get_or_insert(archive);
-            }
+            Some(entry) => entry.backup = true,
             None => listing.entries.push(ReleaseEntry {
                 id: id.to_string(),
                 name: ReleaseName::parse(id),
                 kind: Kind::Compressed,
                 current: false,
                 size_bytes: size,
-                backup: Some(archive),
+                backup: true,
                 manifest: None,
             }),
         }
@@ -222,13 +209,11 @@ for d in releases/*/; do
   js=$(tr -d '\\n\\t' < \"$d/release.json\" 2>/dev/null)
   printf 'open\\t%s\\t%s\\t%s\\n' \"$id\" \"$kb\" \"$js\"
 done
-for ext in tar.zst tar.gz; do
-  for f in backups/*.$ext; do
-    [ -f \"$f\" ] || continue
-    id=$(basename \"$f\" .$ext)
-    kb=$(du -k \"$f\" 2>/dev/null | cut -f1)
-    printf 'backup\\t%s\\t%s\\t%s\\n' \"$id\" \"$kb\" \"$ext\"
-  done
+for f in backups/*.tar.zst; do
+  [ -f \"$f\" ] || continue
+  id=$(basename \"$f\" .tar.zst)
+  kb=$(du -k \"$f\" 2>/dev/null | cut -f1)
+  printf 'backup\\t%s\\t%s\\n' \"$id\" \"$kb\"
 done",
             dir = self.q_dir()
         );
@@ -238,22 +223,6 @@ done",
             .await?
             .check("listing releases")?;
         Ok(parse_listing(&out.stdout))
-    }
-
-    /// `releases/<id>/` → `backups/<id>.tar.gz`, whole, for a release from
-    /// before shipdeck made backups.
-    pub async fn compress(&self, id: &str, report: &Reporter) -> Result<()> {
-        ensure_id(id)?;
-        let script = format!(
-            "set -e
-cd {dir}
-tar -czf backups/.{id}.tar.gz.part -C releases {id}
-mv -f backups/.{id}.tar.gz.part backups/{id}.tar.gz
-rm -rf releases/{id}",
-            dir = self.q_dir()
-        );
-        self.run(&format!("compress {id}"), &script, report).await?;
-        Ok(())
     }
 
     pub async fn drop_open(&self, id: &str, report: &Reporter) -> Result<()> {
@@ -266,10 +235,7 @@ rm -rf releases/{id}",
 
     pub async fn drop_backup(&self, id: &str, report: &Reporter) -> Result<()> {
         ensure_id(id)?;
-        let script = format!(
-            "cd {dir} && rm -f backups/{id}.tar.zst backups/{id}.tar.gz",
-            dir = self.q_dir()
-        );
+        let script = format!("cd {dir} && rm -f backups/{id}.tar.zst", dir = self.q_dir());
         self.run(&format!("delete the backup of {id}"), &script, report)
             .await?;
         Ok(())

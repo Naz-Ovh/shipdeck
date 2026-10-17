@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use shipdeck_engine::config::{Deployable, Rollback, parse};
 use shipdeck_engine::deploy::report::{LogKind, OpEvent, Outcome, StepState, Unit};
 use shipdeck_engine::release::ReleaseName;
-use shipdeck_engine::remote::{Archive, Kind, Listing, ReleaseEntry};
+use shipdeck_engine::remote::{Kind, Listing, ReleaseEntry};
 use shipdeck_engine::ssh::Endpoint;
 use shipdeck_engine::ssh::ssh_config::HostConfig;
 
@@ -221,7 +221,7 @@ fn the_release_table_lines_up() {
             kind: if i == 0 { Kind::Open } else { Kind::Compressed },
             current: i == 0,
             size_bytes: Some(31 * 1024 * 1024),
-            backup: Some(Archive::Backup),
+            backup: true,
             manifest: None,
         })
         .collect();
@@ -231,7 +231,7 @@ fn the_release_table_lines_up() {
         kind: Kind::Open,
         current: false,
         size_bytes: None,
-        backup: None,
+        backup: false,
         manifest: None,
     });
     let text = table(&Listing {

@@ -359,9 +359,9 @@ cli.rollback:
       the release is no longer on the server, is already live, or is a folder shipdeck did not
       create.
     - Unpack: only for a release kept as a backup. backups/<id>.tar.zst is unpacked into
-      releases/<id> and the service.shared folders are linked in; an old whole-release
-      backups/<id>.tar.gz is unpacked as it is. An unpacked release skips this step.
-    - Setup: only after unpacking a .tar.zst backup. A backup holds the shipped files but not what
+      releases/<id> and the service.shared folders are linked in. An unpacked release skips
+      this step.
+    - Setup: only after unpacking a backup. A backup holds the shipped files but not what
       setup made (node_modules, .venv), so pipeline.setup runs again. If it fails, releases/<id>
       is removed again and the backup stays.
     - Switch, Restart, Health: as in a deploy.
@@ -648,8 +648,7 @@ config:
           deploy.yaml
     Commit deploy.yaml and the files it ships from its folder, except secrets. After a fresh clone
     every setting is still there; only each .env has to be copied back. A folder with both
-    deploy.yaml and deploy.yml, or with only an old deploy.json, is a problem, never silently
-    skipped.
+    deploy.yaml and deploy.yml is a problem, never silently skipped.
 
     The top level takes name, project, ssh, service and pipeline. Required are name, ssh.host,
     service.name and service.dir, plus ssh.user when the ~/.ssh/config alias has no User.
@@ -870,22 +869,6 @@ config.problems:
     - `service.pm2` is only read with `manager: pm2`.
     - `ssh.user` is not set, and ~/.ssh/config has no User for prod.
     - `x` is written twice; deploy.yaml holds more than one document.
-
-    Keys that moved are named with their new place. From 0.5: service.keep is now
-    pipeline.backup.keep, and pipeline.health.rollback is now pipeline.failed.rollback (it covers
-    a failed switch or restart too). A file from 0.2 is refused as a whole, each old key with its
-    new place:
-      build.cwd -> project                          build.command -> pipeline.build.run.local
-      build.binary -> pipeline.pack.binary          build.files -> pipeline.pack.files.include.project
-      build.version_from -> pipeline.build.version_from (now relative to project)
-      bundle -> pipeline.pack.files.include.deploy  releases -> pipeline.backup.keep
-      remote.dir, .service, .env, .env_file, .run_as -> service.dir, .name, .env, .env_file, .run_as
-      remote.start + remote.args -> service.start   remote.requires -> pipeline.preflight.requires
-      health -> pipeline.health                     hooks.before -> pipeline.preflight.run.local
-      hooks.server -> pipeline.setup.run.server     hooks.after -> pipeline.done.run.local
-      pipeline.rotate -> gone: done tidies and pipeline.backup.keep says how many stay
-    A deploy.json from 0.1 is refused too: JSON is YAML, so rename it to deploy.yaml and move the
-    keys the same way.
 
 config.template:
   see: [systemd]
@@ -1129,9 +1112,7 @@ step.backup:
     what setup cannot make again, such as generated keys.
 
     keep.compressed: 0 skips this step, and no backups are kept at all. A failure removes the new
-    release and its backup; the live one keeps serving. Releases deployed before backups existed
-    have none; when they retire they are compressed whole into backups/<id>.tar.gz instead, and
-    come back without setup.
+    release and its backup; the live one keeps serving.
 
 step.switch:
   see: [systemd, pm2, rollback, permissions]
@@ -1232,7 +1213,7 @@ releases:
           v1.4.0-ab12cd3-20261015.120000/   the binary or files, .env (0600), links to shared/,
                                             my-api.service (or my-api.pm2.json), release.json
           v1.3.9-9f8e7d6-20261012.091000/
-        backups/                            <id>.tar.zst per kept release (older: <id>.tar.gz)
+        backups/                            <id>.tar.zst per kept release
         shared/                             service.shared folders, kept forever
     current is a symlink: deploying or rolling back only changes where it points, so the paths
     systemd and PM2 see never change. Hidden .<id>.* files and folders in releases/ exist only
@@ -1341,8 +1322,7 @@ rollback:
     - a release kept as a .tar.zst backup is first unpacked into releases/<id>, gets its
       service.shared links, and runs pipeline.setup again to recreate what the backup leaves out
       (node_modules, .venv). The server then needs what setup needs, such as the npm registry. If
-      setup fails, the folder is removed and the backup kept;
-    - an old whole-release .tar.gz is unpacked as it is, without setup.
+      setup fails, the folder is removed and the backup kept.
     Then switch, restart, health and pipeline.done, all with SHIPDECK_ACTION=rollback. Old
     releases are not tidied. If the target fails health, the release that was live before is put
     back (asked in the TUI per failed.rollback, at once headless); the target is never deleted.

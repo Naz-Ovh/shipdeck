@@ -1,8 +1,8 @@
 //! What shipdeck does on the server, as small `sh` scripts over one session.
 //!
 //! Layout under `service.dir`:
-//! `current -> releases/<id>`, `releases/<id>/`, `backups/<id>.tar.zst`
-//! (`.tar.gz` from before backups), `shared/`.
+//! `current -> releases/<id>`, `releases/<id>/`, `backups/<id>.tar.zst`,
+//! `shared/`.
 
 mod backup;
 mod control;
@@ -12,7 +12,7 @@ mod pm2;
 mod preflight;
 mod releases;
 
-pub use backup::{Archive, Picked, ReleaseFile, pick};
+pub use backup::{Picked, ReleaseFile, pick};
 pub use control::{Control, control_commands, log_command};
 pub use delta::Unpacked;
 pub use health::{HttpCheck, Probe};

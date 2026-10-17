@@ -8,7 +8,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph, Wrap};
 
 use shipdeck_engine::release::ReleaseName;
-use shipdeck_engine::remote::{Archive, Control};
+use shipdeck_engine::remote::Control;
 
 use std::time::Instant;
 
@@ -41,9 +41,9 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
         Modal::ConfirmRollback {
             deployable,
             target,
-            from,
+            from_backup,
             current,
-        } => confirm_rollback(app, *deployable, target, *from, current.as_deref()),
+        } => confirm_rollback(app, *deployable, target, *from_backup, current.as_deref()),
         Modal::ConfirmControl { deployable, action } => confirm_control(app, *deployable, *action),
         Modal::Notice { title, text } => (
             title.clone(),
@@ -369,7 +369,7 @@ fn confirm_rollback(
     app: &App,
     index: usize,
     target: &str,
-    from: Option<Archive>,
+    from_backup: bool,
     current: Option<&str>,
 ) -> Dialog {
     let config = &app.deployables[index].config;
@@ -386,15 +386,11 @@ fn confirm_rollback(
         ),
         Line::default(),
     ];
-    let first = match from {
-        Some(Archive::Backup) => Some(
+    if from_backup {
+        lines.push(Line::from(Span::styled(
             "This release is a backup: it is unpacked and set up again with pipeline.setup first.",
-        ),
-        Some(Archive::Whole) => Some("This release is compressed; it is unpacked first."),
-        None => None,
-    };
-    if let Some(first) = first {
-        lines.push(Line::from(Span::styled(first, Style::new().fg(VIOLET))));
+            Style::new().fg(VIOLET),
+        )));
     }
     lines.push(Line::from(Span::styled(
         "The service restarts on that release. If it fails its health check, the current \

@@ -4,12 +4,11 @@ use crate::config::*;
 #[test]
 fn discovery_collects_every_problem_and_keeps_the_good_ones() {
     let root = scratch("discover");
-    for name in ["api", "old", "twice", "broken"] {
+    for name in ["api", "twice", "broken"] {
         std::fs::create_dir_all(root.join(name)).unwrap();
     }
     std::fs::create_dir_all(root.join("notes")).unwrap();
     std::fs::write(root.join("api/deploy.yml"), SAMPLE).unwrap();
-    std::fs::write(root.join("old/deploy.json"), "{}").unwrap();
     std::fs::write(root.join("twice/deploy.yaml"), SAMPLE).unwrap();
     std::fs::write(root.join("twice/deploy.yml"), SAMPLE).unwrap();
     std::fs::write(
@@ -43,10 +42,6 @@ fn discovery_collects_every_problem_and_keeps_the_good_ones() {
             (
                 "broken".to_string(),
                 "`service.dir` must be an absolute path".to_string()
-            ),
-            (
-                "old".to_string(),
-                "shipdeck reads deploy.yaml now, not deploy.json".to_string()
             ),
             (
                 "twice".to_string(),

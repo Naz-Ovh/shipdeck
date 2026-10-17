@@ -145,11 +145,6 @@ pub(super) async fn rotate(
         server.drop_open(id, report).await?;
         done += 1;
     }
-    for id in &plan.compress {
-        report.progress(step, done, total, Unit::Items, format!("compressing {id}"));
-        server.compress(id, report).await?;
-        done += 1;
-    }
     for id in &plan.drop_open {
         report.progress(step, done, total, Unit::Items, format!("deleting {id}"));
         server.drop_open(id, report).await?;
@@ -170,7 +165,7 @@ pub(super) async fn rotate(
     let deleted: BTreeSet<&String> = plan.drop_open.iter().chain(&plan.drop_backup).collect();
     Ok(format!(
         "{} backed up only · {} deleted",
-        plan.close.len() + plan.compress.len(),
+        plan.close.len(),
         deleted.len()
     ))
 }

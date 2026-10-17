@@ -10,7 +10,7 @@ use super::report::{LogKind, Reporter};
 use super::{Action, Ended, Run, Step, restore};
 use crate::config::{DeployConfig, Deployable};
 use crate::release::ReleaseName;
-use crate::remote::{Archive, Kind, ReleaseEntry, Server};
+use crate::remote::{Kind, ReleaseEntry, Server};
 use crate::ssh::Pool;
 
 /// The steps a rollback goes through.
@@ -66,28 +66,23 @@ impl Run<'_> {
         );
 
         // A backup holds only what was picked: it gets its shared folders
-        // and setup again. A whole tarball comes back as it was.
-        let from_backup = match (entry.kind, entry.backup) {
-            (Kind::Compressed, Some(archive)) => {
-                let file = format!("backups/{target}.{}", archive.extension());
+        // and setup again.
+        let from_backup = match entry.kind {
+            Kind::Compressed => {
+                let file = format!("backups/{target}.tar.zst");
                 self.start(Step::Unpack, &format!("unpacking {file}"));
                 let shared = &self.config().service.shared;
                 let unpacked = async {
-                    server.restore(target, archive, report).await?;
-                    if archive == Archive::Backup {
-                        server.link_shared(target, shared, report).await?;
-                    }
-                    Ok::<_, anyhow::Error>(())
+                    server.restore(target, report).await?;
+                    server.link_shared(target, shared, report).await
                 }
                 .await;
                 if let Err(err) = unpacked {
-                    if archive == Archive::Backup {
-                        let _ = server.drop_open(target, report).await;
-                    }
+                    let _ = server.drop_open(target, report).await;
                     return self.stop(Step::Unpack, err);
                 }
                 self.finish(Step::Unpack, format!("from {file}"));
-                archive == Archive::Backup
+                true
             }
             _ => {
                 self.skip(Step::Unpack, "already unpacked");

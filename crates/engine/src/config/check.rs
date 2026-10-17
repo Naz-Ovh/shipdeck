@@ -13,8 +13,6 @@ pub struct Checked {
     /// The file as JSON, without the parts that did not fit.
     pub value: Json,
     pub problems: Vec<Problem>,
-    /// It uses keys from shipdeck 0.2, so other problems are mostly echoes.
-    pub old_format: bool,
 }
 
 /// Checks `root` against the schema.
@@ -23,20 +21,17 @@ pub fn structure(root: &Node) -> Checked {
     let mut walk = Walk {
         root: &schema,
         problems: Vec::new(),
-        old_format: false,
     };
     let value = walk.node(root, &schema, &mut Vec::new(), None);
     Checked {
         value: value.unwrap_or(Json::Null),
         problems: walk.problems,
-        old_format: walk.old_format,
     }
 }
 
 struct Walk<'s> {
     root: &'s Json,
     problems: Vec<Problem>,
-    old_format: bool,
 }
 
 /// The YAML kinds a schema accepts, for "must be …" messages.
@@ -98,7 +93,6 @@ impl<'s> Walk<'s> {
         let mut probe = Walk {
             root: self.root,
             problems: Vec::new(),
-            old_format: false,
         };
         probe.node(node, schema, &mut Vec::new(), None);
         probe.problems.is_empty()
@@ -329,21 +323,12 @@ impl<'s> Walk<'s> {
                     let known: Vec<&str> = properties
                         .map(|p| p.keys().map(String::as_str).collect())
                         .unwrap_or_default();
-                    let parent = dotted(&path[..path.len() - 1]);
-                    if MOVED.iter().any(|(p, k, _)| *p == parent && *k == key.text) {
-                        self.old_format = true;
-                    }
                     self.problems.push(unknown_key(path, &known, key.span));
                 }
             }
             path.pop();
         }
-        // A 0.2 file misses 0.3 keys because they moved; that is said already.
-        if let Some(required) = schema
-            .get("required")
-            .and_then(Json::as_array)
-            .filter(|_| !self.old_format)
-        {
+        if let Some(required) = schema.get("required").and_then(Json::as_array) {
             for name in required.iter().filter_map(Json::as_str) {
                 if !node.entries().iter().any(|(k, _)| k.text == name) {
                     path.push(name.to_string());
@@ -504,79 +489,6 @@ const SHIPDECK_STEPS: [(&str, &str); 4] = [
     ),
 ];
 
-/// Keys from shipdeck 0.2, with where they live now.
-const MOVED: [(&str, &str, &str); 14] = [
-    (
-        "",
-        "remote",
-        "it is `service` now: name, dir, start, run_as, env, env_file",
-    ),
-    (
-        "",
-        "hooks",
-        "each step has its own commands now: `pipeline.preflight.run.local`, `pipeline.setup.run.server`, `pipeline.done.run.local`",
-    ),
-    (
-        "",
-        "build",
-        "it is `pipeline.build` now (run.local, version_from); binary and files moved to `pipeline.pack`",
-    ),
-    (
-        "",
-        "bundle",
-        "it is `pipeline.pack.files.include.deploy` now",
-    ),
-    ("", "releases", "it is `pipeline.backup.keep` now"),
-    ("", "health", "it is `pipeline.health` now"),
-    ("service", "service", "the unit's name is `service.name`"),
-    (
-        "service",
-        "args",
-        "put the arguments at the end of `service.start`",
-    ),
-    (
-        "service",
-        "requires",
-        "it is `pipeline.preflight.requires` now",
-    ),
-    (
-        "pipeline.build",
-        "command",
-        "it is `pipeline.build.run.local` now",
-    ),
-    (
-        "pipeline.build",
-        "binary",
-        "it is `pipeline.pack.binary` now",
-    ),
-    (
-        "pipeline.build",
-        "files",
-        "it is `pipeline.pack.files.include.project` now",
-    ),
-    (
-        "pipeline.build",
-        "cwd",
-        "it is `project` now, at the top of the file",
-    ),
-    (
-        "pipeline",
-        "rotate",
-        "old releases are tidied in done; `pipeline.backup.keep` says how many stay",
-    ),
-];
-
-/// Keys that moved after 0.3. Only the key is in the wrong place, so the
-/// rest of the file is still checked.
-const RENAMED: [(&str, &str, &str); 2] = [
-    ("service", "keep", "it is `pipeline.backup.keep` now"),
-    (
-        "pipeline.health",
-        "rollback",
-        "it is `pipeline.failed.rollback` now; it covers a failed switch or restart too",
-    ),
-];
-
 fn unknown_key(path: &[String], known: &[&str], at: Span) -> Problem {
     let key = path.last().map(String::as_str).unwrap_or_default();
     let parent = dotted(&path[..path.len() - 1]);
@@ -588,18 +500,6 @@ fn unknown_key(path: &[String], known: &[&str], at: Span) -> Problem {
         return Problem::new(format!("{step} does not take commands"))
             .at(Some(at))
             .label(format!("{step} is done by shipdeck"))
-            .help(*help);
-    }
-    if let Some((_, _, help)) = MOVED.iter().find(|(p, k, _)| *p == parent && *k == key) {
-        return Problem::new(format!("`{full}` moved in shipdeck 0.3"))
-            .at(Some(at))
-            .label("a 0.2 key")
-            .help(*help);
-    }
-    if let Some((_, _, help)) = RENAMED.iter().find(|(p, k, _)| *p == parent && *k == key) {
-        return Problem::new(format!("`{full}` moved"))
-            .at(Some(at))
-            .label("moved")
             .help(*help);
     }
 

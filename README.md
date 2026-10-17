@@ -433,10 +433,6 @@ take the [Files](#files) patterns, relative to the release. `release.json`
 and the service file are always in a backup; `service.shared` folders never
 are.
 
-Releases deployed before backups have none: when they leave the open ones,
-they are compressed whole into `backups/<id>.tar.gz` as before, and come back
-without setup.
-
 ### Variables
 
 Every command sees these, besides its own environment:
@@ -515,8 +511,7 @@ api-prod/deploy.yaml
     = help: sources are project and deploy
 ```
 
-On a terminal it is in colour. Unknown keys get a "did you mean", a 0.2 key
-says where it moved, and values that would be unsafe in a shell or a unit
+On a terminal it is in colour. Unknown keys get a "did you mean", and values that would be unsafe in a shell or a unit
 (paths with `..`, odd service names, a relative `service.dir`) are refused.
 
 ### Editor completion
@@ -538,40 +533,6 @@ or map it once for the whole repository in `.vscode/settings.json`:
 
 The website serves the newest one at
 `https://shipdeck.naz.ovh/deploy.schema.json`.
-
-### From 0.2
-
-shipdeck 0.3 refuses a 0.2 file and says where each key went:
-
-| 0.2 | 0.3 |
-| --- | --- |
-| `build.cwd` | `project` |
-| `build.command` | `pipeline.build.run.local` (a list is now several commands; write `[cargo, build]` as one line) |
-| `build.binary` | `pipeline.pack.binary` |
-| `build.files` | `pipeline.pack.files.include.project` |
-| `build.version_from` | `pipeline.build.version_from`, now relative to `project` |
-| `bundle` | `pipeline.pack.files.include.deploy` |
-| `remote.dir`, `remote.service` | `service.dir`, `service.name` |
-| `remote.start` + `remote.args` | `service.start`, arguments included |
-| `remote.env`, `remote.env_file`, `remote.run_as` | `service.env`, `service.env_file`, `service.run_as` |
-| `remote.requires` | `pipeline.preflight.requires` |
-| `releases` | `pipeline.backup.keep` |
-| `health` | `pipeline.health` |
-| `hooks.before` | `pipeline.preflight.run.local` |
-| `hooks.server` | `pipeline.setup.run.server` |
-| `hooks.after` | `pipeline.done.run.local` |
-
-A `deploy.json` from 0.1 is refused too; JSON is YAML, so rename it and move
-the keys the same way.
-
-### From 0.5
-
-Two keys moved; shipdeck points at the new place:
-
-| 0.5 | now |
-| --- | --- |
-| `service.keep` | `pipeline.backup.keep` |
-| `pipeline.health.rollback` | `pipeline.failed.rollback` |
 
 ## Tools on the server
 

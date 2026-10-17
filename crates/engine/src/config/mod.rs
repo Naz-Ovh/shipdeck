@@ -30,8 +30,6 @@ use crate::ssh::Endpoint;
 
 /// The files that mark a folder as a deployable; a folder may have one of them.
 pub const FILE_NAMES: [&str; 2] = ["deploy.yaml", "deploy.yml"];
-/// What shipdeck 0.1 read. Found alone, it is reported instead of skipped.
-pub const LEGACY_FILE_NAME: &str = "deploy.json";
 /// Optional file next to `deploy.yaml` that replaces the built-in systemd unit.
 pub const UNIT_TEMPLATE: &str = "service.template";
 
@@ -547,7 +545,6 @@ fn parse_tree(text: &str) -> Result<(DeployConfig, yaml::Node), Vec<Problem>> {
     let mut problems = checked.problems;
     // What fits is still read, so value problems show up in the same run.
     match serde_json::from_value::<DeployConfig>(checked.value) {
-        Ok(_) if checked.old_format => {}
         Ok(config) => {
             problems.extend(rules::check(&config, &root));
             if problems.is_empty() {

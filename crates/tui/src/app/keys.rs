@@ -283,7 +283,7 @@ impl App {
         let modal = Modal::ConfirmRollback {
             deployable: view.deployable,
             target: entry.id.clone(),
-            from: entry.backup.filter(|_| entry.kind == Kind::Compressed),
+            from_backup: entry.kind == Kind::Compressed,
             current: listing.current.clone(),
         };
         self.modals.push_back(modal);
