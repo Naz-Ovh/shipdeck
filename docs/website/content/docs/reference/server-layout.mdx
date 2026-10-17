@@ -57,10 +57,8 @@ The same as text, with the transient files:
 │   └── .<id>.partial/                    transient: unpacking or restoring
 ├── backups/
 │   ├── <id>.tar.zst                      a release's backup, made after setup
-│   ├── <id>.tar.gz                       a whole release, from before backups
 │   ├── .<id>.tar.zst.part                transient, while packing a backup
-│   ├── .<id>.files                       transient, the list of files to pack
-│   └── .<id>.tar.gz.part                 transient, while compressing an old release
+│   └── .<id>.files                       transient, the list of files to pack
 └── shared/
     └── uploads/                          service.shared folders, kept across releases
 
@@ -81,7 +79,6 @@ The same as text, with the transient files:
 | `releases/<id>/<service>.service` | The unit rendered for this release. Installed into `/etc/systemd/system/` when the release goes live. |
 | `releases/<id>/<shared folder>` | A symlink to the absolute path `<service.dir>/shared/<folder>`, made at unpack for each `service.shared` entry. |
 | `backups/<id>.tar.zst` | A release's backup, packed at the backup step right after setup: what `pipeline.backup.files` picked, plus `release.json` and the unit, never the `service.shared` links. Every release has one, open ones too. The next `pipeline.backup.keep.compressed` releases after the open ones live only here. See [Releases](/docs/guides/releases#backups). |
-| `backups/<id>.tar.gz` | A whole release, tarred from `releases/<id>/` by a shipdeck from before backups, or when such a release leaves the open ones. A rollback unpacks it and removes it. |
 | `shared/` | Folders kept across releases. With the built-in unit, the only place the service may write. |
 
 `releases/`, `backups/` and `shared/` are created at the upload step if missing. `service.dir` itself is created at preflight on a first deploy.
@@ -97,11 +94,10 @@ These exist only while shipdeck is working. A name starting with a dot keeps the
 | `releases/.<id>.sha256` | The receipt: `<sha256>  ./<path>` for every file of the release, in `sha256sum`'s own format, checked with `sha256sum -c` at unpack. |
 | `releases/.<id>.reuse.<mode>` | For one mode, such as `0644`, the files unpack copies from `current` and gives that mode, NUL-separated. |
 | `releases/.<id>.checked` | The output of `sha256sum -c`, while unpack reads it. |
-| `releases/.<id>.partial/` | A release being unpacked, or a backup or tarball being restored. Renamed to `releases/<id>` once every file matches the receipt. |
+| `releases/.<id>.partial/` | A release being unpacked, or a backup being restored. Renamed to `releases/<id>` once every file matches the receipt. |
 | `.current.next` | The new symlink, just before it is renamed over `current`. |
 | `backups/.<id>.tar.zst.part` | A backup being packed. Renamed to `backups/<id>.tar.zst` when complete. |
 | `backups/.<id>.files` | The list of paths that go into a backup, while it is packed. |
-| `backups/.<id>.tar.gz.part` | A whole-release tarball being written. Renamed when complete. |
 
 Unpack removes the files sent for a release, whether it succeeds or not, and a failed deploy removes them with the release. If a run is cut off, such a file may stay behind. shipdeck never lists it, and the next unpack of the same id removes an old `.partial` first. Nothing of them stays in a release folder.
 
@@ -148,7 +144,7 @@ Pretty-printed JSON at the root of every release:
 | `git` | The short commit, or `nogit`. |
 | `dirty` | `true` if tracked files had uncommitted changes. |
 | `built_at` | The id's timestamp in RFC 3339, with `+00:00`. |
-| `deployed_by` | `git config user.name` in the project, else `$USER`, else `unknown`. |
+| `deployed_by` | `git config user.name` in the project, else `$USER` (`USERNAME` on Windows), else `unknown`. |
 | `content` | `sha256:<hex>`, the release's fingerprint: its paths with their kind, each file's mode and SHA-256, each link's target, the service file rendered without the release's name, and `deploy.yaml`. Releases from before it have none. |
 
 The Releases screen reads it for open releases. Preflight reads `content` from `current/release.json`: when the new release's fingerprint is the same, nothing changed, and shipdeck asks before deploying a duplicate. shipdeck refuses to pack a file of yours named `release.json` at the release root.
@@ -156,7 +152,7 @@ The Releases screen reads it for open releases. Preflight reads `content` from `
 ## Ownership and modes
 
 - Every file operation under `service.dir` runs as the SSH user, without sudo. With a non-root user, everything there belongs to that user.
-- Modes come from your PC: folders `0755`, the binary `0755`, `release.json` and the unit `0644`, files whose name starts with `.env` `0600`, other files keep their local mode. A file copied from the live release gets the mode the new release has for it. Symlinks stay symlinks.
+- Modes come from your PC: folders `0755`, the binary `0755`, `release.json` and the unit `0644`, files whose name starts with `.env` `0600`, other files keep their local mode (`0644` from Windows, which has no Unix modes). A file copied from the live release gets the mode the new release has for it. Symlinks stay symlinks.
 - If shipdeck created `service.dir` with `sudo -n mkdir` on a first deploy, it hands it to the SSH user with `chown`. `server-setup.sh` creates it and gives it to the user too.
 - The service runs as `service.run_as`, by default the SSH user. That user must be able to read the release.
 

@@ -170,7 +170,7 @@ Local commands always run in `project`. A key that is not in this table, such as
 
 ## How commands run
 
-Every command is one shell line, run with `sh -c`, so `&&`, pipes and `$VARS` work. Give one command or a list:
+Every command is one shell line, run with `sh -c` (local commands on Windows in Git for Windows' `sh.exe`, see [On Windows](/docs/getting-started/installation#on-windows)), so `&&`, pipes and `$VARS` work. Give one command or a list:
 
 ```yaml
 pipeline:

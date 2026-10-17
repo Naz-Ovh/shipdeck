@@ -126,14 +126,16 @@ shipdeck does not read `.gitignore`. With `include.project: [.]`, `node_modules`
 
 | What | In the release |
 | --- | --- |
-| Files | keep their permission bits |
+| Files | keep their permission bits; `0644` when shipped from Windows, which has no Unix modes |
 | Any file whose name starts with `.env` (`.env`, `.env.production`, `.envrc`) | mode `0600` |
 | Folders | `0755` |
 | The binary | `0755` |
 | A symlink named by an exact literal include, such as `dist` pointing to `build/out` | followed: the folder's content ships as `dist` |
 | Any other symlink, inside a shipped folder or matched by a glob | stays a link with its original target, so `node_modules/.bin/*` keeps working |
 
-An absolute link target points at the same path on the server.
+On Linux and macOS, an absolute link target points at the same path on the server.
+
+From Windows, a script that must run on the server arrives as `0644`, so give it a `chmod +x` in `pipeline.setup.run.server`. A link's `\` become `/`. A link to a drive or a root (`C:\app`, `\app`) means nothing on the server, so Pack refuses it: `the link <link> points to <target>, a path on this PC; make the link relative to its folder`.
 
 ## Only what changed is sent
 

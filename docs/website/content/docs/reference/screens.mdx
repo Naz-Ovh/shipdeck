@@ -316,7 +316,7 @@ The releases on the server for one deployable, newest first. From here you roll 
 │  ●  v0.3.1-ab12cd3-  0.3.1         ab12cd3    2026-10-14 15:30    29.6 MiB   LIVE                │
 │     v0.3.0-9f8e7d6-  0.3.0         9f8e7d6    2026-10-12 09:10    29.6 MiB  unpacked             │
 │ ▌   v0.2.9-1a2b3c4-  0.2.9         1a2b3c4    2026-10-01 12:00     8.2 MiB  backup               │
-│     v0.2.8-5d6e7f8-  0.2.8         5d6e7f8    2026-09-20 08:00    10.5 MiB  tar.gz               │
+│     v0.2.8-5d6e7f8-  0.2.8         5d6e7f8    2026-09-20 08:00     8.1 MiB  backup               │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
@@ -348,11 +348,11 @@ At 100 columns the `Release` column is cut; a wider terminal shows the full id.
 | `Version` | The version from the release id. |
 | `Commit` | The commit, with `*` when built with uncommitted changes (`ab12cd3*`). |
 | `Built (UTC)` | `YYYY-MM-DD HH:MM`, from the release id. |
-| `Size` | Disk use on the server as `du` reports it: the unpacked folder for an open release, the backup (`.tar.zst`) or old `.tar.gz` for a compressed one. |
-| `Where` | ` LIVE `, `unpacked`, `backup` for a release kept only as `backups/<id>.tar.zst`, `tar.gz` for a whole release compressed by a shipdeck from before backups, or `not ours` for a folder shipdeck did not name. |
+| `Size` | Disk use on the server as `du` reports it: the unpacked folder for an open release, the backup (`.tar.zst`) for a compressed one. |
+| `Where` | ` LIVE `, `unpacked`, `backup` for a release kept only as `backups/<id>.tar.zst`, or `not ours` for a folder shipdeck did not name. |
 | (no header) | Who deployed it, from `release.json`. |
 
-The **Details** panel shows `kept  <n>/<keep.open> unpacked  ·  <n>/<keep.compressed> compressed`, then for the selected release its id, `deployed by ... built ...` when known, `built from a working copy with uncommitted changes` when dirty, and what `⏎` does: `This release is live.`, `shipdeck did not create this folder and will not switch to it.`, `⏎  roll back to this release (switch + restart)`, `⏎  roll back to this release (unpack, setup, switch + restart)` for a backup, or `⏎  roll back to this release (unpack, switch + restart)` for a `tar.gz`.
+The **Details** panel shows `kept  <n>/<keep.open> unpacked  ·  <n>/<keep.compressed> compressed`, then for the selected release its id, `deployed by ... built ...` when known, `built from a working copy with uncommitted changes` when dirty, and what `⏎` does: `This release is live.`, `shipdeck did not create this folder and will not switch to it.`, `⏎  roll back to this release (switch + restart)`, or `⏎  roll back to this release (unpack, setup, switch + restart)` for a backup.
 
 Other states of the panel: `Reading releases from the server…`, `Could not read the releases` with the error and `Press r to try again.`, and `No releases on the server yet. Deploy once and they will show up here.`
 
@@ -434,7 +434,7 @@ The service restarts on that release. If it fails its health check, the current 
  y  roll back     n  cancel
 ```
 
-The violet line shows only for a compressed release: the one above for a backup, `This release is compressed; it is unpacked first.` for a `tar.gz`. `live now` reads `nothing` when no release is live. The keys are the same as for Deploy. The last sentence is the dialog's fixed text: when the target fails at Switch, Restart or Health, the rollback policy applies as in a deploy, so with `pipeline.failed.rollback: ask` you get the [rollback question](#rollback-question) first.
+The violet line shows only for a release kept as a backup. `live now` reads `nothing` when no release is live. The keys are the same as for Deploy. The last sentence is the dialog's fixed text: when the target fails at Switch, Restart or Health, the rollback policy applies as in a deploy, so with `pipeline.failed.rollback: ask` you get the [rollback question](#rollback-question) first.
 
 ### Rollback question
 

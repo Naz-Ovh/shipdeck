@@ -27,10 +27,7 @@ These stop shipdeck before the terminal UI starts. It prints the message and exi
         = help: the server sets up the release in `pipeline.setup.run.server`
     ```
 
-    Fix the problems and run shipdeck again. Two things to know:
-
-    - A YAML syntax error (bad indentation, a duplicate key, a second `---` document) shows only the first problem in that file. Fix it and run again to see the rest.
-    - While a file uses a 0.2 key (such as `remote`, `hooks`, or a top-level `build` or `health`), value checks for that file are held back. Move those keys first; [Upgrading from 0.2](/docs/guides/upgrading) has the table.
+    Fix the problems and run shipdeck again. A YAML syntax error (Windows line endings, bad indentation, a duplicate key, a second `---` document) shows only the first problem in that file. Fix it and run again to see the rest.
 
     The report is coloured on a terminal. Set `NO_COLOR` or redirect stderr to get plain text. [Config problems](/docs/reference/config-problems) lists every message.
   </Accordion>
@@ -51,8 +48,8 @@ These stop shipdeck before the terminal UI starts. It prints the message and exi
     The screen opened but found nothing to deploy. shipdeck looks only at the **direct** subfolders of the deploy root, and only at folders with a `deploy.yaml` or `deploy.yml` inside. A `deploy.yaml` in the root itself, or two levels down, is ignored. Check the path you passed and the folder layout in [Deploy root](/docs/guides/deploy-root).
   </Accordion>
 
-  <Accordion title="shipdeck reads deploy.yaml now, not deploy.json">
-    The folder holds a 0.1 `deploy.json`. Rename it to `deploy.yaml` (JSON is valid YAML) and move its fields to the 0.3 layout as [Upgrading from 0.2](/docs/guides/upgrading) shows.
+  <Accordion title="deploy.yaml has Windows line endings (CRLF); shipdeck reads LF only">
+    The file was saved with CRLF line endings, usually on Windows. Save it with LF. In Git, a `.gitattributes` line `*.yaml text eol=lf` keeps it that way on Windows checkouts.
   </Accordion>
 
   <Accordion title="this folder has both deploy.yaml and deploy.yml">

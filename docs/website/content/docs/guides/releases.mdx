@@ -76,7 +76,7 @@ shipdeck tidies in the **done** step of every successful deploy. It never tidies
 
 For example, with `open: 5` and `compressed: 3`, releases 2 to 9 unpacked with 9 live, and only the backup of 1: releases 5 to 9 stay open, 4, 3 and 2 keep only their backup, and 1 is deleted.
 
-A release deployed with a shipdeck from before backups has none. When it leaves the open releases it is still compressed whole into `backups/<id>.tar.gz`, as before.
+An open release that has no backup, such as one deployed with `keep.compressed: 0`, is deleted when it leaves the open releases. It is never compressed whole.
 
 The done step shows what it did, such as `2 backed up only · 1 deleted`, or `3/5 open` when there was nothing to do. A tidying error is only a warning; the deploy stays live.
 
@@ -94,7 +94,7 @@ Press `r` on a deployable (or `3`) to read its releases from the server.
 │  ●  v0.3.1-ab12cd3-  0.3.1         ab12cd3    2026-10-14 15:30    29.6 MiB   LIVE                │
 │     v0.3.0-9f8e7d6-  0.3.0         9f8e7d6    2026-10-12 09:10    29.6 MiB  unpacked             │
 │ ▌   v0.2.9-1a2b3c4-  0.2.9         1a2b3c4    2026-10-01 12:00     8.2 MiB  backup               │
-│     v0.2.8-5d6e7f8-  0.2.8         5d6e7f8    2026-09-20 08:00    10.5 MiB  tar.gz               │
+│     v0.2.8-5d6e7f8-  0.2.8         5d6e7f8    2026-09-20 08:00     8.1 MiB  backup               │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
@@ -124,10 +124,9 @@ Releases are listed newest first. The `Where` column says where each one is:
 | `LIVE` | `current` points at it. Marked with a green `●`. |
 | `unpacked` | In `releases/`, ready to switch to. |
 | `backup` | Only its backup, `backups/<id>.tar.zst`. A rollback unpacks it and runs setup first. |
-| `tar.gz` | A whole release compressed into `backups/<id>.tar.gz` by a shipdeck from before backups. A rollback unpacks it first. |
 | `not ours` | A folder in `releases/` that shipdeck did not name. |
 
-A commit with a `*` (`ab12cd3*`) was built from a dirty working copy. `Size` is the disk use `du` reports on the server: the unpacked folder for an open release, the `.tar.zst` or `.tar.gz` for a compressed one. The Details panel shows the counts against `pipeline.backup.keep` and, for the selected release, who deployed it and when (from its `release.json`; compressed releases do not show this).
+A commit with a `*` (`ab12cd3*`) was built from a dirty working copy. `Size` is the disk use `du` reports on the server: the unpacked folder for an open release, its backup (`.tar.zst`) for a compressed one. The Details panel shows the counts against `pipeline.backup.keep` and, for the selected release, who deployed it and when (from its `release.json`; compressed releases do not show this).
 
 Keys: `↑`/`↓` (or `k`/`j`) to select, `⏎` to roll back, `r` to read the list again, `Esc` to go back. See [Screens and keys](/docs/reference/screens).
 
@@ -147,15 +146,13 @@ A manual rollback runs these steps:
 ### Unpack
 
 Only for a compressed release: `Unpack: unpacking backups/<id>.tar.zst`. The backup is unpacked into `releases/<id>` through a hidden `.partial` folder, and each `service.shared` folder is linked in. The backup stays in `backups/`. For an open release this step is skipped (`already unpacked`). A failure here removes what was unpacked and stops; nothing live changed.
-
-For an old `.tar.gz` from before backups, the whole release is unpacked as before and the tarball is then removed, so the release is open again.
 </Step>
 <Step>
 ### Setup
 
 Only for a backup: `Setup: setting up releases/<id>`. shipdeck runs `pipeline.setup.run.server`, then `pipeline.setup.check.server`, in `releases/<id>` with `SHIPDECK_ACTION=rollback`, so `npm ci` and the like make again what the backup left out. These are the setup commands of your `deploy.yaml` now, not of the release, and they need what setup needs, such as access to your package registry. A command that must not run again, such as a migration, can check `SHIPDECK_ACTION` (see [Variables](/docs/reference/variables#migrations-on-deploy-only)).
 
-If setup fails, `releases/<id>` is removed, its backup stays, and the rollback stops; nothing live changed. For an open release or a `.tar.gz` the step is skipped (`already set up`).
+If setup fails, `releases/<id>` is removed, its backup stays, and the rollback stops; nothing live changed. For an open release the step is skipped (`already set up`).
 </Step>
 <Step>
 ### Switch

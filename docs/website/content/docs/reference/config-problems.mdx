@@ -54,8 +54,7 @@ shipdeck reads each file in passes: YAML first, then the shape of the file again
 
 | What you see | What is held back |
 | --- | --- |
-| A YAML syntax problem (invalid YAML, a second document, a key written twice, a key that is not text) | Everything else in that file. Only this one problem is shown. |
-| A 0.2 key (`` `remote` moved in shipdeck 0.3 ``) | All value checks, and the "is missing" checks after it. Only structural problems are shown. |
+| A YAML syntax problem (Windows line endings, invalid YAML, a second document, a key written twice, a key that is not text) | Everything else in that file. Only this one problem is shown. |
 | A required part with the wrong shape, such as `ssh: prod` | Value checks for the whole file. |
 | Any problem at all | The SSH login check (user, proxy), which runs only on an otherwise clean file. |
 
@@ -66,10 +65,9 @@ Shape problems on optional parts do not hold anything back: value problems still
 | Message | When | Fix |
 | --- | --- | --- |
 | `this folder has both deploy.yaml and deploy.yml` | one folder holds both names | Keep one of them. |
-| `shipdeck reads deploy.yaml now, not deploy.json` | a folder has only a `deploy.json` from 0.1 | Rename it to `deploy.yaml` and move the keys. See [Upgrading from 0.2](/docs/guides/upgrading). |
 | `cannot read it: <os error>` | the file cannot be read | Fix its permissions. |
 
-Only the direct subfolders of the deploy root are read. A folder without any of these files is skipped without a message. See [Deploy root](/docs/guides/deploy-root).
+Only the direct subfolders of the deploy root are read. A folder with neither `deploy.yaml` nor `deploy.yml` is skipped without a message. See [Deploy root](/docs/guides/deploy-root).
 
 ## YAML syntax
 
@@ -77,6 +75,7 @@ Each of these stops the file at the first one, so only one is shown.
 
 | Message | Label | When | Fix |
 | --- | --- | --- | --- |
+| `deploy.yaml has Windows line endings (CRLF); shipdeck reads LF only` | `a CR here` | a carriage return anywhere in the file | Save it with LF line endings. In Git, `*.yaml text eol=lf` in `.gitattributes` keeps them on Windows checkouts. |
 | `this is not valid YAML: <parser text>` | `here` | a syntax error | Fix the YAML at the caret. |
 | `deploy.yaml holds more than one document` | `a second document starts here` | a second `---` | Remove the `---` line and what follows it, or merge them. |
 | `` `<key>` is written twice `` | `first written on line <N>` | the same key twice in one map | Keep one of them. |
@@ -173,40 +172,6 @@ These run once the shape of the file is right.
 | `nothing to ship` | `empty` | Set `pipeline.pack.binary`, `pipeline.pack.files.include`, or both. |
 | `` `pipeline.backup.keep.open` must be at least 1 `` | `the live release counts` | Use `1` or more. |
 | `the backup would hold nothing but release.json and the service file` | `nothing to back up` | Set `deployed: true`, list paths in `include`, or keep no backups with `keep.compressed: 0`. |
-
-## 0.2 keys
-
-A key from shipdeck 0.2 gives `` `<key>` moved in shipdeck 0.3 ``, labelled `a 0.2 key`, with a hint that says where it went:
-
-| Key | Hint |
-| --- | --- |
-| `remote` | ``it is `service` now: name, dir, start, run_as, env, env_file`` |
-| `hooks` | ``each step has its own commands now: `pipeline.preflight.run.local`, `pipeline.setup.run.server`, `pipeline.done.run.local` `` |
-| `build` (top level) | ``it is `pipeline.build` now (run.local, version_from); binary and files moved to `pipeline.pack` `` |
-| `bundle` | ``it is `pipeline.pack.files.include.deploy` now`` |
-| `releases` | ``it is `pipeline.backup.keep` now`` |
-| `health` (top level) | ``it is `pipeline.health` now`` |
-| `service.service` | ``the unit's name is `service.name` `` |
-| `service.args` | ``put the arguments at the end of `service.start` `` |
-| `service.requires` | ``it is `pipeline.preflight.requires` now`` |
-| `pipeline.build.command` | ``it is `pipeline.build.run.local` now`` |
-| `pipeline.build.binary` | ``it is `pipeline.pack.binary` now`` |
-| `pipeline.build.files` | ``it is `pipeline.pack.files.include.project` now`` |
-| `pipeline.build.cwd` | ``it is `project` now, at the top of the file`` |
-| `pipeline.rotate` | ``old releases are tidied in done; `pipeline.backup.keep` says how many stay`` |
-
-While any of these is in the file, value checks are held back. Move every key, then run again. [Upgrading from 0.2](/docs/guides/upgrading) has the full mapping.
-
-## Moved keys
-
-Two keys moved after shipdeck 0.5. Each gives `` `<key>` moved ``, labelled `moved`, with a hint that says where it went:
-
-| Key | Hint |
-| --- | --- |
-| `service.keep` | ``it is `pipeline.backup.keep` now`` |
-| `pipeline.health.rollback` | ``it is `pipeline.failed.rollback` now; it covers a failed switch or restart too`` |
-
-Move the key; the values stay the same. See [Upgrading](/docs/guides/upgrading#after-05).
 
 ## Files and paths
 

@@ -55,8 +55,7 @@ Here `shipdeck scripts/deploy` lists three deployables: `my-api-beta`, `my-api-p
 | Order | Folders are sorted by name. The list on screen and the problem report follow this order. |
 | File name | `deploy.yaml` or `deploy.yml`. Symlinked files and symlinked subfolders count. Hidden subfolders are not skipped. |
 | Both names | A folder with both `deploy.yaml` and `deploy.yml` is a problem: `this folder has both deploy.yaml and deploy.yml`. Keep one of them. |
-| `deploy.json` | A folder with only a `deploy.json` (the 0.1 and 0.2 format) is a problem, never skipped: `shipdeck reads deploy.yaml now, not deploy.json`. See [Upgrading from 0.2](/docs/guides/upgrading). |
-| Other folders | A subfolder with none of these files is skipped without a word, so a `notes/` folder next to your deployables is fine. |
+| Other folders | A subfolder with neither `deploy.yaml` nor `deploy.yml` is skipped without a word, so a `notes/` folder next to your deployables is fine. |
 
 If the path you pass is not a folder, shipdeck stops with `<root> is not a folder`. If the folder has no deployables, shipdeck opens with `No deployables yet` and shows where it looked.
 

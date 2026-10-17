@@ -56,11 +56,11 @@ shipdeck 0.3.0 keeps a narrow scope:
 
 **On your PC**
 
-- Nothing extra for shipdeck itself: the [install script](/docs/getting-started/installation) downloads a prebuilt binary. Only building it from source needs a Rust toolchain (1.89 or newer) and a C compiler.
-- A Unix-like system: Linux, macOS, or Windows through WSL. Local commands run through `sh -c`.
+- Nothing extra for shipdeck itself on Linux and macOS: the [install script](/docs/getting-started/installation) downloads a prebuilt binary. Building it from source, as on Windows for now, needs a Rust toolchain (1.89 or newer) and a C compiler.
+- Linux, Windows or macOS. Local commands run through `sh -c`; on Windows, in Git for Windows' `sh.exe`, so [Git for Windows](/docs/getting-started/installation#on-windows) is required there.
 - Whatever your own build needs: `cargo`, `cargo zigbuild`, `go`, `npm` and so on.
 - A terminal with 24-bit colour and Unicode box-drawing characters.
-- `git` is optional. shipdeck uses it to put the commit in the release name and to mark releases built from uncommitted changes.
+- `git` is optional, except on Windows. shipdeck uses it to put the commit in the release name and to mark releases built from uncommitted changes.
 
 **On the server**
 

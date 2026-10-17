@@ -55,7 +55,7 @@ ssh:
 | `IdentityFile` | the key tried when you pass neither `--key` nor `--password`; only the first one counts |
 | `Include` | read in place, relative to `~/.ssh`, with `*` and `?` in file names |
 
-The matching follows `ssh`: lines before the first `Host` apply to every host, `*` and `?` wildcards and `!pattern` work, keywords are case-insensitive, and the first value found wins. `Keyword value` and `Keyword=value` are both accepted. In `IdentityFile`, `~`, `%d`, `%u`, `%h` and `%%` are expanded.
+The matching follows `ssh`: lines before the first `Host` apply to every host, `*` and `?` wildcards and `!pattern` work, keywords are case-insensitive, and the first value found wins. `Keyword value` and `Keyword=value` are both accepted. In `IdentityFile`, `~`, `%d`, `%u` (`USER`, or `USERNAME` on Windows), `%h` and `%%` are expanded.
 
 ### What is not read
 

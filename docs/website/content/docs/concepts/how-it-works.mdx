@@ -92,8 +92,8 @@ After the restart, the engine probes the service once a second until it has been
 
 shipdeck reads every `deploy.yaml` under the deploy root before it starts. Any mistake in any file stops it, with every problem in every file printed at once: file, line, a caret under the value, and a hint. Checked at this point:
 
-- the YAML itself;
-- the shape: unknown keys (with suggestions, and where a 0.2 key moved), wrong kinds, missing required keys;
+- the YAML itself, which must have LF line endings;
+- the shape: unknown keys (with suggestions), wrong kinds, missing required keys;
 - the values: paths, names, users, URLs, commands, numbers, `ask` or `auto`;
 - the SSH target: `~/.ssh/config` is read, a missing user is reported, and an alias that needs `ProxyJump` is refused.
 

@@ -101,6 +101,8 @@ More complete files for Rust, Go, Node and Python are on [Examples](/docs/guides
 - It is one YAML document. A leading `---` is fine; a second document is a problem. JSON works too, since JSON is YAML.
 - An empty file reads as an empty map, so it reports `name`, `ssh` and `service` as missing.
 - Comments are ignored. The schema line is a comment that only editors read.
+- Lines end in LF. A carriage return anywhere is refused with `deploy.yaml has Windows line endings (CRLF); shipdeck reads LF only`; save the file with LF. In Git, `*.yaml text eol=lf` in `.gitattributes` keeps it that way on Windows checkouts.
+- Paths in it use `/`, on Windows too.
 
 **Text fields** take any YAML scalar as text: `name: true` is `"true"`, `PORT: 3000` is `"3000"`, `DEBUG: no` is `"no"`.
 

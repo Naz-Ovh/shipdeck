@@ -17,7 +17,7 @@ shipdeck man      [index | configs | details <KEY>...]
 shipdeck --schema
 ```
 
-`deploy`, `rollback` and `releases` take the same login options as the screen: `--key`, `--key-text`, `--password` and `--no-shell-env`.
+`deploy`, `rollback` and `releases` take the same login options as the screen: `--key`, `--key-text`, `--password` and `--no-shell-env`, and on Windows `--gitshell-path`.
 
 ```sh
 shipdeck ./scripts/deploy --key ~/.ssh/id_ed25519
@@ -111,6 +111,20 @@ Run server commands without the login shell's startup files, on every server of 
 | Per server | `ssh.shell_env: false` in its `deploy.yaml` |
 
 Loading the startup files costs a second or two per connection. Turn it off when a startup file expects a person (it starts tmux or asks a question), or when server commands should see the plain SSH environment; then name tools by absolute path or install them system-wide.
+
+### `--gitshell-path <PATH>`
+
+Windows only. The `sh.exe` that runs local commands (`run.local` and the build), instead of Git for Windows' own.
+
+| | |
+| --- | --- |
+| Default | `SHIPDECK_GITSHELL_PATH`, if it is set and not empty; else the first `sh.exe` shipdeck finds (see [On Windows](/docs/getting-started/installation#on-windows)) |
+
+```powershell
+shipdeck .\scripts\deploy --gitshell-path "C:\Program Files\Git\usr\bin\sh.exe"
+```
+
+The flag does not exist on Linux and macOS, so `shipdeck --help` lists it only on Windows.
 
 ### `--schema`
 
@@ -297,7 +311,7 @@ With several deployables, an unchanged one stops the rest like any other result 
 
 ### `rollback <DEPLOY_ROOT> <NAME> --to <RELEASE>`
 
-Makes a release already on the server live again. A release kept only as its backup is unpacked first and set up again with `pipeline.setup`; an old `.tar.gz` is unpacked first. `RELEASE` is an id as `shipdeck releases` lists it. A rollback whose health check fails puts back what was live. See [Releases](/docs/guides/releases#rolling-back-by-hand).
+Makes a release already on the server live again. A release kept only as its backup is unpacked first and set up again with `pipeline.setup`. `RELEASE` is an id as `shipdeck releases` lists it. A rollback whose health check fails puts back what was live. See [Releases](/docs/guides/releases#rolling-back-by-hand).
 
 ```sh
 shipdeck rollback ./scripts/deploy my-api --to v0.3.0-9f8e7d6-20261012.091000
@@ -305,7 +319,7 @@ shipdeck rollback ./scripts/deploy my-api --to v0.3.0-9f8e7d6-20261012.091000
 
 ### `releases <DEPLOY_ROOT> <NAME>`
 
-Prints the releases on the server to stdout, newest first, as aligned columns. `STATE` is `live`, `unpacked`, `compressed` (only its backup, or an old `.tar.gz`, is in `backups/`) or `not-ours` (a folder shipdeck did not create, which it never switches to).
+Prints the releases on the server to stdout, newest first, as aligned columns. `STATE` is `live`, `unpacked`, `compressed` (only its backup is in `backups/`) or `not-ours` (a folder shipdeck did not create, which it never switches to).
 
 ```txt
 RELEASE                         VERSION  COMMIT   BUILT (UTC)       SIZE      STATE       DEPLOYED BY

@@ -1,9 +1,9 @@
 ---
 title: Installation
-description: Install the prebuilt shipdeck with the install script, cargo-binstall or bin, pin a version, or build it from source with cargo.
+description: Install the prebuilt shipdeck with the install script, cargo-binstall or bin, pin a version, build it from source with cargo, or set it up on Windows with Git for Windows.
 ---
 
-shipdeck runs on Linux and macOS; on Windows, use WSL. The quickest way in is the prebuilt binary. Building from source with cargo works too.
+shipdeck runs on Linux, Windows and macOS. Linux is the main platform, then Windows, then macOS. On Linux and macOS the quickest way in is the prebuilt binary; building from source with cargo works too. On Windows there is no prebuilt binary yet, so build it with cargo (see [On Windows](#on-windows)).
 
 ## Install the prebuilt binary
 
@@ -65,7 +65,7 @@ This builds the `shipdeck` binary and puts it in cargo's bin folder (usually `~/
 
 ### Pin a version
 
-The repository has a tag per release (`v0.1.0` up to `v0.3.1`). To install exactly one of them, add cargo's `--tag` flag:
+The repository has a tag per release (`v<version>`). To install exactly one of them, add cargo's `--tag` flag:
 
 ```sh
 cargo install --git https://github.com/Naz-Ovh/shipdeck --tag v0.3.1 shipdeck
@@ -74,6 +74,31 @@ cargo install --git https://github.com/Naz-Ovh/shipdeck --tag v0.3.1 shipdeck
 `--tag` is a plain cargo option, not something specific to shipdeck. Pinning is useful because two things name a version: the schema line at the top of your `deploy.yaml` files, and the `server-setup.sh` URL, which you pin to the tag of the shipdeck you run (see [Server access](/docs/guides/server-access)).
 
 To upgrade later, run the same command with the new tag. Add `--force` if cargo says the binary is already installed.
+
+## On Windows
+
+There is no prebuilt Windows binary yet. Install from source with cargo, using Rust's MSVC toolchain (rustup's default on Windows):
+
+```sh
+cargo install --git https://github.com/Naz-Ovh/shipdeck shipdeck
+```
+
+[Git for Windows](https://gitforwindows.org) is required. Local commands (`run.local` and the build) run in its `sh.exe`, so one `deploy.yaml` works on every PC. shipdeck takes the first `sh.exe` of:
+
+1. the one `--gitshell-path <PATH>` or the `SHIPDECK_GITSHELL_PATH` variable names;
+2. the one `git var GIT_SHELL_PATH` names;
+3. `sh.exe` in a folder on `PATH`;
+4. `%ProgramFiles%\Git\usr\bin`, `%LOCALAPPDATA%\Programs\Git\usr\bin` and scoop's git.
+
+A link to `sh.exe` works too, for example in `%LOCALAPPDATA%\Microsoft\WindowsApps`, which is on `PATH` by default. shipdeck follows the link and runs `sh.exe` from Git's folder, next to `cp`, `rm` and the rest.
+
+A few things differ from Linux and macOS:
+
+- **File modes.** Windows has no Unix modes, so every shipped file gets `0644`. `.env` files still get `0600` and `pipeline.pack.binary` `0755`, as on Linux. A script that must run on the server needs a `chmod +x` in `pipeline.setup.run.server`.
+- **Line endings.** `deploy.yaml` must use LF. A carriage return anywhere is refused with `deploy.yaml has Windows line endings (CRLF); shipdeck reads LF only`. Save the file with LF; in Git, `*.yaml text eol=lf` in `.gitattributes` keeps it that way on Windows checkouts.
+- **Paths.** Paths inside `deploy.yaml` always use `/`.
+- **Links.** A symbolic link in the project has its `\` turned into `/`. A link to a drive or a root (`C:\app`, `\app`) is refused: it means nothing on the server.
+- **`~/.ssh/config`.** `%u` in `IdentityFile` expands to `USERNAME` (`USER` elsewhere).
 
 ## Run from a clone
 
@@ -119,14 +144,14 @@ People who clone your project later need `git clone --recurse-submodules`, or `g
 
 ### On your PC
 
-The prebuilt binary needs only a Unix-like OS, a modern terminal and, optionally, git. Building from source also needs a Rust toolchain and a C compiler.
+The prebuilt binary needs only Linux or macOS, a modern terminal and, optionally, git. Building from source also needs a Rust toolchain and a C compiler. On Windows, Git for Windows is required too.
 
 | Need | Why |
 | --- | --- |
 | A Rust toolchain, 1.89 or newer | To build shipdeck. The code uses the 2024 edition and let chains (stable since Rust 1.88), and the SSH library it uses, `russh` 0.64, declares 1.89 as its minimum. Install or update with [rustup](https://rustup.rs). |
-| A Unix-like OS | Linux or macOS. On Windows, use WSL. shipdeck uses Unix file permissions and runs local commands through `sh -c`. |
+| Linux, Windows or macOS | Local commands run through `sh -c`: the system's `sh` on Linux and macOS, Git for Windows' `sh.exe` on Windows (see [On Windows](#on-windows)). |
 | A C compiler | The SSH library shipdeck uses pulls in a cryptography crate (`aws-lc-sys` 0.46) that compiles C code during the build. Most systems with a development toolchain (`build-essential` on Debian and Ubuntu, Xcode command line tools on macOS) already have one. In some setups its build uses CMake instead, so CMake may be needed too. If the build of `aws-lc-sys` fails, its error message says what is missing. |
-| `git` (optional) | shipdeck reads the commit hash for the release name, marks releases built from uncommitted changes, falls back to the latest tag for the version, and uses your `user.name` as "deployed by". Without git the release name uses `nogit`. |
+| `git` (optional, except on Windows) | shipdeck reads the commit hash for the release name, marks releases built from uncommitted changes, falls back to the latest tag for the version, and uses your `user.name` as "deployed by". Without git the release name uses `nogit`. |
 | Your build tools | Whatever your own build commands need: `cargo`, `cargo zigbuild`, `go`, `npm` and so on. |
 | A modern terminal | shipdeck draws with 24-bit colour and Unicode box-drawing characters. |
 
@@ -136,7 +161,7 @@ You install nothing of shipdeck's on the server. It needs:
 
 - Linux with systemd and an SSH server.
 - `sh`, which every Linux system has.
-- `tar` and `zstd`, to unpack each release. Most distributions ship `tar`; if `zstd` is missing, preflight stops and says to install it (`apt install zstd`, or `dnf install zstd`).
+- `tar` and `zstd`, to unpack each release, and `sha256sum` (from `coreutils`), to check it. Most distributions ship `tar` and `coreutils`; if `zstd` is missing, preflight stops and says to install it (`apt install zstd`, or `dnf install zstd`).
 - `curl` or `wget`, but only if you set `pipeline.health.url`.
 - The root user, or a user with passwordless `sudo` for five specific commands. [Server access](/docs/guides/server-access) explains both, and the optional one-time setup script.
 - At least 100 MiB of free disk space.
