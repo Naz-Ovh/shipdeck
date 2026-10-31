@@ -9,6 +9,10 @@ rolls back any release. Design and decisions: `docs/plan.md`. Usage: `README.md`
 - Conventional Commits with a scope (`feat(engine): ...`, `fix(tui): ...`);
   the body says why. Small commits.
 - Organise by subject. No `shared`, `common`, `kit`, `utils` or `helpers` modules.
+- The plan is `docs/project-progress.html`, the owner's tracker, and the design
+  ahead is `docs/visual/Plan/spec.html`; start a session with `.agents/README.md`. When a step changes state, update its row, the
+  "Up next" box and `UPDATED` (the rules are at the top of that file), in very
+  easy English. Never start a planned step without the owner's go.
 
 ## Replies
 
