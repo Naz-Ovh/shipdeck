@@ -1,0 +1,769 @@
+<!doctype html>
+<!--
+  The official plan and progress of shipdeck. The owner tracks everything here.
+  Every item has a reference id (the first field of its row). The owner copies it with the ⧉ button and pastes it to
+  an agent, so find an item by searching for ["<id>". Ids are permanent: never rename, renumber or reuse one. A new
+  item gets the next free number in its group: p<phase><group letter><n>, for example p1b3.
+  Agents: when a step changes state, edit its row in PLAN below and the "Up next" box, and bump UPDATED.
+  Write for the owner in very easy English: short sentences, common words, a full stop at the end of every sentence.
+  No line that only repeats the status badge. Never start a "planned" step without the owner's go; only the owner
+  moves a step to "done".
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project Progress</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --canvas: #f1f1ee; --dot: #cfcfca;
+    --paper: #ffffff; --paper-2: #f5f5f2; --border: #e0e0db;
+    --ink: #1c1c1f; --muted: #66666e; --stroke: #c3c3c8;
+    --blue: #2d6be0;   --blue-bg: #e6eeff;
+    --green: #138a55;  --green-bg: #e0f4e8;
+    --orange: #d0611a; --orange-bg: #ffefe0;
+    --purple: #7848d4; --purple-bg: #efe8ff;
+    --teal: #0c8a81;   --teal-bg: #dcf3f0;
+    --pink: #c93a6e;   --pink-bg: #fde6ee;
+    --amber: #9a6400;  --amber-bg: #fff0c7;
+    --indigo: #4a57d1; --sky: #0a7fc0; --gray: #77777f;
+    --red: #cf3434;
+    --sticky: #fff2a8; --sticky-ink: #3b3314;
+    --shadow: 0 1px 2px rgba(0,0,0,.05), 0 10px 30px rgba(0,0,0,.06);
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --canvas: #151517; --dot: #34343a;
+      --paper: #1f1f22; --paper-2: #27272b; --border: #34343a;
+      --ink: #ececf0; --muted: #a3a3ab; --stroke: #4d4d54;
+      --blue: #7ea8ff;   --blue-bg: #1d2a46;
+      --green: #4fcf8e;  --green-bg: #15301f;
+      --orange: #f4a063; --orange-bg: #3a2512;
+      --purple: #b495ff; --purple-bg: #2a2043;
+      --teal: #4fd0c2;   --teal-bg: #113332;
+      --pink: #f27ca6;   --pink-bg: #3b1a28;
+      --amber: #f5c461;  --amber-bg: #3b2e10;
+      --indigo: #9aa5ff; --sky: #6cc6ff; --gray: #a3a3ab;
+      --red: #ff7a7a;
+      --sticky: #4a4120; --sticky-ink: #f7ecbd;
+      --shadow: 0 1px 2px rgba(0,0,0,.5);
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --canvas: #151517; --dot: #34343a;
+    --paper: #1f1f22; --paper-2: #27272b; --border: #34343a;
+    --ink: #ececf0; --muted: #a3a3ab; --stroke: #4d4d54;
+    --blue: #7ea8ff;   --blue-bg: #1d2a46;
+    --green: #4fcf8e;  --green-bg: #15301f;
+    --orange: #f4a063; --orange-bg: #3a2512;
+    --purple: #b495ff; --purple-bg: #2a2043;
+    --teal: #4fd0c2;   --teal-bg: #113332;
+    --pink: #f27ca6;   --pink-bg: #3b1a28;
+    --amber: #f5c461;  --amber-bg: #3b2e10;
+    --indigo: #9aa5ff; --sky: #6cc6ff; --gray: #a3a3ab;
+    --red: #ff7a7a;
+    --sticky: #4a4120; --sticky-ink: #f7ecbd;
+    --shadow: 0 1px 2px rgba(0,0,0,.5);
+    color-scheme: dark;
+  }
+  [data-c="green"]  { --sc: var(--green); }
+  [data-c="blue"]   { --sc: var(--blue); }
+  [data-c="purple"] { --sc: var(--purple); }
+  [data-c="orange"] { --sc: var(--orange); }
+  [data-c="teal"]   { --sc: var(--teal); }
+  [data-c="pink"]   { --sc: var(--pink); }
+  [data-c="amber"]  { --sc: var(--amber); }
+  [data-c="indigo"] { --sc: var(--indigo); }
+  [data-c="gray"]   { --sc: var(--gray); }
+  [data-c="sky"]    { --sc: var(--sky); }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; color: var(--ink);
+    background-color: var(--canvas);
+    background-image: radial-gradient(circle, var(--dot) 1px, transparent 1.6px);
+    background-size: 24px 24px; background-attachment: fixed;
+    font: 16px/1.6 "Hind Siliguri", "Segoe UI", system-ui, sans-serif;
+  }
+  a { color: var(--blue); }
+  code { font: .86em ui-monospace, "Cascadia Code", Consolas, monospace; background: var(--paper-2); padding: 0 .3em; border-radius: 4px; overflow-wrap: anywhere; }
+  kbd { font: .86em ui-monospace, Consolas, monospace; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 .35em; background: var(--paper); }
+  button, select { font: inherit; font-size: 14px; padding: 3px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--paper); color: var(--ink); cursor: pointer; }
+  button:hover, select:hover { border-color: var(--stroke); }
+  .wrap { display: grid; grid-template-columns: 272px minmax(0, 1fr); gap: 32px; max-width: 1280px; margin: 0 auto; padding: 24px 16px 96px; }
+
+  /* the list on the left */
+  nav {
+    position: sticky; top: 16px; align-self: start; max-height: calc(100vh - 32px); display: flex; flex-direction: column;
+    background: var(--paper); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow); padding: 16px 12px 14px 16px;
+  }
+  nav h1 { margin: 0; font-size: 19px; line-height: 1.3; }
+  nav > p { margin: 2px 0 12px; color: var(--muted); font-size: 13.5px; line-height: 1.45; }
+  nav ol { list-style: none; margin: 0; padding: 0 4px 0 0; display: grid; gap: 2px; overflow-y: auto; min-height: 0; scrollbar-width: thin; }
+  nav li a { display: block; padding: 6px 10px; border-radius: 10px; color: var(--ink); text-decoration: none; font-weight: 500; line-height: 1.35; }
+  nav li a:hover, nav li a.on { background: var(--paper-2); }
+  nav li a.on { box-shadow: inset 3px 0 0 var(--sc); }
+  nav .pn { color: var(--sc); font-weight: 700; margin-right: 3px; }
+  nav li small { display: block; color: var(--muted); font-size: 12px; font-weight: 400; }
+  .bar { display: block; height: 5px; border-radius: 99px; background: var(--paper-2); overflow: hidden; margin-top: 3px; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--sc); border-radius: 99px; }
+  .tools { display: grid; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); flex: none; }
+  .tools div { display: flex; gap: 6px; flex-wrap: wrap; }
+
+  /* the top of the page */
+  .kick { margin: 8px 0 4px; font-weight: 600; color: var(--muted); }
+  .hero h2 { margin: 0 0 10px; font-size: 42px; line-height: 1.15; }
+  .lede { margin: 0; font-size: 18px; color: var(--muted); max-width: 780px; }
+  .next {
+    margin: 24px 0 28px; background: var(--sticky); color: var(--sticky-ink); border-radius: 4px; padding: 16px 22px 18px;
+    box-shadow: 0 1px 1px rgba(0,0,0,.08), 0 8px 18px rgba(0,0,0,.08);
+  }
+  .next h2 { margin: 0 0 6px; font-size: 14px; letter-spacing: .05em; text-transform: uppercase; opacity: .8; }
+  .next ol { margin: 0; padding-left: 1.3em; font-size: 16.5px; }
+  .next li + li { margin-top: 6px; }
+  .next code { background: rgba(0,0,0,.08); }
+  .next a { color: inherit; }
+
+  .card { background: var(--paper); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow); padding: 18px 20px 16px; margin-bottom: 44px; }
+  .card h2 { margin: 0 0 14px; font-size: 17px; }
+  .strip { position: relative; display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); }
+  .strip::before { content: ""; position: absolute; left: 5%; right: 5%; top: 15px; height: 2px; background: var(--stroke); }
+  .stop { position: relative; display: flex; flex-direction: column; align-items: center; text-align: center; padding: 0 2px; color: var(--ink); text-decoration: none; line-height: 1.3; }
+  .stop .dot {
+    width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 14px;
+    border: 2px solid var(--sc); background: var(--paper); color: var(--sc);
+  }
+  .stop.done .dot { background: var(--sc); color: var(--paper); }
+  .stop.planned .dot { border-color: var(--stroke); color: var(--muted); }
+  .stop.now .dot { box-shadow: 0 0 0 6px color-mix(in srgb, var(--sc) 22%, transparent); }
+  .stop b { margin-top: 6px; font-size: 14px; }
+  .stop span { font-size: 12px; color: var(--muted); }
+  .stop .here { color: var(--sc); font-weight: 700; }
+  .stop:hover b { text-decoration: underline; }
+  .legend { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px 18px; margin: 18px 0 0; padding: 14px 0 0; border-top: 1px solid var(--border); list-style: none; font-size: 14px; color: var(--muted); }
+  .legend li { display: flex; gap: 8px; align-items: baseline; }
+
+  /* phases, like FigJam sections */
+  section.phase {
+    padding: 26px 26px 26px; border-radius: 26px; margin-bottom: 40px; scroll-margin-top: 16px;
+    background: color-mix(in srgb, var(--sc) 6%, var(--canvas));
+    border: 1.5px solid color-mix(in srgb, var(--sc) 30%, transparent);
+  }
+  section.phase > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  section.phase h2 { margin: 0; font-size: 26px; line-height: 1.3; }
+  section.phase h2 span { color: var(--sc); }
+  section.phase > p { margin: 4px 0 0; color: var(--muted); font-size: 17px; max-width: 840px; }
+  .count { color: var(--muted); font-size: 14px; }
+  .frame { position: relative; margin-top: 46px; background: var(--paper); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); padding: 6px; }
+  .flabel { position: absolute; left: 4px; top: -27px; font-size: 14px; font-weight: 600; color: var(--muted); }
+  .flabel b { color: var(--sc); margin-right: 4px; }
+
+  /* items */
+  details + details { border-top: 1px solid var(--border); }
+  summary { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; cursor: pointer; list-style: none; }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: "›"; color: var(--muted); font-size: 20px; line-height: 1; transition: transform .15s; }
+  details[open] > summary::after { transform: rotate(90deg); }
+  summary:hover, details[open] > summary { background: var(--paper-2); }
+  summary input { width: 17px; height: 17px; margin: 0; flex: none; accent-color: var(--sc); }
+  summary .t { flex: 1; font-weight: 500; }
+  summary .n { color: var(--muted); margin-right: 3px; font-variant-numeric: tabular-nums; }
+  details.checked summary .t { text-decoration: line-through; color: var(--muted); }
+  .date { color: var(--muted); font-size: 13px; white-space: nowrap; }
+  summary .ref { padding: 0 7px; line-height: 1.5; color: var(--muted); background: transparent; border-color: transparent; }
+  summary .ref::after { content: "⧉"; }
+  summary .ref:hover { color: var(--ink); border-color: var(--sc); }
+  summary .ref.copied { color: var(--green); border-color: var(--green); }
+  summary .ref.copied::after { content: "✓"; }
+  .s { font-size: 12px; font-weight: 700; padding: 1px 10px; border-radius: 99px; white-space: nowrap; }
+  .s-done { background: var(--green-bg); color: var(--green); }
+  .s-built { background: var(--blue-bg); color: var(--blue); }
+  .s-next, .s-progress { background: var(--amber-bg); color: var(--amber); }
+  .s-waiting { background: var(--purple-bg); color: var(--purple); }
+  .s-planned, .s-deferred { background: var(--paper-2); color: var(--muted); box-shadow: inset 0 0 0 1px var(--border); }
+  .s-dropped { background: var(--pink-bg); color: var(--red); }
+  .body { padding: 2px 18px 14px 47px; }
+  .body p, .body ul { margin: 8px 0 0; }
+  .body ul { padding-left: 1.2em; }
+  .body .refs { color: var(--muted); font-size: 13.5px; }
+  [hidden] { display: none !important; }
+
+  @media (max-width: 860px) {
+    .wrap { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+    nav { position: static; max-height: none; }
+    nav ol { overflow: visible; grid-template-columns: 1fr 1fr; }
+    .hero h2 { font-size: 32px; }
+    .strip { grid-template-columns: repeat(5, minmax(0, 1fr)); row-gap: 18px; }
+    .strip::before { display: none; }
+    .legend { grid-template-columns: 1fr 1fr; }
+    section.phase { padding: 18px 12px; border-radius: 20px; }
+    summary { flex-wrap: wrap; }
+    summary .date { display: none; }
+    .body { padding-left: 14px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <h1>Project Progress</h1>
+    <p>shipdeck: build on your PC, deploy over SSH, roll back any release. Updated <span id="updated"></span>.</p>
+    <ol id="index"></ol>
+    <div class="tools">
+      <div><button id="open" type="button">Expand all</button><button id="close" type="button">Collapse all</button><button id="theme" type="button" aria-label="Light or dark">◐</button></div>
+      <select id="filter" aria-label="Show">
+        <option value="all">Show everything</option>
+        <option value="open">Hide checked</option>
+        <option value="next">Next, and waiting for you</option>
+        <option value="built">Built, waiting for a test</option>
+        <option value="planned">Planned and later</option>
+      </select>
+    </div>
+  </nav>
+
+  <main>
+    <div class="hero">
+      <p class="kick">shipdeck · project progress</p>
+      <h2>Where shipdeck is, and where it goes next</h2>
+      <p class="lede">shipdeck grows, one phase at a time, into a way to run your own servers: deploys, domains, databases, ready-made apps and mail. Each item has an id, like <code>p1b1</code>. Copy it with the ⧉ button and paste it to an agent.</p>
+    </div>
+
+    <aside class="next">
+      <h2>Up next</h2>
+      <ol>
+        <li>Owner: answer the open decisions marked <b>waiting</b>: four for the desktop app (<a href="#p2d1">p2d1</a> to <a href="#p2d4">p2d4</a>) and two for the agent (<a href="#p3d1">p3d1</a>, <a href="#p3d2">p3d2</a>). None of them blocks the engine work. To see only them, pick “Next, and waiting for you” in the filter.</li>
+        <li>Owner: five changes since version 0.6.1 are built but not released. They are Windows support (<a href="#p0f2">p0f2</a>), release details with <kbd>D</kbd> (<a href="#p0b3">p0b3</a>), wrapped log lines (<a href="#p0e3">p0e3</a>), the check for Windows line endings (<a href="#p0c4">p0c4</a>), and the end of support for pre-0.6 releases (<a href="#p0c5">p0c5</a>). Try them, then say when to make a release.</li>
+        <li>Owner: look at the spec page, <a href="visual/Plan/spec.html">spec.html</a> (<a href="#p1a1">p1a1</a>), and say yes or what to change. All the older planning pages are merged into it.</li>
+        <li>Next: the clickable HTML mockup of the desktop app (<a href="#p2a1">p2a1</a>).</li>
+        <li>Then: the new folder layout (<a href="#p1a2">p1a2</a>), and then the protocol crate (<a href="#p1b1">p1b1</a>).</li>
+      </ol>
+    </aside>
+
+    <div class="card">
+      <h2>The road at a glance</h2>
+      <div class="strip" id="strip"></div>
+      <ul class="legend">
+        <li><span class="s s-done">done</span> Built and released.</li>
+        <li><span class="s s-built">built</span> In the code; not released or tried yet.</li>
+        <li><span class="s s-next">next</span> The next steps to work on.</li>
+        <li><span class="s s-waiting">waiting</span> Waiting for your answer.</li>
+        <li><span class="s s-planned">planned</span> Agreed, but not started.</li>
+        <li><span class="s s-deferred">deferred</span> For later.</li>
+      </ul>
+    </div>
+
+    <div id="phases"></div>
+  </main>
+</div>
+
+<script>
+const UPDATED = "2026-10-31";
+// Status rules: never start a "planned" step without the owner's go. Only the owner moves a step to "done".
+// Each phase: { n, title, short (for the road at a glance), c (its colour), blurb, subs }.
+// Each item: [id, title, status, date, body (HTML), references (optional)].
+// status: done (released) · built (in the code, waiting for a test or a release) · progress · next
+//         · waiting (on the owner) · planned · deferred · dropped
+const PLAN = [
+ { n: 0, title: "What shipdeck does today", short: "Today", c: "green",
+   blurb: "Everything in this phase is built. Most of it is in version 0.6.1. It is the base that the rest of the plan builds on.", subs: [
+  { title: "Deploy", items: [
+   ["p0a1", "Build on your PC, deploy over SSH", "done", "2026-10-14",
+    "<p>shipdeck builds your app on your own PC. Then it sends the app to your server over SSH and runs it there as a systemd service.</p><p>Every deploy becomes a new release in its own folder. The live release is never changed in place.</p>",
+    "<code>crates/engine</code> · docs/plan.md"],
+   ["p0a2", "Any app: Rust, Go, Node.js, Python", "done", "2026-10-14",
+    "<p>One file, <code>deploy.yaml</code>, says what to build, what to send and how to start the app. You can send a binary, a folder of files, or both.</p><p>A binary is checked against the server's CPU and glibc before anything is sent. So a build that cannot run there stops early.</p>",
+    "<code>examples/</code> · README.md"],
+   ["p0a3", "Eleven steps, each with your own commands", "done", "2026-10-15",
+    "<p>A deploy runs these steps in order: preflight, build, pack, upload, unpack, setup, backup, switch, restart, health and done. If something fails, a step called failed runs.</p><p>Most steps can run your own commands: on your PC, on the server, or both. For example, <code>npm ci --omit=dev</code> can run on the server before the new release goes live.</p>",
+    "<code>pipeline:</code> in deploy.yaml · docs/plan.md, “The deploy, step by step”"],
+   ["p0a4", "Rollback when the health check fails", "done", "2026-10-14",
+    "<p>After the switch, shipdeck checks that the new release is healthy. If it is not, shipdeck asks whether to roll back. With no answer in 30 seconds, it rolls back by itself.</p><p>With <code>rollback: auto</code>, it never asks.</p>",
+    "<code>pipeline.failed.rollback</code>"],
+   ["p0a5", "Send only the files that changed", "done", "2026-10-16",
+    "<p>shipdeck hashes every file. Then it asks the server which files the live release already has, and sends only the rest. Releases travel packed with zstd.</p><p>On the server, every file is checked again before the release goes live. If anything does not match, the whole release is sent once more.</p>",
+    "<code>crates/engine/src/bundle</code> · <code>crates/engine/src/remote</code>"],
+   ["p0a6", "A warning when nothing changed", "done", "2026-10-16",
+    "<p>If the new release holds exactly what the live one holds, shipdeck asks before it deploys. The answer is No by default, and the server is not touched.</p><p>In scripts, it stops with exit code 6, unless you pass <code>--allow-unchanged</code>.</p>",
+    "README.md · <code>crates/headless</code>"],
+   ["p0a7", "Run the app with systemd or PM2", "done", "2026-10-17",
+    "<p>The app can run as a systemd service or under PM2. Any PM2 version works. A version newer than the one we tested gets a warning.</p>",
+    "README.md · <code>shipdeck man</code>"],
+  ]},
+  { title: "Releases and rollback", items: [
+   ["p0b1", "Every release is kept; roll back to any of them", "done", "2026-10-14",
+    "<p>Each deploy is kept. By default, 5 releases stay unpacked and 15 more are kept only as compressed backups: 20 versions in total.</p><p>You can roll back to any of them, from the Releases screen or with the <code>rollback</code> command. shipdeck refuses to roll back to a folder it did not name.</p>",
+    "<code>pipeline.backup.keep</code> · docs/plan.md, “Layout on the server”"],
+   ["p0b2", "A backup of each release", "done", "2026-10-15",
+    "<p>After setup, each release is saved as one compressed file on the server. By default it holds only the files you shipped, not what setup made (like <code>node_modules</code>). So it is about the size of the upload.</p><p>Rolling back to an old release unpacks this file and runs setup again.</p>",
+    "<code>pipeline.backup.files</code>"],
+   ["p0b3", "See a release's details and files", "built", "2026-10-18",
+    "<p>On the Releases screen, <kbd>D</kbd> shows a release's details and the list of its files.</p><p>It is in the code, but not in a release yet.</p>",
+    "<code>crates/tui</code>"],
+  ]},
+  { title: "Config", items: [
+   ["p0c1", "Every mistake in deploy.yaml, reported at once", "done", "2026-10-14",
+    "<p>Before anything starts, shipdeck reads every <code>deploy.yaml</code>. It lists every mistake at once, like a compiler: the file, the line, a mark under the problem, and a hint.</p>",
+    "<code>crates/engine/src/config</code>"],
+   ["p0c2", "Help in your editor", "done", "2026-10-16",
+    "<p>The config has a JSON Schema, <code>deploy.schema.json</code>. Editors use it to complete fields and to explain each one. It is published with every release, and the docs website serves it too.</p>",
+    "<code>just schema</code>"],
+   ["p0c3", "shipdeck init: start a new app from a preset", "done", "2026-10-15",
+    "<p><code>shipdeck init</code> makes a new deployable folder. It asks only for what the flags leave out, and it writes a comment above every field it fills in.</p>",
+    "<code>crates/engine/src/init</code> · <code>bin/shipdeck</code>"],
+   ["p0c4", "Refuse Windows line endings in deploy.yaml", "built", "2026-10-18",
+    "<p>A <code>deploy.yaml</code> saved with Windows line endings (CRLF) is refused at the config check.</p><p>It is in the code, but not in a release yet.</p>",
+    ""],
+   ["p0c5", "No more support for releases and configs from before 0.6", "built", "2026-10-18",
+    "<p>Old formats from before version 0.6 are no longer read. The code no longer carries the old paths.</p><p>It is in the code, but not in a release yet.</p>",
+    ""],
+  ]},
+  { title: "SSH and the server", items: [
+   ["p0d1", "Log in with keys, passwords or ~/.ssh/config names", "done", "2026-10-15",
+    "<p>shipdeck logs in with a key file, a key's text, or a password. It also understands the short names (aliases) in <code>~/.ssh/config</code>, with their host, port, user and key. A key's passphrase can come from an environment variable.</p>",
+    "<code>crates/engine/src/ssh</code>"],
+   ["p0d2", "Server commands get your shell's variables", "done", "2026-10-15",
+    "<p>Commands on the server first load the variables your login shell sets. So tools like <code>node</code> or <code>pm2</code> are found the same way as when you log in by hand. You can turn this off with <code>ssh.shell_env: false</code>.</p>",
+    "<code>ssh::shell_env</code>"],
+   ["p0d3", "server-setup.sh: an optional deploy user", "done", "2026-10-15",
+    "<p>No server setup is needed: shipdeck deploys as whatever user you choose. If you want a separate user with only the rights one app needs, you run <code>server-setup.sh</code> by hand, as root.</p>",
+    "<code>server-setup.sh</code> · <code>crates/engine/src/setup</code>"],
+  ]},
+  { title: "Screens and scripts", items: [
+   ["p0e1", "The terminal UI", "done", "2026-10-14",
+    "<p>A full-screen app in the terminal. It lists your deployables with their live version and status, runs deploys step by step, and shows the releases. It connects to a server only when you ask.</p>",
+    "<code>crates/tui</code>"],
+   ["p0e2", "Vim-style commands: :logs, :restart, :stop, :start", "done", "2026-10-16",
+    "<p>Type <kbd>:</kbd> on the Deployables screen, as in vim. <code>:logs</code> follows the app's log live. <code>:restart</code> and <code>:stop</code> ask first. <code>:start</code> starts the app.</p>",
+    "<code>remote::control_commands</code>"],
+   ["p0e3", "Long log lines wrap", "built", "2026-10-18",
+    "<p>Long log lines now wrap onto the next line, instead of being cut off.</p><p>It is in the code, but not in a release yet.</p>",
+    ""],
+   ["p0e4", "Commands for scripts and CI", "done", "2026-10-15",
+    "<p><code>shipdeck deploy</code>, <code>rollback</code> and <code>releases</code> run without the screen. They print plain lines, never ask a question, and end with an exit code that scripts can check.</p>",
+    "<code>crates/headless</code>"],
+   ["p0e5", "The built-in manual", "done", "2026-10-17",
+    "<p><code>shipdeck man</code> prints the whole manual, for you or for a coding agent: setup, every config field, and fixes for common problems.</p>",
+    "<code>bin/shipdeck/manual</code>"],
+  ]},
+  { title: "Install and platforms", items: [
+   ["p0f1", "Install with one command", "done", "2026-10-14",
+    "<p>Every release has ready-made binaries and an install script. On Linux, a machine with glibc 2.28 or newer gets the faster gnu build; any other gets a static musl build. The license is MIT OR Apache-2.0.</p><p>Installing with <code>cargo binstall</code> is in the code too, but not in a release yet.</p>",
+    "<code>dist-workspace.toml</code> · <a href=\"visual/Plan/spec.html#release\">spec: How a release is made</a>"],
+   ["p0f2", "Build and deploy from Windows", "built", "2026-10-18",
+    "<p>shipdeck now runs on Windows too: it builds there and deploys to a Linux server.</p><p>It is in the code, but not in a release yet. Releases have no Windows binary yet, so on Windows you build shipdeck from source.</p>",
+    "README.md"],
+   ["p0f3", "The docs website", "done", "2026-10-14",
+    "<p>A documentation site with the guide, every config field, search, and pages for AI tools (<code>llms.txt</code>). It is updated with every release.</p>",
+    "<code>docs/website</code>"],
+  ]},
+ ]},
+
+ { n: 1, title: "Engine and protocol", short: "Engine", c: "blue",
+   blurb: "One program, <code>shipdeck engine</code>, will do all the work. The CLI, the TUI, the desktop app and later the web dashboard will only show what it reports. They talk to it with JSON messages, over stdin and stdout. So every feature is written once.", subs: [
+  { title: "Plan and layout", items: [
+   ["p1a1", "The spec page, in easy English", "built", "2026-10-31",
+    "<p>One page with the agreed design: the parts of shipdeck, what each part does and never does, how the parts talk, and the decisions. It is a canvas: drag to move, zoom in and out, with pictures where words get hard.</p><p>All the older planning pages were merged into it and deleted, so nothing is said in two places: the desktop plan, the roadmap, the architecture and agent pages, the scope page, and the older plans for the config, packaging, and status and logs. The owner chose this on 2026-10-31.</p>",
+    "<a href=\"visual/Plan/spec.html\">docs/visual/Plan/spec.html</a>"],
+   ["p1a2", "Move to apps/ and crates/", "next", "",
+    "<p>A clean layout for more than one app. <code>bin/shipdeck</code> moves to <code>apps/cli</code>, the desktop app will live in <code>apps/desktop</code>, and the Rust libraries stay in <code>crates/</code>.</p><p>Nothing changes for people who use shipdeck. Paths in the docs and the tests change with it.</p>",
+    "<a href=\"visual/Plan/spec.html#layout\">spec: Where the code goes</a>"],
+  ]},
+  { title: "The protocol", items: [
+   ["p1b1", "A protocol crate with every message", "planned", "",
+    "<p>A new crate, <code>crates/protocol</code>, holds every message as a Rust type: requests, events and questions. The format is JSON-RPC 2.0, one message per line.</p><p>A JSON Schema is made from these types, the same way <code>deploy.schema.json</code> is made today. The desktop app's C# types are made from that schema, so the two sides never drift apart.</p>",
+    "<a href=\"visual/Plan/spec.html#messages\">spec: Every message</a> · <a href=\"visual/Plan/spec.html#rules\">spec: The rules</a>"],
+   ["p1b2", "Rules that keep old apps working", "planned", "",
+    "<p>Messages are only ever added. They are never renamed or removed. The first message, <code>initialize</code>, carries the protocol version and what this engine can do, so each side knows what the other supports.</p>",
+    ""],
+  ]},
+  { title: "The engine", items: [
+   ["p1c1", "shipdeck engine: the headless process", "planned", "",
+    "<p>A new command that reads requests on stdin and writes events on stdout. It does what the TUI starts today: status, logs, deploy, rollback and the list of releases. One engine works on one folder of deployables.</p>",
+    ""],
+   ["p1c2", "Safe when its app closes", "planned", "",
+    "<p>The engine is started by its app. When the app closes, the engine takes no new work. It finishes the step that is running, and it answers open questions with the safe choice: roll back, do not deploy a release that did not change, and do not trust a new host key.</p>",
+    ""],
+   ["p1c3", "One SSH connection per server", "planned", "",
+    "<p>Today shipdeck opens one SSH session per deployable. The engine keeps one connection per server instead, and runs many channels over it. So status, logs and a deploy all share it.</p>",
+    ""],
+   ["p1c4", "An offline copy of the last state", "planned", "",
+    "<p>The last known state of your servers and releases is saved on your PC. Without a connection, you can still look at it. It is read-only: nothing is queued to run later.</p><p>Where it lives is decision <a href=\"#p1e1\">p1e1</a>.</p>",
+    ""],
+  ]},
+  { title: "The apps on top", items: [
+   ["p1d1", "The CLI and the script commands use the engine", "planned", "",
+    "<p><code>shipdeck deploy</code>, <code>rollback</code> and <code>releases</code> start the engine and print what it reports. Their output and their exit codes stay the same.</p>",
+    "<code>crates/headless</code>"],
+   ["p1d2", "The TUI uses the engine", "planned", "",
+    "<p>The terminal UI starts the engine as a separate process and shows what it reports, the same way the desktop app will. The screens stay the same.</p>",
+    "<code>crates/tui</code>"],
+  ]},
+  { title: "Decisions", items: [
+   ["p1e1", "Decided: the offline copy lives in the engine", "done", "2026-10-31",
+    "<p>The offline copy (<a href=\"#p1c4\">p1c4</a>) is a small SQLite file on your PC. The engine keeps it, so the TUI gets it too, not only the desktop app.</p><p>The owner chose this on 2026-10-31.</p>",
+    "<a href=\"visual/Plan/spec.html#decided\">spec: Decided</a>"],
+   ["p1e2", "Decided: the TUI and the CLI run the engine as a separate process", "done", "2026-10-31",
+    "<p>Every app on top (the TUI, the CLI, the desktop app, and later the web dashboard) starts the engine and talks to it over stdin and stdout. So there is only one way in, and no feature is written twice.</p><p>The owner chose this.</p>",
+    "<a href=\"visual/Plan/spec.html#decided\">spec: Decided</a>"],
+  ]},
+  { title: "Status and logs for scripts", items: [
+   ["p1f1", "A richer status line", "planned", "",
+    "<p>Today the Deployables screen shows one word, like “active”. This shows more, for example: active · 4 instances · up 2h · 180 MB · 3% cpu · 0 restarts. It is read from <code>systemctl show</code> or <code>pm2 jlist</code>, the same way for both.</p><p>To decide when it starts: refresh it every 10 seconds, or only when you press <kbd>s</kbd>?</p>",
+    "<a href=\"visual/Plan/spec.html#statuslogs\">spec: Status and logs</a>"],
+   ["p1f2", "shipdeck status and shipdeck logs, for scripts", "planned", "",
+    "<p><code>shipdeck status</code> prints a table (or JSON with <code>--json</code>), and ends with an error code when a service is not up. The old plan named code 6, but 6 now means “nothing changed”, so it gets the next free code. <code>shipdeck logs</code> prints the last lines, and <code>--follow</code> keeps going until Ctrl-C.</p><p>To decide when it starts: <code>--json</code> in the first version, or later?</p>",
+    "<a href=\"visual/Plan/spec.html#statuslogs\">spec: Status and logs</a> · <code>shipdeck_headless::exit_code</code>"],
+  ]},
+ ]},
+
+ { n: 2, title: "Desktop app", short: "Desktop", c: "purple",
+   blurb: "A native desktop app, built with Avalonia (C#). It should look polished and stay light, unlike Electron apps such as Openship. It starts the engine by itself and does everything the TUI does.", subs: [
+  { title: "Design first", items: [
+   ["p2a1", "A clickable HTML mockup", "next", "",
+    "<p>Before any C# code: one HTML page with made-up data, where you can click through every screen. It shows the list of servers and their apps, an app's page, a live deploy with the rollback countdown, releases and their files, live logs, the offline “last seen” state, server setup, and the dialogs. In light and dark.</p><p>The owner says yes, or what to change. Then the real app follows it.</p>",
+    ""],
+  ]},
+  { title: "The app", items: [
+   ["p2b1", "Project setup", "planned", "",
+    "<p>.NET 10 (the long-term support version), Avalonia with its Fluent theme, and CommunityToolkit.Mvvm. The app starts <code>shipdeck engine</code> as a child process and talks to it with StreamJsonRpc.</p><p>lefthook runs the .NET checks on push, next to the Rust checks.</p>",
+    "<a href=\"visual/Plan/spec.html#stack\">spec: Built with</a>"],
+   ["p2b2", "Every TUI feature, as screens", "planned", "",
+    "<p>Deployables with live status, deploys step by step, releases and rollback, release details and files, live logs, and the start, stop and restart commands.</p>",
+    ""],
+   ["p2b3", "Questions as dialogs", "planned", "",
+    "<p>The questions the TUI asks become dialogs: “Roll back now?”, “Deploy a release that did not change?”, a password or passphrase, and “Trust this new host key?”.</p>",
+    ""],
+   ["p2b4", "Works offline", "planned", "",
+    "<p>Without a connection, the app shows the last known state, with the time it was last seen. Buttons that change the server stay off until you connect.</p>",
+    "<a href=\"#p1c4\">p1c4</a>"],
+  ]},
+  { title: "Shipping", items: [
+   ["p2c1", "In every GitHub release", "planned", "",
+    "<p>The release workflow builds the desktop app and attaches it to the same GitHub release as the CLI. dist makes the workflow file, so the change goes into <code>dist-workspace.toml</code>.</p>",
+    "<code>dist-workspace.toml</code>"],
+  ]},
+  { title: "Decisions for the owner", items: [
+   ["p2d1", "Decide: one deploy at a time, or several", "waiting", "",
+    "<p>The messages can carry several deploys at once, but the TUI has only ever run one.</p><p><b>Recommended:</b> one at a time in the first version. Several later, once tested.</p>",
+    "<a href=\"visual/Plan/spec.html#open\">spec: Still open</a>"],
+   ["p2d2", "Decide: Windows builds in releases", "waiting", "",
+    "<p>Releases have no Windows binary of shipdeck yet. Add one together with the desktop app? Or ship the desktop app for macOS and Linux first?</p>",
+    ""],
+   ["p2d3", "Decide: code signing", "waiting", "",
+    "<p>An unsigned app shows a warning the first time it opens (Gatekeeper on macOS, SmartScreen on Windows). Ship unsigned first? Or buy the certificates before the first release?</p>",
+    ""],
+   ["p2d4", "Decide: the .NET SDK for contributors", "waiting", "",
+    "<p>If lefthook runs the .NET checks on push, everyone who changes <code>apps/desktop/</code> needs the .NET SDK installed. Is that fine?</p>",
+    ""],
+  ]},
+ ]},
+
+ { n: 3, title: "Server agent", short: "Agent", c: "orange",
+   blurb: "A small helper program, <code>shipdeck-agent</code>. The engine uploads it to the server when it connects, the way VS Code does. It runs only while you are connected, as your SSH user, and uses sudo when it needs root. It works with files and services directly, instead of through shell scripts.", subs: [
+  { title: "The agent", items: [
+   ["p3a1", "Uploaded and updated on connect", "planned", "",
+    "<p>The engine copies the agent to <code>~/.shipdeck/bin</code> on the server, at the same version as itself, so the two always match. The agent starts over SSH and exits when you leave. Nothing listens on a public port.</p><p>Two cases to handle: a home folder that does not allow running programs (noexec), and 32-bit ARM servers, which need their own build.</p>",
+    ""],
+   ["p3a2", "The same messages as the engine", "planned", "",
+    "<p>The engine and the agent speak the same JSON-RPC, over the SSH connection. That means clear requests and live events, instead of shell scripts and reading their output.</p>",
+    "<a href=\"#p1b1\">p1b1</a>"],
+   ["p3a3", "Files, natively", "planned", "",
+    "<p>Read, edit, move and delete files on the server with Rust code, not with shell commands.</p>",
+    ""],
+   ["p3a4", "Deploys that survive a closed laptop", "planned", "",
+    "<p>The server half of a deploy runs as a <code>systemd-run</code> job. If your laptop sleeps or the connection drops, the deploy keeps going, and its log stays in the journal. When you connect again, you see where it is.</p>",
+    ""],
+  ]},
+  { title: "Memory on the server", items: [
+   ["p3b1", "state.db: every event, numbered", "planned", "",
+    "<p>A small SQLite file on the server, <code>~/.shipdeck/state.db</code>, records every event with a number. When you connect again, the engine asks for everything after the last number it saw. Nothing is lost while you were away.</p>",
+    ""],
+  ]},
+  { title: "Server setup", items: [
+   ["p3c1", "Set up a server from the app, once", "planned", "",
+    "<p>One guided setup per server, from the app. It replaces the per-server <code>server-setup.sh</code> that the old plan had.</p>",
+    "docs/plan.md, “Still open”"],
+   ["p3c2", "A Servers page", "planned", "",
+    "<p>For each server: the Linux version, CPU, memory, disk, uptime, and what is installed.</p>",
+    ""],
+  ]},
+  { title: "Decisions for the owner", items: [
+   ["p3d1", "Decide: how the agent gets root", "waiting", "",
+    "<p>Most work runs as your SSH user. Some work needs root, like nginx and Docker.</p><p><b>Recommended:</b> use sudo, and ask for the password once per connection. <b>The other choice:</b> at setup, allow those commands without a password.</p>",
+    ""],
+   ["p3d2", "Decide: plain deploys without the agent", "waiting", "",
+    "<p><b>Recommended:</b> yes. Servers you deploy to today keep working exactly as they do now, over SSH and sudo. Only domains, databases, ready-made apps and mail need the agent.</p>",
+    ""],
+  ]},
+ ]},
+
+ { n: 4, title: "Domains and HTTPS", short: "Domains", c: "teal",
+   blurb: "Give each app a web address with HTTPS, using nginx.", subs: [
+  { title: "nginx", items: [
+   ["p4a1", "A domain for each app", "planned", "",
+    "<p>For example, <code>https://my-api.example.com</code>. nginx sends the traffic to the app's port. Each app gets one nginx config file, which you can read and extend.</p>",
+    ""],
+   ["p4a2", "Free HTTPS certificates", "planned", "",
+    "<p>Certificates come from Let's Encrypt and are renewed by a timer on the server. Plain HTTP redirects to HTTPS, and WebSockets work.</p>",
+    ""],
+   ["p4a3", "The DNS record to add", "planned", "",
+    "<p>The app shows the exact DNS record you need to add at your domain provider.</p>",
+    ""],
+  ]},
+  { title: "Decisions for the owner", items: [
+   ["p4b1", "Decide: which Linux comes first", "deferred", "",
+    "<p>What the agent installs (nginx, Docker) comes from each Linux's own packages.</p><p><b>Recommended:</b> Debian and Ubuntu first, then Rocky, Alma and Fedora. The agent reads <code>/etc/os-release</code> and names a Linux it does not support yet. Not needed until this phase starts.</p>",
+    "<a href=\"visual/Plan/spec.html#distros\">spec: Which Linux</a>"],
+  ]},
+ ]},
+
+ { n: 5, title: "Databases", short: "Databases", c: "pink",
+   blurb: "Create and manage databases from the desktop app.", subs: [
+  { title: "Databases", items: [
+   ["p5a1", "Create a database in one click", "planned", "",
+    "<p>PostgreSQL, MySQL or MariaDB, and Redis. Its password goes straight into the app's environment.</p>",
+    ""],
+   ["p5a2", "Browse tables and run queries", "planned", "",
+    "<p>From the desktop app, through the SSH connection. The same tunnel lets your own tools, like DBeaver or TablePlus, connect too.</p>",
+    ""],
+   ["p5a3", "Backups on a schedule", "planned", "",
+    "<p>Backups run on a timer on the server. You can download one to your PC, and restore one in a click.</p>",
+    ""],
+  ]},
+  { title: "Decisions for the owner", items: [
+   ["p5b1", "Decided: the engine shows the tables", "done", "2026-10-31",
+    "<p>The engine opens an SSH tunnel and runs the queries. So every app on top (the TUI, the desktop app, the web dashboard) gets the same feature. The desktop app has no database driver of its own.</p><p>The owner chose this on 2026-10-31.</p>",
+    "<a href=\"visual/Plan/spec.html#decided\">spec: Decided</a>"],
+   ["p5b2", "Decide: databases and ready-made apps in Docker", "deferred", "",
+    "<p><b>Recommended:</b> databases, ready-made apps and mail run in Docker containers. One recipe works on every Linux, each one is kept apart, and each is pinned to a version. Your own apps stay native (systemd or PM2), and nginx stays native too. Not needed until this phase starts.</p>",
+    "<a href=\"visual/Plan/spec.html#runtimes\">spec: What runs how</a>"],
+  ]},
+ ]},
+
+ { n: 6, title: "Ready-made apps", short: "Apps", c: "amber",
+   blurb: "Install well-known self-hosted apps in a few clicks.", subs: [
+  { title: "The catalog", items: [
+   ["p6a1", "A catalog of ready-made apps", "planned", "",
+    "<p>Apps like n8n, Umami and Uptime Kuma, from versioned recipes in this repository. Each one can get a domain (phase 4) and a database (phase 5) in the same setup.</p>",
+    ""],
+   ["p6a2", "Docker Compose as a third way to run apps", "planned", "",
+    "<p>Next to systemd and PM2. These apps get releases and rollback, like any other app.</p>",
+    ""],
+  ]},
+ ]},
+
+ { n: 7, title: "Mail", short: "Mail", c: "indigo",
+   blurb: "Send and receive mail from your own server.", subs: [
+  { title: "Mail server", items: [
+   ["p7a1", "A mail server", "planned", "",
+    "<p>A mail server in Docker, with DKIM, SPF and DMARC set up, and the DNS records to add.</p>",
+    ""],
+   ["p7a2", "Checks before setup", "planned", "",
+    "<p>Many providers block port 25 by default, and the server's reverse DNS must match the mail name. The app checks both first and says what to do.</p>",
+    ""],
+  ]},
+ ]},
+
+ { n: 8, title: "Later", short: "Later", c: "gray",
+   blurb: "Ideas for after the phases above are solid. None of them starts without the owner's go.", subs: [
+  { title: "Always on", items: [
+   ["p8a1", "shipdeck-keepup: an always-on helper", "deferred", "",
+    "<p>An optional helper that runs all the time on the server, as a systemd service. It sends alerts and runs checks while nobody is connected. It talks to the agent over a local socket, and when it is installed, it is the only program that writes <code>state.db</code>.</p>",
+    ""],
+   ["p8a2", "Decided: keepup runs as root only if the owner chooses", "done", "2026-10-31",
+    "<p>When the server's owner installs keepup, they choose whether it runs as root. The default is not root.</p><p>The owner chose this on 2026-10-31.</p>",
+    "<a href=\"visual/Plan/spec.html#keepup\">spec: keepup</a>"],
+  ]},
+  { title: "Web dashboard", items: [
+   ["p8b1", "A web dashboard", "deferred", "",
+    "<p>The engine runs all the time on one home server, behind HTTPS and a login, and manages your other servers over SSH. Builds happen in CI, for example a GitHub Action that runs <code>shipdeck deploy</code> on every push. No extra server is needed.</p>",
+    ""],
+   ["p8b2", "Decided: an always-on engine runs the web dashboard", "done", "2026-10-31",
+    "<p>Behind the web dashboard is the engine itself, running all the time on one home server. It is not keepup.</p><p>The owner chose this on 2026-10-31.</p>",
+    "<a href=\"visual/Plan/spec.html#web\">spec: The web dashboard</a>"],
+  ]},
+  { title: "More ideas", items: [
+   ["p8c1", "Monitoring and alerts", "deferred", "",
+    "<p>Watch CPU, memory, disk and each app's health, and tell you when something is wrong.</p>",
+    ""],
+   ["p8c2", "Several servers per app", "deferred", "",
+    "<p>Deploy one app to more than one server.</p>",
+    ""],
+   ["p8c3", "Team access", "deferred", "",
+    "<p>More than one person manages the same servers.</p>",
+    ""],
+   ["p8c4", "An MCP server for AI agents", "deferred", "",
+    "<p>MCP is JSON-RPC too. So AI agents could use shipdeck through the same kind of messages as the apps.</p>",
+    ""],
+  ]},
+ ]},
+
+ { n: 9, title: "Alongside: the website and install", short: "Alongside", c: "sky",
+   blurb: "Separate tracks. They block no phase, and no phase blocks them.", subs: [
+  { title: "Move to TanStack Start", items: [
+   ["p9a1", "Move the docs site to TanStack Start", "planned", "",
+    "<p>From Next.js to TanStack Start, keeping Fumadocs and the same content. It stays a set of static files on Cloudflare.</p><p>These must keep working: every URL, search, <code>llms.txt</code> and the markdown copy of each page, the 404 page, the fonts and the theme.</p>",
+    "<a href=\"visual/Plan/spec.html#website\">spec: The website move</a>"],
+   ["p9a2", "Check first: the page text is in the HTML", "planned", "",
+    "<p>TanStack Start loads MDX in the browser. The built HTML must still hold each page's text, for search engines and for people without JavaScript. Check this before anything else.</p>",
+    ""],
+   ["p9a3", "Open question: the preview image of each page", "planned", "",
+    "<p>Today each page has its own Open Graph image: the picture shown when someone shares a link. TanStack Start cannot write images when it builds the pages. The proper way is a build step that draws them with satori.</p>",
+    ""],
+  ]},
+  { title: "Install channels", items: [
+   ["p9b1", "crates.io: cargo install shipdeck", "planned", "",
+    "<p>Turn on publishing and add the crates.io details (readme, keywords, categories, homepage, Rust version). A release job publishes every crate the CLI needs, the engine first. Then <code>cargo install shipdeck --locked</code> works, and <code>cargo binstall shipdeck</code> works without <code>--git</code>.</p><p>Before it starts: sign in to crates.io with GitHub and make a token for the first publish. After that, trusted publishing.</p>",
+    "<a href=\"visual/Plan/spec.html#channels\">spec: Install channels</a>"],
+   ["p9b2", "npm: npx @nhrs/shipdeck", "planned", "",
+    "<p>dist's npm package, under the <code>@nhrs</code> scope, because the name <code>shipdeck</code> on npm belongs to someone else. The command is still <code>shipdeck</code>. It picks the gnu or musl build by itself.</p><p>Before it starts: a token from the nhrs account for the first publish. After that, trusted publishing.</p>",
+    "<a href=\"visual/Plan/spec.html#channels\">spec: Install channels</a>"],
+   ["p9b3", "PyPI: uvx shipdeck", "planned", "",
+    "<p>A release job builds wheels with maturin: gnu wheels for glibc 2.28 or newer, static musl wheels, and macOS wheels. Then it publishes them to PyPI.</p><p>Before it starts: a PyPI account and a trusted publisher for the project <code>shipdeck</code>. No token at all.</p>",
+    "<a href=\"visual/Plan/spec.html#channels\">spec: Install channels</a>"],
+   ["p9b4", "One install section in the README", "planned", "",
+    "<p>When the channels above are out, the README's install section lists them all in one place: the install script, cargo, npx and uvx.</p>",
+    ""],
+  ]},
+ ]},
+];
+
+const store = {
+  get(k) { try { return localStorage.getItem("shipdeck-plan:" + k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem("shipdeck-plan:" + k, v); } catch {} },
+};
+const isChecked = (id, s) => { const v = store.get(id); return v === null ? s === "done" : v === "1"; };
+const label = { progress: "in progress" };
+
+const root = document.documentElement;
+const t0 = store.get("theme");
+if (t0) root.dataset.theme = t0;
+document.getElementById("theme").onclick = () => {
+  const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  root.dataset.theme = dark ? "light" : "dark";
+  store.set("theme", root.dataset.theme);
+};
+
+const row = ([id, t, st, date, body, refs]) => {
+  const c = isChecked(id, st);
+  return `<details id="${id}" data-status="${st}" class="${c ? "checked" : ""}"><summary>` +
+    `<input type="checkbox" data-id="${id}" ${c ? "checked" : ""} ${st === "dropped" ? "disabled" : ""} aria-label="Tracked">` +
+    `<span class="t"><span class="n">${id.match(/\d+$/)[0]}.</span> ${t}</span>` +
+    (date ? `<span class="date">${date}</span>` : "") +
+    `<button type="button" class="ref" data-ref="${id}" data-title="${t.replace(/"/g, "&quot;")}" title="Copy reference ${id}" aria-label="Copy reference ${id}"></button>` +
+    `<span class="s s-${st}">${label[st] || st}</span></summary>` +
+    `<div class="body">${body}${refs ? `<p class="refs">${refs}</p>` : ""}</div></details>`;
+};
+
+const phases = document.getElementById("phases");
+const index = document.getElementById("index");
+const strip = document.getElementById("strip");
+let nowFound = false;
+PLAN.forEach(p => {
+  const live = p.subs.flatMap(s => s.items).filter(i => i[2] !== "dropped");
+  // A phase is done when every item is built or released; the first phase that is not is where we are now.
+  let state = "planned";
+  if (live.every(i => i[2] === "done" || i[2] === "built")) state = "done";
+  else if (!nowFound) { state = "now"; nowFound = true; }
+
+  const sec = document.createElement("section");
+  sec.className = "phase"; sec.id = "phase-" + p.n; sec.dataset.c = p.c;
+  sec.innerHTML = `<header><h2><span>Phase ${p.n}</span> · ${p.title}</h2><span class="count" data-count></span></header><p>${p.blurb}</p>` +
+    p.subs.map((s, j) => `<div class="frame"><div class="flabel"><b>p${p.n}${String.fromCharCode(97 + j)}</b>${s.title}</div>` +
+      s.items.map(row).join("") + `</div>`).join("");
+  phases.append(sec);
+
+  index.insertAdjacentHTML("beforeend",
+    `<li data-c="${p.c}"><a href="#phase-${p.n}"><span class="pn">${p.n}</span> ${p.title}<small data-count></small><span class="bar"><i></i></span></a></li>`);
+  strip.insertAdjacentHTML("beforeend",
+    `<a class="stop ${state}" data-c="${p.c}" href="#phase-${p.n}"><span class="dot">${state === "done" ? "✓" : p.n}</span>` +
+    `<b>${p.short}</b>${state === "now" ? `<span class="here">we are here</span>` : `<span>Phase ${p.n}</span>`}</a>`);
+});
+
+function tally() {
+  document.querySelectorAll("section.phase").forEach((sec, i) => {
+    const boxes = [...sec.querySelectorAll("input:not(:disabled)")];
+    const done = boxes.filter(b => b.checked).length;
+    const text = boxes.length ? `${done} / ${boxes.length} checked` : "—";
+    sec.querySelector("[data-count]").textContent = text;
+    const li = index.children[i];
+    li.querySelector("[data-count]").textContent = text;
+    li.querySelector(".bar i").style.width = (boxes.length ? 100 * done / boxes.length : 0) + "%";
+  });
+}
+
+function filter() {
+  const f = document.getElementById("filter").value;
+  document.querySelectorAll("details").forEach(d => {
+    const st = d.dataset.status, c = d.classList.contains("checked");
+    d.hidden = f === "open" ? c
+      : f === "next" ? !["next", "waiting", "progress"].includes(st)
+      : f === "built" ? st !== "built"
+      : f === "planned" ? !["planned", "deferred"].includes(st) : false;
+  });
+  document.querySelectorAll(".frame, section.phase").forEach(el => {
+    el.hidden = f !== "all" && !el.querySelector("details:not([hidden])");
+  });
+}
+
+phases.addEventListener("change", e => {
+  const box = e.target;
+  if (!box.dataset.id) return;
+  store.set(box.dataset.id, box.checked ? "1" : "0");
+  box.closest("details").classList.toggle("checked", box.checked);
+  tally(); filter();
+});
+phases.addEventListener("click", e => {
+  if (e.target.matches("summary input")) e.stopPropagation();
+  const btn = e.target.closest("button.ref");
+  if (!btn) return;
+  e.preventDefault(); e.stopPropagation();
+  copy(`${btn.dataset.ref} (${btn.dataset.title})`).then(() => {
+    btn.classList.add("copied");
+    setTimeout(() => btn.classList.remove("copied"), 1200);
+  });
+});
+async function copy(text) {
+  try { await navigator.clipboard.writeText(text); return; } catch {}
+  const ta = Object.assign(document.createElement("textarea"), { value: text });
+  document.body.append(ta); ta.select(); document.execCommand("copy"); ta.remove();
+}
+document.getElementById("open").onclick = () => document.querySelectorAll("details:not([hidden])").forEach(d => d.open = true);
+document.getElementById("close").onclick = () => document.querySelectorAll("details").forEach(d => d.open = false);
+const sel = document.getElementById("filter");
+sel.value = store.get("filter") || "all";
+sel.onchange = () => { store.set("filter", sel.value); filter(); };
+
+// A link to an item (#p1e1) opens it, shows it even when the filter hid it, and scrolls to it.
+function openTarget() {
+  const id = decodeURIComponent(location.hash.slice(1));
+  const d = id && document.getElementById(id);
+  if (!d || d.tagName !== "DETAILS") return;
+  if (d.hidden) { sel.value = "all"; store.set("filter", "all"); filter(); }
+  d.open = true;
+  d.scrollIntoView({ block: "center" });
+}
+addEventListener("hashchange", openTarget);
+
+const links = [...index.querySelectorAll("a")];
+const io = new IntersectionObserver(entries => entries.forEach(en => {
+  if (!en.isIntersecting) return;
+  links.forEach(a => a.classList.toggle("on", a.hash === "#" + en.target.id));
+  const on = index.querySelector("a.on");
+  if (on && index.scrollHeight > index.clientHeight) {
+    const top = on.offsetTop - index.offsetTop;
+    if (top < index.scrollTop || top + on.offsetHeight > index.scrollTop + index.clientHeight) index.scrollTo({ top: top - 8, behavior: "smooth" });
+  }
+}), { rootMargin: "-20% 0px -70% 0px" });
+document.querySelectorAll("section.phase").forEach(s => io.observe(s));
+
+document.getElementById("updated").textContent = UPDATED;
+tally(); filter(); openTarget();
+</script>
+</body>
+</html>
