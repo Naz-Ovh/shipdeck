@@ -7,7 +7,7 @@ metadata:
 
 `shipdeck man` (text in `bin/shipdeck/manual/`) is for people using shipdeck and the LLM helping them: setting it up, deploying, configuring deploy.yaml, troubleshooting, understanding what each step does. It is not development documentation: no project layout, module names, code internals or contributing rules.
 
-Development docs come later, in `docs/code/` and `docs/features/` (said 2026-10-17); don't put them in the manual meanwhile.
+Development docs come later, in `docs/code/` and `docs/feature/` (said 2026-10-17); don't put them in the manual meanwhile. Both folders exist now: `docs/code/` holds the code guides, `docs/feature/` the feature plans (2026-11-05).
 
 **Why:** the user removed the `development` topic and said the manual holds "only what an LLM needs to work on a project" that uses shipdeck.
 

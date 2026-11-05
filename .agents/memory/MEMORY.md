@@ -1,4 +1,4 @@
-- [Manual audience](manual-audience.md) — `shipdeck man` is user docs for people using shipdeck through an LLM; dev docs go in docs/code, docs/features later
+- [Manual audience](manual-audience.md) — `shipdeck man` is user docs for people using shipdeck through an LLM; dev docs go in docs/code, feature plans in docs/feature
 - [Manual detail level](manual-detail-level.md) — detailed but token-efficient: full sentences with why and fix; neither 145 KB bloat nor 57 KB fragments
 - [Binary size](binary-size.md) — 13.3 MB → 8.0 MB with russh on ring + fat LTO + codegen-units=1; proposed, not applied
 - [ring vs aws-lc-rs](ring-vs-aws-lc.md) — russh's backend only does the session ciphers; ring loses nothing shipdeck needs
