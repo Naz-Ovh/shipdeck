@@ -18,11 +18,12 @@ workspace: the engine does the work, the frontends show what it reports.
 - `crates/headless/` (`shipdeck-headless`): the `deploy`, `rollback` and
   `releases` commands for scripts and CI: plain lines, no questions, exit
   codes.
-- `bin/shipdeck/`: the flags (clap lives only here), the login, the config
-  check, then hands over to the TUI or headless. `init`'s questions live
-  here too (`inquire`), and `man`, whose text is `bin/shipdeck/manual/`
-  (static data via `bin/shipdeck/build.rs`). The TUI and headless only
-  show what the engine reports; neither depends on the other.
+- `apps/cli/` (package `shipdeck`, the name the release files keep): the
+  flags (clap lives only here), the login, the config check, then hands over
+  to the TUI or headless. `init`'s questions live here too (`inquire`), and
+  `man`, whose text is `apps/cli/manual/` (static data via
+  `apps/cli/build.rs`). The TUI and headless only show what the engine
+  reports; neither depends on the other.
 
 ## Where new code goes
 
@@ -30,6 +31,6 @@ workspace: the engine does the work, the frontends show what it reports.
   reports, and never grows its own copy of the logic.
 - A new subject is a new folder module in its crate, named after the subject.
   It never becomes a `utils` box.
-- The move to `apps/` and `crates/`, with one engine process behind a protocol,
-  is planned as `p1a2` and `p1b1` in `docs/project-progress.html`. Until that
-  lands, the tree above is the truth.
+- The move to `apps/` and `crates/` is done (`p1a2`). One engine process behind
+  the protocol (`p1b1`) is still to come. Until it lands, the tree above is the
+  truth.

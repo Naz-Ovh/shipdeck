@@ -18,7 +18,7 @@ in one usually touches all four.
 
 ## The manual
 
-- `bin/shipdeck/manual/` is for people using shipdeck and the agents helping
+- `apps/cli/manual/` is for people using shipdeck and the agents helping
   them: setup, use, troubleshooting. No code internals.
 - A change in behaviour updates its page.
 - `configs.yaml` must name exactly the schema's properties (`man_test.rs`
@@ -29,4 +29,4 @@ in one usually touches all four.
 - `examples/<kind>/deploy.yaml` must keep parsing and start with the schema
   line for this version (`schema_test.rs` checks).
 - A new field goes into the README table, an example, and
-  `bin/shipdeck/manual/configs.yaml`.
+  `apps/cli/manual/configs.yaml`.

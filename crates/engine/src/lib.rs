@@ -1,6 +1,6 @@
 //! The deploy engine: reading `deploy.yaml`, building, packing, talking to
 //! the server over SSH, and the deploy and rollback flows. The TUI in
-//! `bin/shipdeck` only shows what this crate reports.
+//! `apps/cli` only shows what this crate reports.
 
 pub mod build;
 pub mod bundle;

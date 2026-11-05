@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["bin/shipdeck", "crates/engine", "crates/headless", "crates/tui"]
+members = ["apps/cli", "crates/engine", "crates/headless", "crates/tui"]
 
 [workspace.package]
 version = "0.6.1"

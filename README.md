@@ -738,7 +738,7 @@ command the server's sudo rule does not allow says so, with the
 ## Development
 
 ```
-bin/shipdeck/      the flags; starts the TUI or a headless command
+apps/cli/          the flags; starts the TUI or a headless command
 crates/tui/        the TUI: screens, dialogs, key handling
 crates/headless/   deploy, rollback and releases without the TUI
 crates/engine/     everything else: config, build, bundle, ssh, remote, deploy flows
@@ -748,7 +748,7 @@ docs/plan.md       the design and the decisions behind it
 The engine knows nothing about the screen; it reports through
 `deploy::report::Reporter`, and the TUI and headless crates each show those
 reports their own way. Changes to the TUI recompile only `crates/tui` and the
-small bin.
+small CLI crate.
 
 ```sh
 cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings

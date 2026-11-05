@@ -241,7 +241,7 @@
         <li>Owner: look at the spec page, <a href="visual/Plan/spec.html">spec.html</a> (<a href="#p1a1">p1a1</a>), and say yes or what to change. All the older planning pages are merged into it.</li>
         <li>Owner: click through the desktop mockup, <a href="visual/prototype/desktop.html">desktop.html</a> (<a href="#p2a1">p2a1</a>), and say yes or what to change. This is the second take: everything starts from a server. The bar at the bottom of the page switches the theme and the network, shows the first run, picks how the next deploy ends, and opens each dialog.</li>
         <li>Owner: two questions about the settings backup (<a href="#p1c6">p1c6</a>). Should the file be locked with a password? Should it also hold each project's <code>deploy.yaml</code>? And one about servers that stay connected (<a href="#p1c7">p1c7</a>): how long until an unused one disconnects? Recommended: 10 minutes.</li>
-        <li>Then: the new folder layout (<a href="#p1a2">p1a2</a>), and then the protocol crate (<a href="#p1b1">p1b1</a>).</li>
+        <li>Then: the protocol crate (<a href="#p1b1">p1b1</a>), and then <code>shipdeck engine</code> (<a href="#p1c1">p1c1</a>). The desktop app waits, as you asked.</li>
       </ol>
     </aside>
 
@@ -263,7 +263,7 @@
 </div>
 
 <script>
-const UPDATED = "2026-10-31";
+const UPDATED = "2026-11-06";
 // Status rules: never start a "planned" step without the owner's go. Only the owner moves a step to "done".
 // Each phase: { n, title, short (for the road at a glance), c (its colour), blurb, subs }.
 // Each item: [id, title, status, date, body (HTML), references (optional)].
@@ -370,8 +370,8 @@ const PLAN = [
    ["p1a1", "The spec page, in easy English", "built", "2026-10-31",
     "<p>One page with the agreed design: the parts of shipdeck, what each part does and never does, how the parts talk, and the decisions. It is a canvas: drag to move, zoom in and out, with pictures where words get hard.</p><p>All the older planning pages were merged into it and deleted, so nothing is said in two places: the desktop plan, the roadmap, the architecture and agent pages, the scope page, and the older plans for the config, packaging, and status and logs. The owner chose this on 2026-10-31.</p>",
     "<a href=\"visual/Plan/spec.html\">docs/visual/Plan/spec.html</a>"],
-   ["p1a2", "Move to apps/ and crates/", "next", "",
-    "<p>A clean layout for more than one app. <code>bin/shipdeck</code> moves to <code>apps/cli</code>, the desktop app will live in <code>apps/desktop</code>, and the Rust libraries stay in <code>crates/</code>.</p><p>Nothing changes for people who use shipdeck. Paths in the docs and the tests change with it.</p>",
+   ["p1a2", "Move to apps/ and crates/", "built", "2026-11-06",
+    "<p>A clean layout for more than one app. <code>bin/shipdeck</code> moved to <code>apps/cli</code>. The desktop app will live in <code>apps/desktop</code>, and the Rust libraries stay in <code>crates/</code>.</p><p>Nothing changes for people who use shipdeck. The paths in the docs and the website changed with it.</p><p>It is in the code, but not in a release yet.</p>",
     "<a href=\"visual/Plan/spec.html#layout\">spec: Where the code goes</a>"],
   ]},
   { title: "The protocol", items: [
