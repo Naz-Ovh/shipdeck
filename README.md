@@ -741,6 +741,7 @@ command the server's sudo rule does not allow says so, with the
 apps/cli/          the flags; starts the TUI or a headless command
 crates/tui/        the TUI: screens, dialogs, key handling
 crates/headless/   deploy, rollback and releases without the TUI
+crates/protocol/   the messages between the engine and its apps, and their schema
 crates/engine/     everything else: config, build, bundle, ssh, remote, deploy flows
 docs/plan.md       the design and the decisions behind it
 ```

@@ -241,7 +241,7 @@
         <li>Owner: look at the spec page, <a href="visual/Plan/spec.html">spec.html</a> (<a href="#p1a1">p1a1</a>), and say yes or what to change. All the older planning pages are merged into it.</li>
         <li>Owner: click through the desktop mockup, <a href="visual/prototype/desktop.html">desktop.html</a> (<a href="#p2a1">p2a1</a>), and say yes or what to change. This is the second take: everything starts from a server. The bar at the bottom of the page switches the theme and the network, shows the first run, picks how the next deploy ends, and opens each dialog.</li>
         <li>Owner: two questions about the settings backup (<a href="#p1c6">p1c6</a>). Should the file be locked with a password? Should it also hold each project's <code>deploy.yaml</code>? And one about servers that stay connected (<a href="#p1c7">p1c7</a>): how long until an unused one disconnects? Recommended: 10 minutes.</li>
-        <li>Then: the protocol crate (<a href="#p1b1">p1b1</a>), and then <code>shipdeck engine</code> (<a href="#p1c1">p1c1</a>). The desktop app waits, as you asked.</li>
+        <li>Then: <code>shipdeck engine</code> (<a href="#p1c1">p1c1</a>), the program the protocol crate was made for. After that, the TUI talks to it (<a href="#p1d2">p1d2</a>). The desktop app waits, as you asked.</li>
       </ol>
     </aside>
 
@@ -375,12 +375,12 @@ const PLAN = [
     "<a href=\"visual/Plan/spec.html#layout\">spec: Where the code goes</a>"],
   ]},
   { title: "The protocol", items: [
-   ["p1b1", "A protocol crate with every message", "planned", "",
-    "<p>A new crate, <code>crates/protocol</code>, holds every message as a Rust type: requests, events and questions. The format is JSON-RPC 2.0, one message per line.</p><p>A JSON Schema is made from these types, the same way <code>deploy.schema.json</code> is made today. The desktop app's C# types are made from that schema, so the two sides never drift apart.</p>",
-    "<a href=\"visual/Plan/spec.html#messages\">spec: Every message</a> · <a href=\"visual/Plan/spec.html#rules\">spec: The rules</a>"],
-   ["p1b2", "Rules that keep old apps working", "planned", "",
-    "<p>Messages are only ever added. They are never renamed or removed. The first message, <code>initialize</code>, carries the protocol version and what this engine can do, so each side knows what the other supports.</p>",
-    ""],
+   ["p1b1", "A protocol crate with every message", "built", "2026-11-06",
+    "<p>A new crate, <code>crates/protocol</code>, holds every message as a Rust type: requests, events and questions. The format is JSON-RPC 2.0, one message per line.</p><p><code>protocol.schema.json</code> is made from these types, and a test fails when it is out of date. <code>just protocol</code> writes it. The desktop app's C# types will be made from it, so the two sides never drift apart.</p><p>It is in the code, but not in a release yet. No command uses it so far; the engine comes next.</p>",
+    "<a href=\"visual/Plan/spec.html#messages\">spec: Every message</a> · <code>crates/protocol</code>"],
+   ["p1b2", "Rules that keep old apps working", "built", "2026-11-06",
+    "<p>Messages are only ever added. They are never renamed or removed. The first message, <code>initialize</code>, carries the protocol version and what this engine can do, so each side knows what the other supports.</p><p>The rule is written down in <a href=\"code/protocol.md\">docs/code/protocol.md</a>, next to the code it governs. An app that meets a message it does not know keeps going instead of failing.</p>",
+    "<a href=\"code/protocol.md\">docs/code/protocol.md</a>"],
   ]},
   { title: "The engine", items: [
    ["p1c1", "shipdeck engine: the headless process", "planned", "",

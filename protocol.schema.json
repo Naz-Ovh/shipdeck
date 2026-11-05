@@ -1,0 +1,1223 @@
+{
+  "$id": "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.6.1/protocol.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "Action": {
+      "description": "What `service/control` should do to the service.",
+      "enum": [
+        "start",
+        "stop",
+        "restart"
+      ],
+      "type": "string"
+    },
+    "AskRollback": {
+      "description": "`ask/rollback`: the new release failed. Roll back?",
+      "properties": {
+        "error": {
+          "type": "string"
+        },
+        "op": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "previous": {
+          "description": "The release that was live before it.",
+          "type": "string"
+        },
+        "release": {
+          "description": "The release that failed.",
+          "type": "string"
+        },
+        "seconds": {
+          "description": "No answer in this many seconds means yes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "step": {
+          "description": "The step that failed, such as `health`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "release",
+        "previous",
+        "step",
+        "error",
+        "seconds"
+      ],
+      "title": "AskRollback",
+      "type": "object"
+    },
+    "AskSecret": {
+      "description": "`ask/secret`: a password, a passphrase, or another secret.",
+      "properties": {
+        "prompt": {
+          "description": "The question itself, with the server it is for.",
+          "type": "string"
+        },
+        "title": {
+          "description": "A short name for the dialog, such as `SSH password`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "prompt"
+      ],
+      "title": "AskSecret",
+      "type": "object"
+    },
+    "AskTrustHost": {
+      "description": "`ask/trust_host`: a server sent a host key this PC has not seen.",
+      "properties": {
+        "algorithm": {
+          "description": "The key's algorithm, such as `ssh-ed25519`.",
+          "type": "string"
+        },
+        "fingerprint": {
+          "description": "As `ssh-keygen -l` prints it, such as `SHA256:...`.",
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "host",
+        "algorithm",
+        "fingerprint"
+      ],
+      "title": "AskTrustHost",
+      "type": "object"
+    },
+    "AskUnchanged": {
+      "description": "`ask/unchanged`: the release holds what the live one holds. Deploy it?",
+      "properties": {
+        "live": {
+          "description": "The live release with the same content.",
+          "type": "string"
+        },
+        "op": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "release": {
+          "description": "The release the deploy would make.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "release",
+        "live"
+      ],
+      "title": "AskUnchanged",
+      "type": "object"
+    },
+    "ConnectionClose": {
+      "description": "`connection/close`: drop this server's connection.",
+      "properties": {
+        "deployable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "deployable"
+      ],
+      "title": "ConnectionClose",
+      "type": "object"
+    },
+    "DeployStart": {
+      "description": "`deploy/start`: build and deploy the project.",
+      "properties": {
+        "deployable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "deployable"
+      ],
+      "title": "DeployStart",
+      "type": "object"
+    },
+    "DeployableInfo": {
+      "description": "One project in the workspace, as `workspace/open` reports it.",
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "name": {
+          "description": "The `name` from `deploy.yaml`.",
+          "type": "string"
+        },
+        "slug": {
+          "description": "The folder's name; what every other message calls the project.",
+          "type": "string"
+        },
+        "user": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "slug",
+        "name",
+        "host"
+      ],
+      "title": "DeployableInfo",
+      "type": "object"
+    },
+    "Done": {
+      "description": "The answer to a request that has nothing to report.",
+      "title": "Done",
+      "type": "object"
+    },
+    "FileInfo": {
+      "description": "One path in a release.",
+      "properties": {
+        "kind": {
+          "$ref": "#/definitions/FileKind"
+        },
+        "mode": {
+          "description": "As `ls -l` shows it, such as `-rw-r--r--`.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Relative to the release, `/`-separated.",
+          "type": "string"
+        },
+        "size": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "target": {
+          "description": "Where a link points.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "kind",
+        "mode",
+        "size"
+      ],
+      "title": "FileInfo",
+      "type": "object"
+    },
+    "FileKind": {
+      "description": "What one path of a release is.",
+      "enum": [
+        "dir",
+        "file",
+        "link"
+      ],
+      "type": "string"
+    },
+    "Initialize": {
+      "description": "`initialize`: agree on the protocol version and what this engine can do.",
+      "properties": {
+        "client": {
+          "description": "Who is talking, such as `shipdeck-tui 0.7.0`.",
+          "type": "string"
+        },
+        "protocol": {
+          "description": "The version the app speaks; 1 is the first.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "protocol",
+        "client"
+      ],
+      "title": "Initialize",
+      "type": "object"
+    },
+    "InitializeResult": {
+      "description": "What `initialize` answers.",
+      "properties": {
+        "capabilities": {
+          "default": [],
+          "description": "What this engine can do; new words may be added, never renamed.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "protocol": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "shipdeck": {
+          "description": "The engine's version.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocol",
+        "shipdeck"
+      ],
+      "title": "InitializeResult",
+      "type": "object"
+    },
+    "LogKind": {
+      "description": "What one line of an operation's log is.",
+      "oneOf": [
+        {
+          "enum": [
+            "out",
+            "err",
+            "info",
+            "success",
+            "warn",
+            "error"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "step",
+          "description": "A step starts.",
+          "type": "string"
+        },
+        {
+          "const": "command",
+          "description": "A command is about to run, here or on the server.",
+          "type": "string"
+        }
+      ]
+    },
+    "Login": {
+      "description": "How to log in to the server, as `workspace/open` carries it.",
+      "oneOf": [
+        {
+          "description": "The `IdentityFile` from `~/.ssh/config`; else ask for a password.",
+          "properties": {
+            "kind": {
+              "const": "auto",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A private key file on this PC.",
+          "properties": {
+            "kind": {
+              "const": "key",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A private key's text, such as a CI secret.",
+          "properties": {
+            "kind": {
+              "const": "key_text",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A password given up front, so nothing is asked.",
+          "properties": {
+            "kind": {
+              "const": "password",
+              "type": "string"
+            },
+            "password": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "password"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "LogsEnded": {
+      "description": "`logs/ended`: the live log stopped.",
+      "properties": {
+        "code": {
+          "description": "The exit code, when the log ended on its own.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "error": {
+          "description": "Why it ended, when it was stopped for a reason.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "view": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "view"
+      ],
+      "title": "LogsEnded",
+      "type": "object"
+    },
+    "LogsFollow": {
+      "description": "`logs/follow`: start a live log of the service.",
+      "properties": {
+        "deployable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "deployable"
+      ],
+      "title": "LogsFollow",
+      "type": "object"
+    },
+    "LogsFollowResult": {
+      "description": "What `logs/follow` answers.",
+      "properties": {
+        "view": {
+          "description": "The id each `logs/line` and `logs/ended` carries.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "view"
+      ],
+      "title": "LogsFollowResult",
+      "type": "object"
+    },
+    "LogsLine": {
+      "description": "`logs/line`: one new line of a live log.",
+      "properties": {
+        "line": {
+          "type": "string"
+        },
+        "view": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "view",
+        "line"
+      ],
+      "title": "LogsLine",
+      "type": "object"
+    },
+    "LogsStop": {
+      "description": "`logs/stop`: stop a live log.",
+      "properties": {
+        "view": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "view"
+      ],
+      "title": "LogsStop",
+      "type": "object"
+    },
+    "Manifest": {
+      "description": "The `release.json` each release carries.",
+      "properties": {
+        "built_at": {
+          "description": "When it was built, as RFC 3339 in UTC.",
+          "type": "string"
+        },
+        "content": {
+          "description": "`sha256:<hex>` over what the release holds and how it runs.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "deployed_by": {
+          "type": "string"
+        },
+        "dirty": {
+          "type": "boolean"
+        },
+        "git": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "git",
+        "dirty",
+        "built_at",
+        "deployed_by"
+      ],
+      "title": "Manifest",
+      "type": "object"
+    },
+    "OpFinished": {
+      "description": "`op/finished`: the operation ended.",
+      "properties": {
+        "op": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "outcome": {
+          "$ref": "#/definitions/Outcome"
+        }
+      },
+      "required": [
+        "op",
+        "outcome"
+      ],
+      "title": "OpFinished",
+      "type": "object"
+    },
+    "OpLog": {
+      "description": "`op/log`: one line of the operation's log.",
+      "properties": {
+        "kind": {
+          "$ref": "#/definitions/LogKind"
+        },
+        "op": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "kind",
+        "text"
+      ],
+      "title": "OpLog",
+      "type": "object"
+    },
+    "OpProgress": {
+      "description": "`op/progress`: how far the running step is.",
+      "properties": {
+        "done": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "label": {
+          "description": "What is moving, such as `hashing` or a command.",
+          "type": "string"
+        },
+        "op": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "step": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "total": {
+          "description": "`0` when the end is not known yet.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unit": {
+          "$ref": "#/definitions/Unit"
+        }
+      },
+      "required": [
+        "op",
+        "step",
+        "done",
+        "total",
+        "unit",
+        "label"
+      ],
+      "title": "OpProgress",
+      "type": "object"
+    },
+    "OpRelease": {
+      "description": "`op/release`: the release this operation works on, once known.",
+      "properties": {
+        "op": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "release": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "release"
+      ],
+      "title": "OpRelease",
+      "type": "object"
+    },
+    "OpStep": {
+      "description": "`op/step`: a step of an operation changed state.",
+      "properties": {
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "state": {
+          "$ref": "#/definitions/StepState"
+        },
+        "step": {
+          "description": "Its place in the list `deploy/start` answered with.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "op",
+        "step",
+        "state"
+      ],
+      "title": "OpStep",
+      "type": "object"
+    },
+    "OperationStarted": {
+      "description": "What `deploy/start` and `rollback/start` answer.",
+      "properties": {
+        "op": {
+          "description": "The id every `op/*` event of this work carries.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "steps": {
+          "description": "The steps it will go through, by their keys.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "op",
+        "steps"
+      ],
+      "title": "OperationStarted",
+      "type": "object"
+    },
+    "Outcome": {
+      "description": "How a deploy or rollback ended.",
+      "oneOf": [
+        {
+          "description": "The new release is live.",
+          "properties": {
+            "kind": {
+              "const": "succeeded",
+              "type": "string"
+            },
+            "release": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "release"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "It stopped before the live release was touched.",
+          "properties": {
+            "error": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "error"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The new release failed, and the previous one is live again.",
+          "properties": {
+            "error": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "rolled_back",
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "error",
+            "to"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The new release failed, and putting the old one back failed too.",
+          "properties": {
+            "error": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "rollback_failed",
+              "type": "string"
+            },
+            "rollback_error": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "error",
+            "rollback_error"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The new release failed after the switch, and you chose to keep it.",
+          "properties": {
+            "error": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "kept",
+              "type": "string"
+            },
+            "release": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "release",
+            "error"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The release held what the live one holds, and you chose not to deploy it.",
+          "properties": {
+            "kind": {
+              "const": "unchanged",
+              "type": "string"
+            },
+            "live": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "live"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Problem": {
+      "description": "One mistake in a `deploy.yaml`, at its line and column.",
+      "properties": {
+        "column": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "file": {
+          "description": "The `deploy.yaml` path, as it was opened.",
+          "type": "string"
+        },
+        "hint": {
+          "description": "How to put it right.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label": {
+          "description": "Printed after the carets, when there is one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "line": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "file",
+        "line",
+        "column",
+        "message"
+      ],
+      "title": "Problem",
+      "type": "object"
+    },
+    "ReleaseContents": {
+      "description": "`release/contents`: what one release holds.",
+      "properties": {
+        "deployable": {
+          "type": "string"
+        },
+        "release": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/definitions/ReleaseSource"
+        }
+      },
+      "required": [
+        "deployable",
+        "release",
+        "source"
+      ],
+      "title": "ReleaseContents",
+      "type": "object"
+    },
+    "ReleaseContentsResult": {
+      "description": "What `release/contents` answers.",
+      "properties": {
+        "files": {
+          "items": {
+            "$ref": "#/definitions/FileInfo"
+          },
+          "type": "array"
+        },
+        "manifest": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Manifest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Only a backup can show it without unpacking."
+        }
+      },
+      "required": [
+        "files"
+      ],
+      "title": "ReleaseContentsResult",
+      "type": "object"
+    },
+    "ReleaseInfo": {
+      "description": "One release on the server.",
+      "properties": {
+        "backup": {
+          "description": "`backups/<id>.tar.zst` holds it.",
+          "type": "boolean"
+        },
+        "current": {
+          "description": "It is what `current` points to.",
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/definitions/ReleaseKind"
+        },
+        "manifest": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Manifest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReleaseName"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "`None` for a folder shipdeck did not name; it is never touched."
+        },
+        "size_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "current",
+        "backup"
+      ],
+      "title": "ReleaseInfo",
+      "type": "object"
+    },
+    "ReleaseKind": {
+      "description": "Whether a release is unpacked, or only kept as its backup.",
+      "oneOf": [
+        {
+          "const": "open",
+          "description": "Unpacked in `releases/`, ready to switch to.",
+          "type": "string"
+        },
+        {
+          "const": "compressed",
+          "description": "Only its tarball in `backups/`.",
+          "type": "string"
+        }
+      ]
+    },
+    "ReleaseName": {
+      "description": "The parts of a release id, so a screen can sort and show them.",
+      "properties": {
+        "dirty": {
+          "type": "boolean"
+        },
+        "git": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "git",
+        "dirty"
+      ],
+      "title": "ReleaseName",
+      "type": "object"
+    },
+    "ReleaseReadFile": {
+      "description": "`release/read_file`: the start of one file.",
+      "properties": {
+        "deployable": {
+          "type": "string"
+        },
+        "path": {
+          "description": "Relative to the release, `/`-separated.",
+          "type": "string"
+        },
+        "release": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/definitions/ReleaseSource"
+        }
+      },
+      "required": [
+        "deployable",
+        "release",
+        "source",
+        "path"
+      ],
+      "title": "ReleaseReadFile",
+      "type": "object"
+    },
+    "ReleaseReadFileResult": {
+      "description": "What `release/read_file` answers.",
+      "properties": {
+        "binary": {
+          "description": "The file holds a NUL byte, so it is not shown as text.",
+          "type": "boolean"
+        },
+        "text": {
+          "description": "At most 512 KiB of the file, as text.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "binary"
+      ],
+      "title": "ReleaseReadFileResult",
+      "type": "object"
+    },
+    "ReleaseSource": {
+      "description": "Where a release's files are read from.",
+      "oneOf": [
+        {
+          "const": "folder",
+          "description": "`releases/<id>/`.",
+          "type": "string"
+        },
+        {
+          "const": "backup",
+          "description": "`backups/<id>.tar.zst`.",
+          "type": "string"
+        }
+      ]
+    },
+    "ReleasesList": {
+      "description": "`releases/list`: every release on the server, newest first.",
+      "properties": {
+        "deployable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "deployable"
+      ],
+      "title": "ReleasesList",
+      "type": "object"
+    },
+    "ReleasesListResult": {
+      "description": "What `releases/list` answers.",
+      "properties": {
+        "current": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "entries": {
+          "items": {
+            "$ref": "#/definitions/ReleaseInfo"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "entries"
+      ],
+      "title": "ReleasesListResult",
+      "type": "object"
+    },
+    "RollbackStart": {
+      "description": "`rollback/start`: put one release back.",
+      "properties": {
+        "deployable": {
+          "type": "string"
+        },
+        "release": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "deployable",
+        "release"
+      ],
+      "title": "RollbackStart",
+      "type": "object"
+    },
+    "SecretAnswer": {
+      "description": "The answer to `ask/secret`; `None` means the question was cancelled.",
+      "properties": {
+        "secret": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "title": "SecretAnswer",
+      "type": "object"
+    },
+    "ServiceControl": {
+      "description": "`service/control`: start, stop or restart the service.",
+      "properties": {
+        "action": {
+          "$ref": "#/definitions/Action"
+        },
+        "deployable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "deployable",
+        "action"
+      ],
+      "title": "ServiceControl",
+      "type": "object"
+    },
+    "StatusGet": {
+      "description": "`status/get`: one look at a project's service.",
+      "properties": {
+        "deployable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "deployable"
+      ],
+      "title": "StatusGet",
+      "type": "object"
+    },
+    "StatusGetResult": {
+      "description": "What `status/get` answers.",
+      "properties": {
+        "current": {
+          "description": "The release `current` points to.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dir_exists": {
+          "description": "The service folder exists on the server.",
+          "type": "boolean"
+        },
+        "state": {
+          "description": "`active`, `failed` and the words systemd and PM2 share.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "dir_exists",
+        "state"
+      ],
+      "title": "StatusGetResult",
+      "type": "object"
+    },
+    "StepState": {
+      "description": "What a step of a deploy or rollback is doing.",
+      "oneOf": [
+        {
+          "enum": [
+            "pending",
+            "running",
+            "done",
+            "failed",
+            "skipped"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "warned",
+          "description": "It finished with something worth reading.",
+          "type": "string"
+        }
+      ]
+    },
+    "Unit": {
+      "description": "What a progress count measures.",
+      "enum": [
+        "bytes",
+        "items",
+        "seconds"
+      ],
+      "type": "string"
+    },
+    "WorkspaceOpen": {
+      "description": "`workspace/open`: pick the folder of projects, and how to log in.",
+      "properties": {
+        "login": {
+          "$ref": "#/definitions/Login"
+        },
+        "root": {
+          "description": "The folder whose subfolders each hold a `deploy.yaml`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "login"
+      ],
+      "title": "WorkspaceOpen",
+      "type": "object"
+    },
+    "WorkspaceOpenResult": {
+      "description": "What `workspace/open` answers.",
+      "properties": {
+        "deployables": {
+          "items": {
+            "$ref": "#/definitions/DeployableInfo"
+          },
+          "type": "array"
+        },
+        "problems": {
+          "default": [],
+          "description": "Every config mistake, in every file; nothing runs until they are fixed.",
+          "items": {
+            "$ref": "#/definitions/Problem"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "deployables"
+      ],
+      "title": "WorkspaceOpenResult",
+      "type": "object"
+    }
+  },
+  "title": "shipdeck protocol 1"
+}
