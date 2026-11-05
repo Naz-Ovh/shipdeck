@@ -13,6 +13,9 @@ pub const PM2_NEWEST_MAJOR: u64 = 7;
 
 /// Reads the output of `pm2 -v`, which is the version alone, as the
 /// version and its major number.
+///
+/// # Errors
+/// Returns an error when the output is not a three-part version number.
 pub fn parse_version(output: &str) -> Result<(String, u64), String> {
     let version = output.trim();
     let parts: Option<Vec<u64>> = version.split('.').map(|part| part.parse().ok()).collect();
@@ -26,6 +29,9 @@ pub fn parse_version(output: &str) -> Result<(String, u64), String> {
 /// JSON, in systemd's words so the screens colour it alike, with its
 /// restart count summed over its instances. `missing` when PM2 has no app
 /// of that name.
+///
+/// # Errors
+/// Returns an error when the output is not the JSON `pm2 jlist` prints.
 pub fn app_state(jlist: &str, app: &str) -> Result<(String, Option<u64>), String> {
     let processes: Vec<Value> = serde_json::from_str(jlist.trim()).map_err(|err| {
         let first = jlist.lines().next().unwrap_or_default();

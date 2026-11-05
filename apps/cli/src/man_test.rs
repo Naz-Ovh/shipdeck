@@ -6,7 +6,7 @@ use super::{CONFIGS, configs, details, index, suggest, topics};
 use shipdeck_engine::config::schema;
 
 fn args(list: &[&str]) -> Vec<String> {
-    list.iter().map(|s| s.to_string()).collect()
+    list.iter().map(std::string::ToString::to_string).collect()
 }
 
 /// Every property path the JSON Schema has, blocks included.
@@ -142,7 +142,7 @@ fn an_unknown_key_prints_nothing_and_suggests() {
 fn suggestions_find_typos_and_parts() {
     assert!(suggest("quickstrat").contains(&"quickstart"));
     assert!(suggest("timeout_secs").contains(&"pipeline.health.timeout_secs"));
-    assert!(suggest("zzzzzzzz").is_empty());
+    assert_eq!(suggest("zzzzzzzz"), [] as [&str; 0]);
 }
 
 #[test]

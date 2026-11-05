@@ -281,7 +281,7 @@ pub(super) fn listing() -> Listing {
 }
 
 #[tokio::test]
-async fn draws_every_screen_at_common_and_small_sizes() {
+async fn draws_the_deployables_screen_at_common_and_small_sizes() {
     for (width, height) in [(160, 46), (100, 30), (60, 18)] {
         let mut app = app();
         render(&mut app, width, height, "deployables");
@@ -289,72 +289,79 @@ async fn draws_every_screen_at_common_and_small_sizes() {
         running_deploy(&mut app);
         render(&mut app, width, height, "deploy-running");
 
+        finish_failed_deploy(&mut app);
+        render(&mut app, width, height, "deploy-rolled-back");
+    }
+}
+
+/// Marks the deploy's later steps done, then fails it after the switch.
+fn finish_failed_deploy(app: &mut App) {
+    send(
+        app,
+        OpEvent::Step {
+            step: 3,
+            state: StepState::Done,
+            detail: Some("11.8 MiB in 2.8s".into()),
+        },
+    );
+    for step in 4..8 {
         send(
-            &mut app,
+            app,
             OpEvent::Step {
-                step: 3,
-                state: StepState::Done,
-                detail: Some("11.8 MiB in 2.8s".into()),
-            },
-        );
-        for step in 4..8 {
-            send(
-                &mut app,
-                OpEvent::Step {
-                    step,
-                    state: StepState::Running,
-                    detail: None,
-                },
-            );
-            send(
-                &mut app,
-                OpEvent::Step {
-                    step,
-                    state: StepState::Done,
-                    detail: None,
-                },
-            );
-        }
-        send(
-            &mut app,
-            OpEvent::Step {
-                step: 8,
+                step,
                 state: StepState::Running,
                 detail: None,
             },
         );
         send(
-            &mut app,
+            app,
             OpEvent::Step {
-                step: 8,
-                state: StepState::Failed,
-                detail: Some("the service crashed and was restarted 1 time(s)".into()),
+                step,
+                state: StepState::Done,
+                detail: None,
             },
         );
-        send(
-            &mut app,
-            OpEvent::Step {
-                step: 9,
-                state: StepState::Skipped,
-                detail: Some("rolled back".into()),
-            },
-        );
-        send(
-            &mut app,
-            OpEvent::Finished(Outcome::RolledBack {
-                error: "the service crashed and was restarted 1 time(s) by systemd".into(),
-                to: RELEASES[0].into(),
-            }),
-        );
-        render(&mut app, width, height, "deploy-rolled-back");
+    }
+    send(
+        app,
+        OpEvent::Step {
+            step: 8,
+            state: StepState::Running,
+            detail: None,
+        },
+    );
+    send(
+        app,
+        OpEvent::Step {
+            step: 8,
+            state: StepState::Failed,
+            detail: Some("the service crashed and was restarted 1 time(s)".into()),
+        },
+    );
+    send(
+        app,
+        OpEvent::Step {
+            step: 9,
+            state: StepState::Skipped,
+            detail: Some("rolled back".into()),
+        },
+    );
+    send(
+        app,
+        OpEvent::Finished(Outcome::RolledBack {
+            error: "the service crashed and was restarted 1 time(s) by systemd".into(),
+            to: RELEASES[0].into(),
+        }),
+    );
+}
 
-        app.releases = Some(ReleasesView {
-            deployable: 0,
-            listing: Fetch::Ready(listing()),
-            table: ratatui::widgets::TableState::default().with_selected(Some(2)),
-            details: None,
-        });
-        app.screen = Screen::Releases;
+#[tokio::test]
+async fn draws_the_releases_screen_and_its_confirmations() {
+    for (width, height) in [(160, 46), (100, 30), (60, 18)] {
+        let mut app = app();
+        running_deploy(&mut app);
+        finish_failed_deploy(&mut app);
+        show_releases(&mut app);
         render(&mut app, width, height, "releases");
 
         app.modals.push_back(Modal::ConfirmRollback {
@@ -376,6 +383,27 @@ async fn draws_every_screen_at_common_and_small_sizes() {
         });
         render(&mut app, width, height, "confirm-deploy");
         app.modals.clear();
+    }
+}
+
+fn show_releases(app: &mut App) {
+    app.releases = Some(ReleasesView {
+        deployable: 0,
+        listing: Fetch::Ready(listing()),
+        table: ratatui::widgets::TableState::default().with_selected(Some(2)),
+        details: None,
+    });
+    app.screen = Screen::Releases;
+}
+
+#[tokio::test]
+async fn draws_the_trust_and_password_dialogs() {
+    for (width, height) in [(160, 46), (100, 30), (60, 18)] {
+        let mut app = app();
+        running_deploy(&mut app);
+        finish_failed_deploy(&mut app);
+        show_releases(&mut app);
+        app.screen = Screen::Deployables;
 
         app.modals.push_back(Modal::TrustHost {
             host: "[203.0.113.10]:2222".into(),
@@ -396,13 +424,13 @@ async fn draws_every_screen_at_common_and_small_sizes() {
 }
 
 #[tokio::test]
-async fn draws_a_node_pipeline_and_the_rollback_question() {
+async fn draws_a_node_pipeline() {
     for (width, height) in [(160, 46), (100, 30), (60, 18)] {
         let mut app = app();
         app.list.select(Some(3));
         render(&mut app, width, height, "node-app");
 
-        let steps = deploy_step_names(&app.deployables[3].config);
+        let steps = node_setup(&mut app);
         assert_eq!(
             steps,
             [
@@ -420,55 +448,68 @@ async fn draws_a_node_pipeline_and_the_rollback_question() {
                 "Failed"
             ]
         );
-        app.op = Some(Operation::new(1, OpKind::Deploy, 3, &steps));
-        app.screen = Screen::Operation;
-        for (step, detail) in [
-            (0, "x86_64 · glibc 2.39 · 41.2 GiB free"),
-            (1, "412 files · 12.0s"),
-            (2, "412 files · 3.1 MiB → 0.9 MiB"),
-            (3, "0.9 MiB in 0.6s"),
-            (
-                4,
-                "releases/v1.4.0-77aa001-20261014.160501 · 1 shared folder linked",
-            ),
-        ] {
-            send(
-                &mut app,
-                OpEvent::Step {
-                    step,
-                    state: StepState::Done,
-                    detail: Some(detail.into()),
-                },
-            );
-        }
-        send(
-            &mut app,
-            OpEvent::Step {
-                step: 5,
-                state: StepState::Running,
-                detail: None,
-            },
-        );
-        send(
-            &mut app,
-            OpEvent::Progress {
-                step: 5,
-                done: 0,
-                total: 3,
-                unit: Unit::Items,
-                label: "npm ci --omit=dev".into(),
-            },
-        );
-        send(
-            &mut app,
-            OpEvent::Log {
-                kind: LogKind::Command,
-                text:
-                    "deploy@web › npm ci --omit=dev  (in releases/v1.4.0-77aa001-20261014.160501)"
-                        .into(),
-            },
-        );
         render(&mut app, width, height, "node-setup");
+    }
+}
+
+/// Builds the node deploy up to its setup step.
+fn node_setup(app: &mut App) -> Vec<&'static str> {
+    let steps = deploy_step_names(&app.deployables[3].config);
+    app.op = Some(Operation::new(1, OpKind::Deploy, 3, &steps));
+    app.screen = Screen::Operation;
+    for (step, detail) in [
+        (0, "x86_64 · glibc 2.39 · 41.2 GiB free"),
+        (1, "412 files · 12.0s"),
+        (2, "412 files · 3.1 MiB → 0.9 MiB"),
+        (3, "0.9 MiB in 0.6s"),
+        (
+            4,
+            "releases/v1.4.0-77aa001-20261014.160501 · 1 shared folder linked",
+        ),
+    ] {
+        send(
+            app,
+            OpEvent::Step {
+                step,
+                state: StepState::Done,
+                detail: Some(detail.into()),
+            },
+        );
+    }
+    send(
+        app,
+        OpEvent::Step {
+            step: 5,
+            state: StepState::Running,
+            detail: None,
+        },
+    );
+    send(
+        app,
+        OpEvent::Progress {
+            step: 5,
+            done: 0,
+            total: 3,
+            unit: Unit::Items,
+            label: "npm ci --omit=dev".into(),
+        },
+    );
+    send(
+        app,
+        OpEvent::Log {
+            kind: LogKind::Command,
+            text: "deploy@web › npm ci --omit=dev  (in releases/v1.4.0-77aa001-20261014.160501)"
+                .into(),
+        },
+    );
+    steps
+}
+
+#[tokio::test]
+async fn asks_before_rolling_back_a_failed_node_release() {
+    for (width, height) in [(160, 46), (100, 30), (60, 18)] {
+        let mut app = app();
+        node_setup(&mut app);
 
         for step in 5..8 {
             send(
@@ -507,7 +548,7 @@ async fn draws_a_node_pipeline_and_the_rollback_question() {
         render(&mut app, width, height, "ask-rollback");
 
         // `n` keeps the new release and answers the deploy.
-        app.on_event(Event::Key(KeyEvent::new(
+        app.on_event(&Event::Key(KeyEvent::new(
             KeyCode::Char('n'),
             KeyModifiers::NONE,
         )));
@@ -564,7 +605,7 @@ async fn an_unanswered_question_closes_when_its_time_is_up() {
 }
 
 pub(super) fn press(app: &mut App, code: KeyCode) {
-    app.on_event(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)));
+    app.on_event(&Event::Key(KeyEvent::new(code, KeyModifiers::NONE)));
 }
 
 #[tokio::test]
@@ -714,7 +755,7 @@ async fn colon_opens_a_command_line_that_runs_service_commands() {
     render(&mut app, 100, 30, "confirm-restart");
     press(&mut app, KeyCode::Char('n'));
     assert!(app.modals.is_empty());
-    assert!(app.controlling.is_empty());
+    assert_eq!(app.controlling, [] as [usize; 0]);
 
     press(&mut app, KeyCode::Char(':'));
     type_in(&mut app, "stop");
@@ -850,7 +891,7 @@ async fn a_failed_command_shows_why_and_a_done_one_refreshes() {
                      --dir /opt/api-prod --service api-prod"
             .into()),
     });
-    assert!(app.controlling.is_empty());
+    assert_eq!(app.controlling, [] as [usize; 0]);
     assert!(
         matches!(app.modals.front(), Some(Modal::Notice { title, .. }) if title == "Could not stop api-prod")
     );

@@ -3,7 +3,7 @@ use super::*;
 const HASH: &str = "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae";
 
 fn strings(list: &[&str]) -> Vec<String> {
-    list.iter().map(|s| s.to_string()).collect()
+    list.iter().map(ToString::to_string).collect()
 }
 
 #[test]
@@ -293,7 +293,7 @@ mod scripts {
         let whole = bundle::pack(
             &contents,
             &Manifest::new(&name, "t"),
-            &Default::default(),
+            &std::collections::HashMap::<String, String>::default(),
             |_, _| {},
         )
         .unwrap();

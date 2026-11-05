@@ -47,17 +47,17 @@ fn own() -> Vec<String> {
     vec!["release.json".into(), "my-api.service".into()]
 }
 
-fn picked(files: BackupFiles) -> Picked {
-    pick(&release(), &deployed(), &own(), &["uploads".into()], &files).unwrap()
+fn picked(files: &BackupFiles) -> Picked {
+    pick(&release(), &deployed(), &own(), &["uploads".into()], files).unwrap()
 }
 
 fn strings(list: &[&str]) -> Vec<String> {
-    list.iter().map(|s| s.to_string()).collect()
+    list.iter().map(ToString::to_string).collect()
 }
 
 #[test]
 fn takes_what_was_deployed_and_leaves_what_setup_made() {
-    let picked = picked(BackupFiles::default());
+    let picked = picked(&BackupFiles::default());
     assert_eq!(
         picked.paths,
         [
@@ -70,12 +70,12 @@ fn takes_what_was_deployed_and_leaves_what_setup_made() {
             "release.json",
         ]
     );
-    assert!(picked.unmatched.is_empty());
+    assert_eq!(picked.unmatched, Vec::<String>::new());
 }
 
 #[test]
 fn include_brings_in_a_generated_folder_and_exclude_leaves_out() {
-    let picked = picked(BackupFiles {
+    let picked = picked(&BackupFiles {
         deployed: true,
         include: strings(&["data"]),
         exclude: strings(&["**/*.map", "data/cache.bin"]),
@@ -89,7 +89,7 @@ fn include_brings_in_a_generated_folder_and_exclude_leaves_out() {
 
 #[test]
 fn shipdecks_own_files_stay_and_shared_folders_never_go_in() {
-    let picked = picked(BackupFiles {
+    let picked = picked(&BackupFiles {
         deployed: false,
         include: strings(&["."]),
         exclude: strings(&["*.service", "release.json"]),
@@ -106,7 +106,7 @@ fn shipdecks_own_files_stay_and_shared_folders_never_go_in() {
 
 #[test]
 fn not_deployed_leaves_only_what_include_names() {
-    let picked = picked(BackupFiles {
+    let picked = picked(&BackupFiles {
         deployed: false,
         include: strings(&["data/keys.json", "missing/**"]),
         exclude: Vec::new(),

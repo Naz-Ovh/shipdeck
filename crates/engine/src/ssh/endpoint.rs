@@ -27,10 +27,22 @@ pub struct Endpoint {
 
 impl Endpoint {
     /// Applies `~/.ssh/config` to `target`. Values in deploy.yaml win.
+    ///
+    /// # Errors
+    ///
+    /// Fails when `~/.ssh/config` routes the host through a proxy, or no
+    /// user name can be found or allowed.
     pub fn resolve(target: &SshTarget) -> Result<Self> {
         Self::from_config(target, ssh_config::lookup(&target.host))
     }
 
+    /// Builds the endpoint from the deploy target and its `~/.ssh/config`
+    /// entry; values in deploy.yaml win.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the host is reached through a proxy, or the user is
+    /// missing or holds characters an ssh command cannot carry.
     pub fn from_config(target: &SshTarget, found: HostConfig) -> Result<Self> {
         if let Some(proxy) = &found.proxy {
             bail!(
@@ -64,6 +76,7 @@ impl Endpoint {
     }
 
     /// `deploy@prod`, or `deploy@prod:2222` on another port.
+    #[must_use]
     pub fn label(&self) -> String {
         if self.port == 22 {
             format!("{}@{}", self.user, self.name)
@@ -73,11 +86,13 @@ impl Endpoint {
     }
 
     /// Whether `name` is an alias for a different address.
+    #[must_use]
     pub fn is_alias(&self) -> bool {
         self.host != self.name
     }
 
     /// `203.0.113.10:22`, the address actually dialled.
+    #[must_use]
     pub fn address(&self) -> String {
         format!("{}:{}", self.host, self.port)
     }

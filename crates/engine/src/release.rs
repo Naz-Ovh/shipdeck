@@ -21,6 +21,11 @@ pub struct ReleaseName {
 }
 
 impl ReleaseName {
+    /// Names a release built now.
+    ///
+    /// # Panics
+    /// Panics when the formatted build time cannot be parsed back as a stamp.
+    #[must_use]
     pub fn new(version: &str, git: &str, dirty: bool, built_at: DateTime<Utc>) -> Self {
         // Drop sub-second precision so the id round-trips through `parse`.
         let stamp =
@@ -37,6 +42,7 @@ impl ReleaseName {
     }
 
     /// `v<version>-<git>[-dirty]-<YYYYMMDD.HHMMSS>`
+    #[must_use]
     pub fn id(&self) -> String {
         let dirty = if self.dirty { "-dirty" } else { "" };
         format!(
@@ -49,6 +55,7 @@ impl ReleaseName {
     }
 
     /// `v0.3.1 (ab12cd3)`, for the unit's description and the screens.
+    #[must_use]
     pub fn tag(&self) -> String {
         if self.dirty {
             format!("v{} ({}, uncommitted changes)", self.version, self.git)
@@ -59,6 +66,7 @@ impl ReleaseName {
 
     /// Reads an id back. Anything shipdeck did not name returns `None` and is
     /// left alone on the server.
+    #[must_use]
     pub fn parse(id: &str) -> Option<Self> {
         if !is_safe_id(id) {
             return None;
@@ -84,6 +92,7 @@ impl ReleaseName {
 }
 
 /// Ids go into remote shell commands, so only these characters are allowed.
+#[must_use]
 pub fn is_safe_id(id: &str) -> bool {
     !id.is_empty()
         && !id.starts_with('.')
@@ -120,6 +129,7 @@ pub struct Manifest {
 }
 
 impl Manifest {
+    #[must_use]
     pub fn new(name: &ReleaseName, deployed_by: &str) -> Self {
         Self {
             id: name.id(),

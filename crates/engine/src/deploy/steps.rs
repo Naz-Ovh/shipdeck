@@ -21,6 +21,7 @@ pub enum Step {
 }
 
 impl Step {
+    #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             Self::Connect => "Connect",
@@ -40,6 +41,7 @@ impl Step {
     }
 
     /// As deploy.yaml and `SHIPDECK_STEP` spell it.
+    #[must_use]
     pub fn key(self) -> &'static str {
         match self {
             Self::Connect => "connect",
@@ -61,6 +63,7 @@ impl Step {
 
 /// The steps a deploy of `config` goes through. Failed is listed only when
 /// `pipeline.failed` has commands.
+#[must_use]
 pub fn deploy_steps(config: &DeployConfig) -> Vec<Step> {
     let mut steps = vec![
         Step::Preflight,

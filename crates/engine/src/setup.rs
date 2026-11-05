@@ -10,12 +10,14 @@ pub const SCRIPT_NAME: &str = "server-setup.sh";
 
 /// The script at the tag of this shipdeck version, so what runs as root only
 /// changes with a new release.
+#[must_use]
 pub fn script_url() -> String {
     raw_url(SCRIPT_NAME)
 }
 
 /// The setup command for one systemd app, without `--key`: for a server
 /// whose user can already log in and needs its sudo rule renewed.
+#[must_use]
 pub fn command(user: &str, dir: &str, service: &str) -> String {
     format!(
         "curl -fsSL {} | bash -s -- --user {user} --dir {dir} --service {service}",
@@ -24,6 +26,7 @@ pub fn command(user: &str, dir: &str, service: &str) -> String {
 }
 
 /// A file at the root of the shipdeck repository, at this version's tag.
+#[must_use]
 pub fn raw_url(file: &str) -> String {
     let repository = env!("CARGO_PKG_REPOSITORY").trim_end_matches('/');
     let path = repository

@@ -73,12 +73,10 @@ pub(super) async fn preflight(
     let glibc = facts
         .glibc
         .as_ref()
-        .map(|v| format!("glibc {v}"))
-        .unwrap_or_else(|| "no glibc".into());
+        .map_or_else(|| "no glibc".into(), |v| format!("glibc {v}"));
     let free = facts
         .free_bytes
-        .map(human::bytes)
-        .unwrap_or_else(|| "unknown".into());
+        .map_or_else(|| "unknown".into(), human::bytes);
     report.log(
         LogKind::Info,
         format!("server: {} · {glibc} · {free} free", facts.arch),

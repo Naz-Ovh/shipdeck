@@ -17,6 +17,10 @@ pub struct BinaryInfo {
     pub size: u64,
 }
 
+/// Reads a built binary's architecture, glibc floor and size.
+///
+/// # Errors
+/// Returns an error when the file cannot be read or is not an object.
 pub fn inspect(path: &Path) -> Result<BinaryInfo> {
     let data = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     let file = object::File::parse(&*data).with_context(|| {
@@ -50,6 +54,7 @@ fn arch_name(arch: Architecture) -> &'static str {
 }
 
 /// Maps `uname -m` output onto the names `arch_name` uses.
+#[must_use]
 pub fn normalize_arch(uname: &str) -> String {
     match uname.trim() {
         "amd64" => "x86_64".into(),

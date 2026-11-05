@@ -60,6 +60,9 @@ pub struct FileText {
 impl Server {
     /// Every path of release `id` in `source`. A backup is listed by `tar`
     /// as it decompresses, and its `release.json` read the same way.
+    ///
+    /// # Errors
+    /// Returns an error when the release name is unsafe or the listing fails.
     pub async fn contents(&self, id: &str, source: Source) -> Result<ReleaseContents> {
         ensure_id(id)?;
         let script = match source {
@@ -99,6 +102,9 @@ tar -I zstd -tvf backups/{id}.tar.zst",
     }
 
     /// The first [`READ_CAP`] bytes of `path` in release `id`.
+    ///
+    /// # Errors
+    /// Returns an error when the release name or path is unsafe, or reading fails.
     pub async fn read(&self, id: &str, source: Source, path: &str) -> Result<FileText> {
         ensure_id(id)?;
         if path.is_empty()

@@ -18,6 +18,9 @@ pub struct Discovery {
 
 /// Every direct subfolder of `root` that holds a `deploy.yaml` (or
 /// `deploy.yml`), sorted by name.
+///
+/// # Errors
+/// Returns an error when `root` cannot be read.
 pub fn discover(root: &Path) -> Result<Discovery> {
     let entries = std::fs::read_dir(root).with_context(|| format!("reading {}", root.display()))?;
     let mut folders: Vec<_> = entries

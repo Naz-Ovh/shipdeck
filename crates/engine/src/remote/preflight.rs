@@ -1,5 +1,7 @@
 //! What the server looks like before anything is touched.
 
+use std::fmt::Write as _;
+
 use anyhow::Result;
 
 use super::{Server, pairs};
@@ -37,6 +39,7 @@ pub struct Facts {
 
 impl Facts {
     /// Where the server has `tool`, if it was asked for and found.
+    #[must_use]
     pub fn tool_path(&self, tool: &str) -> Option<&str> {
         self.tools
             .iter()
@@ -53,6 +56,9 @@ pub(super) fn content(json: &str) -> Option<String> {
 
 impl Server {
     /// Looks the server over, finding each of `tools` on its PATH.
+    ///
+    /// # Errors
+    /// Returns an error when the server cannot be inspected.
     pub async fn facts(&self, tools: &[String]) -> Result<Facts> {
         // Root runs them without sudo.
         let commands = if self.is_root() {
@@ -60,24 +66,22 @@ impl Server {
         } else {
             self.sudo_commands()
         };
-        let lookups: String = tools
-            .iter()
-            .map(|tool| {
-                format!(
-                    "printf 'tool=%s:%s\\n' {q} \"$(command -v {q} 2>/dev/null)\"\n",
-                    q = sh_quote(tool)
-                )
-            })
-            .collect();
-        let checks: String = commands
-            .iter()
-            .map(|c| {
-                format!(
-                    "if sudo -n -l {c} >/dev/null 2>&1; then echo sudo_ok={q}; else echo sudo_missing={q}; fi\n",
-                    q = sh_quote(c)
-                )
-            })
-            .collect();
+        let mut lookups = String::new();
+        for tool in tools {
+            let q = sh_quote(tool);
+            let _ = writeln!(
+                lookups,
+                "printf 'tool=%s:%s\\n' {q} \"$(command -v {q} 2>/dev/null)\""
+            );
+        }
+        let mut checks = String::new();
+        for c in &commands {
+            let q = sh_quote(c);
+            let _ = writeln!(
+                checks,
+                "if sudo -n -l {c} >/dev/null 2>&1; then echo sudo_ok={q}; else echo sudo_missing={q}; fi"
+            );
+        }
         let script = format!(
             "dir={dir}
 echo \"arch=$(uname -m)\"

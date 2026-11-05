@@ -34,6 +34,9 @@ pub struct Picked {
 /// files) always; `deployed` when `files.deployed` says so; whatever
 /// `files.include` names; minus `files.exclude`. `shared` folders are links
 /// to `shared/`, never part of a release.
+///
+/// # Errors
+/// Returns an error when a `pipeline.backup.files` pattern is invalid.
 pub fn pick(
     listing: &[ReleaseFile],
     deployed: &BTreeSet<String>,
@@ -102,6 +105,9 @@ pub(super) fn parse_files(text: &str) -> Vec<ReleaseFile> {
 
 impl Server {
     /// Every path in `releases/<id>/`, without following links.
+    ///
+    /// # Errors
+    /// Returns an error when the release name is unsafe or the listing fails.
     pub async fn release_files(&self, id: &str) -> Result<Vec<ReleaseFile>> {
         ensure_id(id)?;
         let script = format!(
@@ -122,6 +128,10 @@ find . ! -type d -exec printf 'f%s\\0' {{}} +",
     /// Packs `paths` of `releases/<id>/` into `backups/<id>.tar.zst`;
     /// returns its size in bytes. The list goes to tar as NUL-separated
     /// names, each with `./` so none reads as an option.
+    ///
+    /// # Errors
+    /// Returns an error when the release name is unsafe, a path is not UTF-8,
+    /// or sending the list or packing fails.
     pub async fn back_up(&self, id: &str, paths: &[String], report: &Reporter) -> Result<u64> {
         ensure_id(id)?;
         if let Some(bad) = paths
@@ -163,6 +173,9 @@ echo \"kb=$(du -k {done} | cut -f1)\"",
 
     /// `backups/<id>.tar.zst` → `releases/<id>/`, through a hidden folder so
     /// a half-unpacked release never looks complete. The backup stays.
+    ///
+    /// # Errors
+    /// Returns an error when the release name is unsafe or unpacking fails.
     pub async fn restore(&self, id: &str, report: &Reporter) -> Result<()> {
         ensure_id(id)?;
         let script = format!(

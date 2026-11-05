@@ -35,6 +35,11 @@ pub struct Inbox {
     pub fetched: UnboundedReceiver<Fetched>,
 }
 
+/// Runs the screens until the user quits, then closes the SSH pool.
+///
+/// # Errors
+/// Returns the terminal or event-stream error that ends the loop; the
+/// terminal is restored before it is returned.
 pub async fn run(mut app: App, mut inbox: Inbox) -> Result<()> {
     let mut terminal = ratatui::init();
     let result = event_loop(&mut terminal, &mut app, &mut inbox).await;
@@ -55,7 +60,7 @@ async fn event_loop(
         terminal.draw(|frame| draw(frame, app))?;
         tokio::select! {
             event = events.next() => match event {
-                Some(Ok(event)) => app.on_event(event),
+                Some(Ok(event)) => app.on_event(&event),
                 Some(Err(err)) => return Err(err.into()),
                 None => break,
             },

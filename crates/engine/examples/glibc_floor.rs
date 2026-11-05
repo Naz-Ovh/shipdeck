@@ -2,7 +2,7 @@
 //! the installers promise (`min-glibc-version` in `dist-workspace.toml`).
 //! `.github/workflows/glibc-floor.yml` runs it on every release.
 //!
-//! cargo run -p shipdeck-engine --example glibc_floor -- 2.28 path/to/shipdeck...
+//! cargo run -p shipdeck-engine --example `glibc_floor` -- 2.28 path/to/shipdeck...
 
 use std::path::Path;
 use std::process::ExitCode;

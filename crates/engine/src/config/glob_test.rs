@@ -105,7 +105,7 @@ fn ships(rules: &Rules, path: &str, is_dir: bool) -> bool {
 }
 
 fn rules(include: &[&str], exclude: &[&str]) -> Rules {
-    let own = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let own = |list: &[&str]| list.iter().map(ToString::to_string).collect::<Vec<_>>();
     Rules::parse(&own(include), &own(exclude)).unwrap()
 }
 

@@ -47,6 +47,7 @@ impl OnFailure {
 
 /// The exit code for each way an operation ends. 2 is left to the flag
 /// parser's usage errors. Scripts depend on these: add, never renumber.
+#[must_use]
 pub fn exit_code(outcome: &Outcome) -> u8 {
     match outcome {
         Outcome::Succeeded { .. } => 0,
@@ -59,6 +60,9 @@ pub fn exit_code(outcome: &Outcome) -> u8 {
 }
 
 /// The deployable called `name`: its folder name, else its `name` field.
+///
+/// # Errors
+/// Returns the list of names when none or more than one matches.
 pub fn find<'a>(deployables: &'a [Deployable], name: &str) -> Result<&'a Deployable, String> {
     if let Some(found) = deployables.iter().find(|d| d.slug == name) {
         return Ok(found);
@@ -345,6 +349,7 @@ fn answer(paint: Paint, trust_new_host: bool, question: Question) {
 
 /// The last line of an operation: what is live now. The error itself is
 /// already in the log right above it.
+#[must_use]
 pub fn summary(paint: Paint, name: &str, outcome: &Outcome, took: Duration) -> String {
     match outcome {
         Outcome::Succeeded { release } => paint.success(&format!(
@@ -383,6 +388,7 @@ pub struct Lines {
 }
 
 impl Lines {
+    #[must_use]
     pub fn new(steps: &[&'static str], paint: Paint, now: Instant) -> Self {
         Self {
             steps: steps.to_vec(),
@@ -495,13 +501,12 @@ pub fn table(listing: &Listing) -> String {
             version,
             commit,
             built,
-            entry.size_bytes.map(human::bytes).unwrap_or("-".into()),
+            entry.size_bytes.map_or("-".into(), human::bytes),
             state.into(),
             entry
                 .manifest
                 .as_ref()
-                .map(|m| m.deployed_by.clone())
-                .unwrap_or("-".into()),
+                .map_or("-".into(), |m| m.deployed_by.clone()),
         ]);
     }
     let widths: Vec<usize> = (0..rows[0].len())
@@ -525,7 +530,7 @@ pub fn table(listing: &Listing) -> String {
     out
 }
 
-/// ANSI colors on stderr, unless it is not a terminal or NO_COLOR is set.
+/// ANSI colors on stderr, unless it is not a terminal or `NO_COLOR` is set.
 #[derive(Debug, Clone, Copy)]
 pub struct Paint {
     on: bool,
@@ -539,6 +544,7 @@ impl Paint {
     }
 
     #[cfg(test)]
+    #[must_use]
     pub fn plain() -> Self {
         Self { on: false }
     }

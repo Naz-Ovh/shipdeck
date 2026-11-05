@@ -11,6 +11,9 @@ use crate::config::Deployable;
 use crate::release::ReleaseName;
 
 /// The release name, and where its version came from (for the log).
+///
+/// # Errors
+/// Returns an error when the version file cannot be read or parsed.
 pub async fn release_name(deployable: &Deployable) -> Result<(ReleaseName, String)> {
     let dir = deployable.project_dir();
     let (version, source) = match deployable.version_file() {
@@ -41,6 +44,9 @@ pub async fn release_name(deployable: &Deployable) -> Result<(ReleaseName, Strin
 
 /// The version a file names, by its kind: `Cargo.toml`, `package.json`,
 /// `pyproject.toml`, or any other file whose first line is the version.
+///
+/// # Errors
+/// Returns an error when the file cannot be read, parsed, or has no version.
 pub fn read_version(path: &Path) -> Result<String> {
     let name = path
         .file_name()

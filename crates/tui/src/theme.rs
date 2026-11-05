@@ -22,7 +22,7 @@ pub const INK: Color = Color::Rgb(15, 23, 42);
 pub const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 pub fn spinner(tick: u64) -> &'static str {
-    SPINNER[(tick as usize) % SPINNER.len()]
+    SPINNER[usize::try_from(tick).unwrap_or(usize::MAX) % SPINNER.len()]
 }
 
 pub fn text() -> Style {

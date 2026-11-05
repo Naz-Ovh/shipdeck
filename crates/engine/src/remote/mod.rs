@@ -23,6 +23,7 @@ pub use preflight::Facts;
 pub use releases::{Kind, Listing, ReleaseEntry, RotationPlan, Status, plan_rotation};
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use anyhow::{Result, bail};
@@ -61,10 +62,12 @@ impl Server {
         }
     }
 
+    #[must_use]
     pub fn session(&self) -> &Session {
         &self.session
     }
 
+    #[must_use]
     pub fn manager(&self) -> Manager {
         self.manager
     }
@@ -78,12 +81,14 @@ impl Server {
     }
 
     /// Where the bundle is uploaded before it is unpacked.
+    #[must_use]
     pub fn upload_path(&self, id: &str) -> String {
         format!("{}/releases/.{id}.tar.zst", self.dir)
     }
 
     /// The commands that need root here; see [`sudo_commands`]. PM2 needs
     /// none.
+    #[must_use]
     pub fn sudo_commands(&self) -> Vec<String> {
         match self.manager {
             Manager::Systemd => sudo_commands(&self.dir, &self.service),
@@ -92,6 +97,7 @@ impl Server {
     }
 
     /// Logged in as root, so nothing needs sudo.
+    #[must_use]
     pub fn is_root(&self) -> bool {
         self.session.user == "root"
     }
@@ -103,6 +109,9 @@ impl Server {
 
     /// Creates `service.dir` for an app's first deploy: as the user if it
     /// may, else with sudo (then handed to the user), else it says so.
+    ///
+    /// # Errors
+    /// Returns an error when the folder cannot be created.
     pub async fn create_app_dir(&self, report: &Reporter) -> Result<()> {
         let script = format!(
             "if mkdir -p {dir} 2>/dev/null; then exit 0; fi
@@ -142,6 +151,9 @@ exit 1",
     }
 
     /// Creates `releases/`, `backups/` and `shared/` if they are missing.
+    ///
+    /// # Errors
+    /// Returns an error when the folders cannot be created.
     pub async fn prepare(&self, report: &Reporter) -> Result<()> {
         let dir = self.q_dir();
         self.run(
@@ -155,6 +167,9 @@ exit 1",
 
     /// Removes every trace of a release that did not make it, its backup
     /// and the files sent to unpack it included.
+    ///
+    /// # Errors
+    /// Returns an error when the release name is unsafe or removal fails.
     pub async fn discard(&self, id: &str, report: &Reporter) -> Result<()> {
         ensure_id(id)?;
         let script = discard_script(&self.dir, id);
@@ -165,6 +180,9 @@ exit 1",
 
     /// Points `current` at `releases/<id>` in one rename, so it is never
     /// missing or half-written.
+    ///
+    /// # Errors
+    /// Returns an error when the release name is unsafe or the switch fails.
     pub async fn switch(&self, id: &str, report: &Reporter) -> Result<()> {
         ensure_id(id)?;
         let script = format!(
@@ -183,6 +201,9 @@ echo \"current -> $(readlink current)\"",
 
     /// Installs the unit `current` carries, reloads systemd and enables the
     /// service at boot. PM2 reads its file from `current` at restart.
+    ///
+    /// # Errors
+    /// Returns an error when the unit cannot be installed or enabled.
     pub async fn install_unit(&self, report: &Reporter) -> Result<()> {
         if self.manager == Manager::Pm2 {
             return Ok(());
@@ -205,6 +226,9 @@ echo \"current -> $(readlink current)\"",
     /// Restarts the service on the release `current` points to. PM2 starts
     /// or reloads the app from `current`'s file with the service's
     /// environment, then saves its list so the app comes back after a reboot.
+    ///
+    /// # Errors
+    /// Returns an error when the service cannot be restarted.
     pub async fn restart(&self, report: &Reporter) -> Result<()> {
         if self.manager == Manager::Pm2 {
             let script = self.pm2_script("startOrReload");
@@ -225,7 +249,8 @@ echo \"current -> $(readlink current)\"",
         let current = format!("{}/current", self.dir);
         let file = sh_quote(&format!("{current}/{}", self.pm2_file));
         let mut script = env_prelude(&current, &self.env, self.env.env_file.clone());
-        script.push_str(&format!(
+        let _ = write!(
+            script,
             "[ -f {file} ] || {{ echo {missing} >&2; exit 1; }}
 pm2 {verb} {file} --only {app} --update-env
 pm2 save
@@ -235,12 +260,15 @@ pm2 save
                 self.pm2_file
             )),
             app = sh_quote(&self.pm2_app),
-        ));
+        );
         script
     }
 
     /// Links each `service.shared` folder into `releases/<id>`, creating it
     /// in `shared/` the first time.
+    ///
+    /// # Errors
+    /// Returns an error when the release name is unsafe or linking fails.
     pub async fn link_shared(&self, id: &str, shared: &[String], report: &Reporter) -> Result<()> {
         ensure_id(id)?;
         if shared.is_empty() {
@@ -250,7 +278,8 @@ pm2 save
         for entry in shared {
             let entry = release_path(entry);
             let link = sh_quote(&format!("releases/{id}/{entry}"));
-            script.push_str(&format!(
+            let _ = write!(
+                script,
                 "mkdir -p {shared}
 if [ -e {link} ] || [ -L {link} ]; then echo {exists} >&2; exit 1; fi
 mkdir -p \"$(dirname {link})\"
@@ -263,7 +292,7 @@ echo {done}
                     "releases/{id}/{entry} came in the release, but it is shared"
                 )),
                 done = sh_quote(&format!("{entry} -> shared/{entry}")),
-            ));
+            );
         }
         self.run("link service.shared into the release", &script, report)
             .await?;
@@ -273,6 +302,9 @@ echo {done}
     /// Runs one command from deploy.yaml at `place`, streaming its output.
     /// It sees `service.env`, then `service.env_file` (as systemd reads it:
     /// no shell expansion), then `vars`.
+    ///
+    /// # Errors
+    /// Returns an error when the release name is unsafe or the command fails.
     pub async fn command(
         &self,
         place: &Place,
@@ -330,6 +362,9 @@ echo {done}
     }
 
     /// The service's last 30 log lines: its journal, or PM2's logs.
+    ///
+    /// # Errors
+    /// Returns an error when the log command cannot run.
     pub async fn journal(&self) -> Result<Vec<String>> {
         let script = match self.manager {
             Manager::Systemd => format!(
@@ -352,14 +387,14 @@ echo {done}
 fn env_prelude(dir: &str, env: &CommandEnv, env_file: Option<String>) -> String {
     let mut script = format!("set -e\ncd {}\n", sh_quote(dir));
     for (key, value) in &env.service {
-        script.push_str(&format!("export {key}={}\n", sh_quote(value)));
+        let _ = writeln!(script, "export {key}={}", sh_quote(value));
     }
     if let Some(file) = env_file {
         script.push_str(ENV_FILE_READER);
-        script.push_str(&format!("shipdeck_env {}\n", sh_quote(&file)));
+        let _ = writeln!(script, "shipdeck_env {}", sh_quote(&file));
     }
     for (key, value) in &env.vars {
-        script.push_str(&format!("export {key}={}\n", sh_quote(value)));
+        let _ = writeln!(script, "export {key}={}", sh_quote(value));
     }
     script
 }
@@ -414,6 +449,7 @@ const ENV_FILE_READER: &str = r#"shipdeck_env() {
 /// The commands that need root, without `sudo`, for an app in `dir` run as
 /// `service`. The sudoers rule must allow exactly these; changing one breaks
 /// every server set up before.
+#[must_use]
 pub fn sudo_commands(dir: &str, service: &str) -> Vec<String> {
     let svc = service;
     vec![

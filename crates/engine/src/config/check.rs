@@ -119,67 +119,13 @@ impl<'s> Walk<'s> {
             .or_else(|| schema.get("oneOf"))
             .and_then(Json::as_array)
         {
-            if let Some(fit) = choices.iter().find(|choice| self.fits(node, choice)) {
-                return self.node(node, fit, path, key);
-            }
-            // Report against the alternative of the node's own kind, which
-            // says more than "matches none".
-            let kind = kind_of(node);
-            if let Some(same) = choices.iter().find(|choice| {
-                let choice = self.resolve(choice);
-                Self::types(choice).contains(&kind) && choice.get("const").is_none()
-            }) {
-                return self.node(node, same, path, key);
-            }
-            let consts: Vec<&str> = choices
-                .iter()
-                .filter_map(|c| self.resolve(c).get("const").and_then(Json::as_str))
-                .collect();
-            if !consts.is_empty() {
-                self.problems.push(
-                    Problem::new(format!("`{}` must be {}", dotted(path), or_list(&consts)))
-                        .at(at)
-                        .label(format!("found {}", node.kind()))
-                        .help(choice_help(self, choices)),
-                );
-            } else {
-                let kinds: Vec<&str> = choices
-                    .iter()
-                    .flat_map(|c| Self::types(self.resolve(c)))
-                    .collect();
-                self.problems.push(
-                    Problem::new(format!("`{}` must be {}", dotted(path), wanted(&kinds)))
-                        .at(at)
-                        .label(format!("found {}", node.kind())),
-                );
-            }
-            return None;
+            return self.union(node, choices, path, key, at);
         }
-
         if let Some(values) = schema.get("enum").and_then(Json::as_array) {
-            let allowed: Vec<&str> = values.iter().filter_map(Json::as_str).collect();
-            if let Value::Scalar { text, .. } = &node.value
-                && allowed.contains(&text.as_str())
-            {
-                return Some(Json::String(text.clone()));
-            }
-            self.problems.push(
-                Problem::new(format!("`{}` must be {}", dotted(path), or_list(&allowed)))
-                    .at(at)
-                    .label(format!("found {}", node.kind())),
-            );
-            return None;
+            return self.enum_value(node, values, path, at);
         }
         if let Some(constant) = schema.get("const").and_then(Json::as_str) {
-            if matches!(&node.value, Value::Scalar { text, .. } if text == constant) {
-                return Some(Json::String(constant.to_string()));
-            }
-            self.problems.push(
-                Problem::new(format!("`{}` must be {constant}", dotted(path)))
-                    .at(at)
-                    .label(format!("found {}", node.kind())),
-            );
-            return None;
+            return self.constant(node, constant, path, at);
         }
 
         let types = Self::types(schema);
@@ -193,55 +139,8 @@ impl<'s> Walk<'s> {
             Value::Map(_) if types.contains(&"object") => {
                 Some(self.object(node, schema, path, key))
             }
-            Value::Seq(items) if types.contains(&"array") => {
-                let items_schema = schema.get("items").unwrap_or(&Json::Bool(true));
-                let mut out = Vec::new();
-                for (index, item) in items.iter().enumerate() {
-                    path.push(format!("[{index}]"));
-                    if let Some(value) = self.node(item, items_schema, path, Some(item.span)) {
-                        out.push(value);
-                    }
-                    path.pop();
-                }
-                Some(Json::Array(out))
-            }
-            Value::Scalar { text, plain, tag } if !node.is_null() => {
-                if let Some(tag) = tag {
-                    let written = format!("{tag} {text}").trim().to_string();
-                    self.problems.push(
-                        Problem::new(format!("`{}` reads as a YAML tag", dotted(path)))
-                            .at(at)
-                            .label("YAML treats a leading ! as a tag")
-                            .help(format!("put it in quotes: \"{written}\"")),
-                    );
-                    return None;
-                }
-                if types.contains(&"string") {
-                    return Some(Json::String(text.clone()));
-                }
-                if types.contains(&"integer")
-                    && *plain
-                    && let Ok(number) = text.parse::<u64>()
-                {
-                    if let Some(max) = schema.get("maximum").and_then(Json::as_u64)
-                        && number > max
-                    {
-                        self.problems.push(
-                            Problem::new(format!("`{}` must be at most {max}", dotted(path)))
-                                .at(at)
-                                .label("too large"),
-                        );
-                        return None;
-                    }
-                    return Some(Json::from(number));
-                }
-                if types.contains(&"boolean") && *plain && matches!(text.as_str(), "true" | "false")
-                {
-                    return Some(Json::Bool(text == "true"));
-                }
-                self.mismatch(node, schema, &types, path, at);
-                None
-            }
+            Value::Seq(items) if types.contains(&"array") => Some(self.array(items, schema, path)),
+            Value::Scalar { .. } if !node.is_null() => self.scalar(node, schema, &types, path, at),
             _ => {
                 if node.is_null() {
                     self.problems.push(
@@ -256,6 +155,155 @@ impl<'s> Walk<'s> {
                 None
             }
         }
+    }
+
+    /// A node where `anyOf` or `oneOf` gives the shapes it may take.
+    fn union(
+        &mut self,
+        node: &Node,
+        choices: &'s [Json],
+        path: &mut Vec<String>,
+        key: Option<Span>,
+        at: Option<Span>,
+    ) -> Option<Json> {
+        if let Some(fit) = choices.iter().find(|choice| self.fits(node, choice)) {
+            return self.node(node, fit, path, key);
+        }
+        // Report against the alternative of the node's own kind, which says
+        // more than "matches none".
+        let kind = kind_of(node);
+        if let Some(same) = choices.iter().find(|choice| {
+            let choice = self.resolve(choice);
+            Self::types(choice).contains(&kind) && choice.get("const").is_none()
+        }) {
+            return self.node(node, same, path, key);
+        }
+        let consts: Vec<&str> = choices
+            .iter()
+            .filter_map(|c| self.resolve(c).get("const").and_then(Json::as_str))
+            .collect();
+        if consts.is_empty() {
+            let kinds: Vec<&str> = choices
+                .iter()
+                .flat_map(|c| Self::types(self.resolve(c)))
+                .collect();
+            self.problems.push(
+                Problem::new(format!("`{}` must be {}", dotted(path), wanted(&kinds)))
+                    .at(at)
+                    .label(format!("found {}", node.kind())),
+            );
+        } else {
+            self.problems.push(
+                Problem::new(format!("`{}` must be {}", dotted(path), or_list(&consts)))
+                    .at(at)
+                    .label(format!("found {}", node.kind()))
+                    .help(choice_help(self, choices)),
+            );
+        }
+        None
+    }
+
+    /// A node where `enum` gives the values it may take.
+    fn enum_value(
+        &mut self,
+        node: &Node,
+        values: &'s [Json],
+        path: &[String],
+        at: Option<Span>,
+    ) -> Option<Json> {
+        let allowed: Vec<&str> = values.iter().filter_map(Json::as_str).collect();
+        if let Value::Scalar { text, .. } = &node.value
+            && allowed.contains(&text.as_str())
+        {
+            return Some(Json::String(text.clone()));
+        }
+        self.problems.push(
+            Problem::new(format!("`{}` must be {}", dotted(path), or_list(&allowed)))
+                .at(at)
+                .label(format!("found {}", node.kind())),
+        );
+        None
+    }
+
+    /// A node where `const` fixes the value.
+    fn constant(
+        &mut self,
+        node: &Node,
+        constant: &str,
+        path: &[String],
+        at: Option<Span>,
+    ) -> Option<Json> {
+        if matches!(&node.value, Value::Scalar { text, .. } if text == constant) {
+            return Some(Json::String(constant.to_string()));
+        }
+        self.problems.push(
+            Problem::new(format!("`{}` must be {constant}", dotted(path)))
+                .at(at)
+                .label(format!("found {}", node.kind())),
+        );
+        None
+    }
+
+    /// Each item of an array, checked against `items`.
+    fn array(&mut self, items: &[Node], schema: &'s Json, path: &mut Vec<String>) -> Json {
+        let items_schema = schema.get("items").unwrap_or(&Json::Bool(true));
+        let mut out = Vec::new();
+        for (index, item) in items.iter().enumerate() {
+            path.push(format!("[{index}]"));
+            if let Some(value) = self.node(item, items_schema, path, Some(item.span)) {
+                out.push(value);
+            }
+            path.pop();
+        }
+        Json::Array(out)
+    }
+
+    /// A scalar checked against `types`.
+    fn scalar(
+        &mut self,
+        node: &Node,
+        schema: &'s Json,
+        types: &[&str],
+        path: &[String],
+        at: Option<Span>,
+    ) -> Option<Json> {
+        let Value::Scalar { text, plain, tag } = &node.value else {
+            return None;
+        };
+        if let Some(tag) = tag {
+            let written = format!("{tag} {text}").trim().to_string();
+            self.problems.push(
+                Problem::new(format!("`{}` reads as a YAML tag", dotted(path)))
+                    .at(at)
+                    .label("YAML treats a leading ! as a tag")
+                    .help(format!("put it in quotes: \"{written}\"")),
+            );
+            return None;
+        }
+        if types.contains(&"string") {
+            return Some(Json::String(text.clone()));
+        }
+        if types.contains(&"integer")
+            && *plain
+            && let Ok(number) = text.parse::<u64>()
+        {
+            if let Some(max) = schema.get("maximum").and_then(Json::as_u64)
+                && number > max
+            {
+                self.problems.push(
+                    Problem::new(format!("`{}` must be at most {max}", dotted(path)))
+                        .at(at)
+                        .label("too large"),
+                );
+                return None;
+            }
+            return Some(Json::from(number));
+        }
+        if types.contains(&"boolean") && *plain && matches!(text.as_str(), "true" | "false") {
+            return Some(Json::Bool(text == "true"));
+        }
+        self.mismatch(node, schema, types, path, at);
+        None
     }
 
     fn mismatch(
@@ -280,7 +328,7 @@ impl<'s> Walk<'s> {
                     Value::Scalar { text, .. } => text.clone(),
                     _ => "…".into(),
                 };
-                let last = path.last().map(String::as_str).unwrap_or("run");
+                let last = path.last().map_or("run", String::as_str);
                 problem = problem
                     .label("say where it runs")
                     .help(format!("`{last}: {{ {}: {example} }}`", sides[0]));
@@ -308,23 +356,20 @@ impl<'s> Walk<'s> {
                 (None, Some(other)) => Some(other),
                 (None, None) => Some(&Json::Bool(true)),
             };
-            match schema_for {
-                Some(child) => {
-                    // A key with nothing after it means "the default".
-                    if value.is_null() && property.is_some() && !required(schema, &key.text) {
-                        path.pop();
-                        continue;
-                    }
-                    if let Some(json) = self.node(value, child, path, Some(key.span)) {
-                        out.insert(key.text.clone(), json);
-                    }
+            if let Some(child) = schema_for {
+                // A key with nothing after it means "the default".
+                if value.is_null() && property.is_some() && !required(schema, &key.text) {
+                    path.pop();
+                    continue;
                 }
-                None => {
-                    let known: Vec<&str> = properties
-                        .map(|p| p.keys().map(String::as_str).collect())
-                        .unwrap_or_default();
-                    self.problems.push(unknown_key(path, &known, key.span));
+                if let Some(json) = self.node(value, child, path, Some(key.span)) {
+                    out.insert(key.text.clone(), json);
                 }
+            } else {
+                let known: Vec<&str> = properties
+                    .map(|p| p.keys().map(String::as_str).collect())
+                    .unwrap_or_default();
+                self.problems.push(unknown_key(path, &known, key.span));
             }
             path.pop();
         }

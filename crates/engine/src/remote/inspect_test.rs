@@ -54,6 +54,9 @@ lrwxrwxrwx root/root         0 2026-10-17 18:37 ./latest -> dist/my-api
 
 #[test]
 fn skips_lines_that_are_not_entries() {
-    assert!(parse_tar_listing("tar: something went wrong\n\n").is_empty());
-    assert!(parse_find("").is_empty());
+    assert_eq!(
+        parse_tar_listing("tar: something went wrong\n\n"),
+        Vec::<FileInfo>::new()
+    );
+    assert_eq!(parse_find(""), Vec::<FileInfo>::new());
 }

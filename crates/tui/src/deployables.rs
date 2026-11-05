@@ -8,7 +8,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{HighlightSpacing, List, ListItem, Paragraph, Wrap};
 
 use shipdeck_engine::bundle;
-use shipdeck_engine::config::{Commands, Deployable, ROLLBACK_ANSWER_SECS, Rollback};
+use shipdeck_engine::config::{Commands, DeployConfig, Deployable, ROLLBACK_ANSWER_SECS, Rollback};
 use shipdeck_engine::release::ReleaseName;
 use shipdeck_engine::ssh::Login;
 
@@ -96,9 +96,7 @@ fn live_summary(live: &Live, tick: u64) -> Vec<Span<'static>> {
         Live::Ready(status) => match &status.current {
             None => vec![Span::styled("nothing deployed yet", theme::muted())],
             Some(id) => {
-                let label = ReleaseName::parse(id)
-                    .map(|n| n.tag())
-                    .unwrap_or_else(|| id.clone());
+                let label = ReleaseName::parse(id).map_or_else(|| id.clone(), |n| n.tag());
                 let state = if status.active.is_empty() {
                     "unknown"
                 } else {
@@ -197,9 +195,22 @@ fn details(
     );
     field(&mut lines, "live", live_summary(live, tick));
 
-    section(&mut lines, "Pipeline");
+    pipeline_section(&mut lines, config);
+    policy_section(&mut lines, config, deployable);
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .block(theme::panel(deployable.slug.clone(), false)),
+        area,
+    );
+}
+
+/// Pipeline rows: each step, where it runs and what it does.
+fn pipeline_section(lines: &mut Vec<Line<'static>>, config: &DeployConfig) {
+    section(lines, "Pipeline");
     let pipeline = &config.pipeline;
-    let mut step = Step::new(&mut lines);
+    let mut step = Step::new(lines);
     step.commands("preflight", "server", &pipeline.preflight.run.server);
     step.commands("preflight", "local", &pipeline.preflight.run.local);
     if !pipeline.preflight.requires.is_empty() {
@@ -270,29 +281,31 @@ fn details(
     };
     step.text("failed", "policy", rollback);
     step.commands("failed", "local", &pipeline.failed.run.local);
+}
 
-    section(&mut lines, "Policy");
+/// Policy rows: what is kept, linked and used to start the service.
+fn policy_section(lines: &mut Vec<Line<'static>>, config: &DeployConfig, deployable: &Deployable) {
+    let service = &config.service;
+    let keep = &config.pipeline.backup.keep;
+    section(lines, "Policy");
     field(
-        &mut lines,
+        lines,
         "keeps",
         vec![Span::styled(
-            format!(
-                "{} unpacked + {} compressed",
-                pipeline.backup.keep.open, pipeline.backup.keep.compressed
-            ),
+            format!("{} unpacked + {} compressed", keep.open, keep.compressed),
             theme::text(),
         )],
     );
     if !service.shared.is_empty() {
         field(
-            &mut lines,
+            lines,
             "shared",
             vec![Span::styled(service.shared.join(", "), theme::text())],
         );
     }
     if let Some(file) = &service.env_file {
         field(
-            &mut lines,
+            lines,
             "env file",
             vec![Span::styled(file.clone(), theme::text())],
         );
@@ -302,14 +315,7 @@ fn details(
     } else {
         "built-in template"
     };
-    field(&mut lines, "unit", vec![Span::styled(unit, theme::text())]);
-
-    frame.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .block(theme::panel(deployable.slug.clone(), false)),
-        area,
-    );
+    field(lines, "unit", vec![Span::styled(unit, theme::text())]);
 }
 
 /// Pipeline rows: the step's name once, then where each line runs.
@@ -396,7 +402,10 @@ fn empty(frame: &mut Frame, area: Rect, app: &App) {
             theme::muted(),
         )),
     ];
-    let height = (lines.len() as u16 + 4).min(area.height);
+    // A longer hint than the screen saturates instead of wrapping.
+    let height = u16::try_from(lines.len() + 4)
+        .unwrap_or(u16::MAX)
+        .min(area.height);
     let box_area = area.centered(Constraint::Percentage(70), Constraint::Length(height));
     frame.render_widget(
         Paragraph::new(lines)

@@ -38,6 +38,7 @@ impl Preset {
     ];
 
     /// As `--preset` takes it.
+    #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             Preset::Node => "nodejs",
@@ -51,20 +52,23 @@ impl Preset {
         }
     }
 
+    #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|preset| preset.name() == name)
     }
 
     /// How the app is built and what reaches the server, in a few words.
+    #[must_use]
     pub fn summary(self) -> &'static str {
         match self {
             Preset::Node => "built here; the server installs production dependencies",
             Preset::Go => "one static binary, nothing to install on the server",
             Preset::Java | Preset::Kotlin => "built with Gradle; the server needs Java",
             Preset::Rust => "one binary, nothing to install on the server",
-            Preset::Dart => "compiled to one executable, nothing to install on the server",
+            Preset::Dart | Preset::Bun => {
+                "compiled to one executable, nothing to install on the server"
+            }
             Preset::Python => "the source ships; the server builds its virtualenv",
-            Preset::Bun => "compiled to one executable, nothing to install on the server",
         }
     }
 }
@@ -92,9 +96,8 @@ pub struct NewDeployable {
 
 impl NewDeployable {
     /// The `deploy.yaml` text, with a short comment on each field.
+    #[must_use]
     pub fn yaml(&self) -> String {
-        let name = &self.name;
-        let pm2 = self.manager == Manager::Pm2;
         let mut y = Yaml::default();
         y.raw(&schema::modeline());
         y.raw(&format!("# {}", self.comment()));
@@ -102,7 +105,7 @@ impl NewDeployable {
         y.raw("");
         y.line(
             0,
-            &format!("name: {}", quote(name)),
+            &format!("name: {}", quote(&self.name)),
             "shown in shipdeck and as the service's description",
         );
         y.line(
@@ -111,6 +114,17 @@ impl NewDeployable {
             "your source, relative to this file; local commands run there",
         );
         y.raw("");
+        self.ssh(&mut y);
+        self.service(&mut y);
+        y.raw("");
+        y.raw("pipeline:");
+        self.pipeline(&mut y);
+        self.pipeline_notes(&mut y);
+        y.0
+    }
+
+    /// The `ssh:` block: where to connect and as whom.
+    fn ssh(&self, y: &mut Yaml) {
         y.raw("ssh:");
         y.line(
             2,
@@ -126,7 +140,12 @@ impl NewDeployable {
             None => y.line(2, "# user: deploy", "default: the alias's User"),
         }
         y.line(2, "# port: 22", "default: the alias's Port, else 22");
-        y.raw("");
+    }
+
+    /// The `service:` block: what runs, where, and its environment.
+    fn service(&self, y: &mut Yaml) {
+        let name = &self.name;
+        let pm2 = self.manager == Manager::Pm2;
         y.raw("service:");
         let unit = if pm2 {
             "the PM2 app's name".to_string()
@@ -152,7 +171,7 @@ impl NewDeployable {
                 "or pm2: runs as the SSH user, no sudo",
             );
         }
-        self.start(&mut y);
+        self.start(y);
         y.line(
             2,
             &format!("env_file: {ENV_FILE}"),
@@ -172,9 +191,10 @@ impl NewDeployable {
                 "https://pm2.keymetrics.io/docs/usage/application-declaration/",
             );
         }
-        y.raw("");
-        y.raw("pipeline:");
-        self.pipeline(&mut y);
+    }
+
+    /// The commented pipeline fields that are left off by default.
+    fn pipeline_notes(&self, y: &mut Yaml) {
         y.raw("  # What of each release stays for rollback once its folder goes.");
         y.raw("  # backup:");
         y.raw("  #   files:");
@@ -200,7 +220,6 @@ impl NewDeployable {
             "#   rollback: ask",
             "or auto: roll back at once when it fails",
         );
-        y.0
     }
 
     fn comment(&self) -> String {
@@ -395,6 +414,7 @@ fn quote(text: &str) -> String {
 }
 
 /// Why `name` cannot be a new deployable's folder, if it cannot.
+#[must_use]
 pub fn name_problem(root: &Path, name: &str) -> Option<String> {
     // It names the unit and `/opt/<name>`, so it must suit both.
     if !crate::config::is_plain_name(name) || name.starts_with('.') {
@@ -406,6 +426,9 @@ pub fn name_problem(root: &Path, name: &str) -> Option<String> {
 
 /// `project` as the new folder `root/name` sees it. Both paths must exist
 /// except the new folder itself.
+///
+/// # Errors
+/// Returns an error when either path is missing, not a folder, or on another drive.
 pub fn project_from(root: &Path, name: &str, project: &Path) -> Result<String> {
     let root = root
         .canonicalize()
@@ -432,6 +455,7 @@ pub fn project_from(root: &Path, name: &str, project: &Path) -> Result<String> {
 }
 
 /// The path from the folder `from` to `to`; both absolute and without `..`.
+#[must_use]
 pub fn relative(from: &Path, to: &Path) -> PathBuf {
     let from: Vec<Component> = from.components().collect();
     let to: Vec<Component> = to.components().collect();
@@ -450,16 +474,22 @@ pub fn relative(from: &Path, to: &Path) -> PathBuf {
 }
 
 /// The new deployable's `deploy.yaml`, checked as a launch would check it.
+///
+/// # Errors
+/// Returns every problem the generated config has.
 pub fn check(root: &Path, new: &NewDeployable) -> Result<String, FileProblems> {
     let folder = root.join(&new.name);
     let yaml = new.yaml();
-    Deployable::from_text(&folder, folder.join(FILE_NAMES[0]), yaml.clone())?;
+    Deployable::from_text(&folder, &folder.join(FILE_NAMES[0]), yaml.clone())?;
     Ok(yaml)
 }
 
 /// Writes the folder: `deploy.yaml`, an empty `.env` and a `.gitignore`
 /// that keeps it out of git. Files already there are left alone, and an
 /// existing `deploy.yaml` is never replaced. Returns the files it wrote.
+///
+/// # Errors
+/// Returns an error when a config file is already there, or the folder or a file cannot be written.
 pub fn write(root: &Path, name: &str, yaml: &str) -> Result<Vec<PathBuf>> {
     let folder = root.join(name);
     if let Some(file) = config_file(&folder) {

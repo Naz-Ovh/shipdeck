@@ -48,12 +48,14 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
         LogsState::Ended(why) => Some(why.as_str()),
         _ => None,
     };
-    let width = inner.width.max(1) as usize;
+    let width = usize::from(inner.width.max(1));
     let note_height = ended.map_or(0, |why| {
-        why.lines()
+        let rows: usize = why
+            .lines()
             .map(|line| line.chars().count().max(1).div_ceil(width))
-            .sum::<usize>() as u16
-            + 1
+            .sum();
+        // A note taller than the screen saturates instead of wrapping.
+        u16::try_from(rows).unwrap_or(u16::MAX).saturating_add(1)
     });
     let [lines_area, note_area] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(note_height)]).areas(inner);

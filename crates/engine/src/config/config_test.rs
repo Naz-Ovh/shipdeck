@@ -15,7 +15,7 @@ fn fills_in_defaults() {
         }
     );
     assert!(pipeline.backup.files.deployed);
-    assert!(pipeline.backup.files.include.is_empty());
+    assert_eq!(pipeline.backup.files.include, Vec::<String>::new());
     assert_eq!(pipeline.health.timeout_secs, 20);
     assert_eq!(pipeline.failed.rollback, Rollback::Ask);
     assert!(pipeline.preflight.run.local.is_empty() && pipeline.done.run.server.is_empty());
@@ -172,7 +172,7 @@ fn the_binary_is_the_default_start() {
         demo.start(),
         (Program::InRelease("demo".into()), String::new())
     );
-    assert!(demo.required_tools().is_empty());
+    assert_eq!(demo.required_tools(), Vec::<String>::new());
 
     let web = deployable(Path::new("/tmp/deploy/web"), parse(NODE).unwrap());
     assert_eq!(

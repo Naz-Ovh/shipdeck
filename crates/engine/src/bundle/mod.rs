@@ -11,6 +11,7 @@ pub mod unit;
 pub use content::{Contents, listable};
 
 use std::collections::{BTreeMap, HashMap};
+use std::hash::BuildHasher;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -53,6 +54,7 @@ pub struct Bundle {
 
 impl Bundle {
     /// Files in the archive itself.
+    #[must_use]
     pub fn sent(&self) -> usize {
         self.files - self.reused
     }
@@ -87,6 +89,10 @@ pub struct ServiceFile {
 
 /// Renders the release's service file; `None` when `pm2.ecosystem` names
 /// the user's own. `start_path` is where preflight found the start program.
+///
+/// # Errors
+///
+/// Fails when the unit or PM2 app file cannot be rendered.
 pub fn service_file(
     deployable: &Deployable,
     release: &ReleaseName,
@@ -104,6 +110,7 @@ pub fn service_file(
 }
 
 /// What the service runs, in one line for the screen and the log.
+#[must_use]
 pub fn start_line(deployable: &Deployable, start_path: Option<&str>) -> String {
     let service = &deployable.config.service;
     match (service.manager, &service.pm2.ecosystem) {
@@ -119,6 +126,11 @@ pub fn start_line(deployable: &Deployable, start_path: Option<&str>) -> String {
 
 /// Picks what goes into the release and hashes every file in it.
 /// `progress(done, total)` follows the bytes read.
+///
+/// # Errors
+///
+/// Fails when the file selection is invalid, or a file cannot be read or
+/// changes while it is hashed.
 pub fn gather(
     deployable: &Deployable,
     own: Option<&ServiceFile>,
@@ -151,10 +163,15 @@ pub fn gather(
 /// SHA-256 `on_server` has under its path stays out of the archive, to be
 /// copied from the live release. `progress(done, total)` is called as
 /// input bytes are compressed.
-pub fn pack(
+///
+/// # Errors
+///
+/// Fails when the manifest cannot be serialized, a file changes while it
+/// is packed, or the archive cannot be written.
+pub fn pack<S: BuildHasher>(
     contents: &Contents,
     manifest: &Manifest,
-    on_server: &HashMap<String, String>,
+    on_server: &HashMap<String, String, S>,
     mut progress: impl FnMut(u64, u64),
 ) -> Result<Bundle> {
     let json = serde_json::to_vec_pretty(manifest)?;
@@ -179,23 +196,51 @@ pub fn pack(
         .filter(|e| !matches!(e.source, Source::Dir | Source::Link(_)))
         .count();
     let input_bytes: u64 = entries.iter().map(|e| e.size).sum();
+    let (reuse, reused, reused_bytes) = reuse_lists(&entries, &is_reused);
+    let receipt = content::receipt(entries.iter().copied());
+    let total = input_bytes - reused_bytes;
+    let mtime = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let data = archive(&entries, &is_reused, mtime, total, &mut progress)?;
+    Ok(Bundle {
+        data,
+        files,
+        paths,
+        input_bytes,
+        reused,
+        reused_bytes,
+        receipt,
+        reuse,
+    })
+}
+
+/// What the live release already holds, per mode, as the archive wants it.
+fn reuse_lists(
+    entries: &[&Entry],
+    is_reused: &impl Fn(&Entry) -> bool,
+) -> (BTreeMap<u32, Vec<u8>>, usize, u64) {
     let mut reuse: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
-    let (mut reused, mut reused_bytes) = (0, 0);
+    let (mut count, mut bytes) = (0, 0);
     for entry in entries.iter().filter(|e| is_reused(e)) {
         let list = reuse.entry(entry.mode).or_default();
         list.extend_from_slice(b"./");
         list.extend_from_slice(entry.path.as_bytes());
         list.push(0);
-        reused += 1;
-        reused_bytes += entry.size;
+        count += 1;
+        bytes += entry.size;
     }
-    let receipt = content::receipt(entries.iter().copied());
-    let total = input_bytes - reused_bytes;
+    (reuse, count, bytes)
+}
 
-    let mtime = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+/// Writes the tar and compresses it, calling `progress` as bytes go in.
+fn archive(
+    entries: &[&Entry],
+    is_reused: &impl Fn(&Entry) -> bool,
+    mtime: u64,
+    total: u64,
+    progress: &mut impl FnMut(u64, u64),
+) -> Result<Vec<u8>> {
     let mut tar = tar::Builder::new(encoder()?);
     let mut done = 0u64;
     progress(0, total);
@@ -250,20 +295,7 @@ pub fn pack(
         }
     }
 
-    let data = tar
-        .into_inner()?
-        .finish()
-        .context("finishing the archive")?;
-    Ok(Bundle {
-        data,
-        files,
-        paths,
-        input_bytes,
-        reused,
-        reused_bytes,
-        receipt,
-        reuse,
-    })
+    tar.into_inner()?.finish().context("finishing the archive")
 }
 
 /// A zstd stream on every core, with a checksum so `zstd -d` on the server
@@ -271,7 +303,7 @@ pub fn pack(
 fn encoder() -> Result<Encoder<'static, Vec<u8>>> {
     let mut encoder = Encoder::new(Vec::new(), LEVEL)?;
     encoder.include_checksum(true)?;
-    let workers = thread::available_parallelism().map_or(1, |n| n.get());
+    let workers = thread::available_parallelism().map_or(1, std::num::NonZero::get);
     encoder.multithread(u32::try_from(workers).unwrap_or(1))?;
     Ok(encoder)
 }

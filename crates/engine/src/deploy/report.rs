@@ -136,6 +136,7 @@ pub struct Reporter {
 }
 
 impl Reporter {
+    #[must_use]
     pub fn new(op: OpId, tx: UnboundedSender<OpUpdate>) -> Self {
         Self { op, tx }
     }
@@ -209,6 +210,7 @@ impl Reporter {
     }
 
     /// Asks whether to roll back; the answer arrives on the receiver.
+    #[must_use]
     pub fn ask_rollback(
         &self,
         release: &str,
@@ -231,6 +233,7 @@ impl Reporter {
 
     /// Asks whether to deploy a release the live one already holds; the
     /// answer arrives on the receiver.
+    #[must_use]
     pub fn ask_unchanged(&self, release: &str, live: &str) -> oneshot::Receiver<bool> {
         let (reply, answer) = oneshot::channel();
         self.send(OpEvent::AskUnchanged(UnchangedQuestion {

@@ -13,7 +13,7 @@ use crate::human;
 use crate::release::Manifest;
 use crate::remote::{Server, Unpacked};
 
-impl<'a> Run<'a> {
+impl Run<'_> {
     /// What `current` already has of `contents`, hashed by the server just
     /// now. Nothing, with a note why, when nothing is live or the server
     /// cannot say: then every file is sent.
@@ -76,13 +76,19 @@ impl<'a> Run<'a> {
             .session()
             .upload(&bundle.data, &target, |sent, total| {
                 if throttle.ready(sent, total) {
-                    let speed = sent as f64 / started.elapsed().as_secs_f64().max(0.001);
+                    // Bytes per second in whole numbers: an f64 cannot hold
+                    // every u64 byte count exactly. A millisecond floor keeps
+                    // the old float floor; only an upload over 18 PB could
+                    // pass u64, where this saturates.
+                    let elapsed = started.elapsed().as_nanos().max(1_000_000);
+                    let speed = u64::try_from(u128::from(sent) * 1_000_000_000 / elapsed)
+                        .unwrap_or(u64::MAX);
                     report.progress(
                         index,
                         sent,
                         total,
                         Unit::Bytes,
-                        format!("{}/s", human::bytes(speed as u64)),
+                        format!("{}/s", human::bytes(speed)),
                     );
                 }
             })

@@ -1,5 +1,5 @@
 //! Logging in with a key file, a key's text (a CI secret), a password from
-//! the command line or SHIPDECK_PASSWORD, or a password asked for in the TUI.
+//! the command line or `SHIPDECK_PASSWORD`, or a password asked for in the TUI.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -32,6 +32,7 @@ pub enum Login {
 }
 
 impl Login {
+    #[must_use]
     pub fn describe(&self) -> String {
         match self {
             Login::Key(path) => format!("key {}", path.display()),
@@ -201,25 +202,24 @@ async fn with_password_prompt(
 ) -> Result<()> {
     let cache_key = format!("password:{}", target.label());
     for attempt in 1..=ATTEMPTS {
-        let password = match secrets.get(&cache_key) {
-            Some(password) => password,
-            None => {
-                let note = if attempt > 1 {
-                    " (wrong, try again)"
-                } else {
-                    note
-                };
-                let Some(password) = ask(
-                    asker,
-                    "SSH password",
-                    format!("Password for {}{note}", target.label()),
-                )
-                .await
-                else {
-                    bail!("login to {} cancelled", target.label());
-                };
-                password
-            }
+        let password = if let Some(password) = secrets.get(&cache_key) {
+            password
+        } else {
+            let note = if attempt > 1 {
+                " (wrong, try again)"
+            } else {
+                note
+            };
+            let Some(password) = ask(
+                asker,
+                "SSH password",
+                format!("Password for {}{note}", target.label()),
+            )
+            .await
+            else {
+                bail!("login to {} cancelled", target.label());
+            };
+            password
         };
         let result = handle
             .authenticate_password(&target.user, &password)
@@ -256,25 +256,24 @@ async fn load_key(
         bail!("the given passphrase does not unlock {label}");
     }
     for attempt in 1..=ATTEMPTS {
-        let passphrase = match secrets.get(&cache_key) {
-            Some(passphrase) => passphrase,
-            None => {
-                let note = if attempt > 1 {
-                    " (wrong, try again)"
-                } else {
-                    ""
-                };
-                let Some(passphrase) = ask(
-                    asker,
-                    "Key passphrase",
-                    format!("Passphrase for {label}{note}"),
-                )
-                .await
-                else {
-                    bail!("unlocking {label} cancelled");
-                };
-                passphrase
-            }
+        let passphrase = if let Some(passphrase) = secrets.get(&cache_key) {
+            passphrase
+        } else {
+            let note = if attempt > 1 {
+                " (wrong, try again)"
+            } else {
+                ""
+            };
+            let Some(passphrase) = ask(
+                asker,
+                "Key passphrase",
+                format!("Passphrase for {label}{note}"),
+            )
+            .await
+            else {
+                bail!("unlocking {label} cancelled");
+            };
+            passphrase
         };
         if let Ok(found) = decode_secret_key(&key.text, Some(&passphrase)) {
             secrets.put(&cache_key, &passphrase);

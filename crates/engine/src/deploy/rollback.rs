@@ -1,6 +1,6 @@
 //! Manual rollback to any release on the server, open or compressed. A
 //! backup is unpacked and set up again with `pipeline.setup`. It ends like a
-//! deploy: health, then `pipeline.done`, all with SHIPDECK_ACTION=rollback.
+//! deploy: health, then `pipeline.done`, all with `SHIPDECK_ACTION=rollback`.
 
 use std::sync::Arc;
 
@@ -14,6 +14,7 @@ use crate::remote::{Kind, ReleaseEntry, Server};
 use crate::ssh::Pool;
 
 /// The steps a rollback goes through.
+#[must_use]
 pub fn rollback_steps(config: &DeployConfig) -> Vec<Step> {
     let mut steps = vec![
         Step::Connect,
@@ -57,9 +58,9 @@ impl Run<'_> {
         self.start(Step::Connect, "checking the server");
         let (server, entry, previous) = match connect(self.deployable, target, pool, report).await {
             Ok(found) => found,
-            Err(err) => return self.stop(Step::Connect, err),
+            Err(err) => return self.stop(Step::Connect, &err),
         };
-        self.previous = previous.clone();
+        self.previous.clone_from(&previous);
         self.finish(
             Step::Connect,
             format!("live: {}", previous.as_deref().unwrap_or("nothing")),
@@ -67,27 +68,24 @@ impl Run<'_> {
 
         // A backup holds only what was picked: it gets its shared folders
         // and setup again.
-        let from_backup = match entry.kind {
-            Kind::Compressed => {
-                let file = format!("backups/{target}.tar.zst");
-                self.start(Step::Unpack, &format!("unpacking {file}"));
-                let shared = &self.config().service.shared;
-                let unpacked = async {
-                    server.restore(target, report).await?;
-                    server.link_shared(target, shared, report).await
-                }
-                .await;
-                if let Err(err) = unpacked {
-                    let _ = server.drop_open(target, report).await;
-                    return self.stop(Step::Unpack, err);
-                }
-                self.finish(Step::Unpack, format!("from {file}"));
-                true
+        let from_backup = if entry.kind == Kind::Compressed {
+            let file = format!("backups/{target}.tar.zst");
+            self.start(Step::Unpack, &format!("unpacking {file}"));
+            let shared = &self.config().service.shared;
+            let unpacked = async {
+                server.restore(target, report).await?;
+                server.link_shared(target, shared, report).await
             }
-            _ => {
-                self.skip(Step::Unpack, "already unpacked");
-                false
+            .await;
+            if let Err(err) = unpacked {
+                let _ = server.drop_open(target, report).await;
+                return self.stop(Step::Unpack, &err);
             }
+            self.finish(Step::Unpack, format!("from {file}"));
+            true
+        } else {
+            self.skip(Step::Unpack, "already unpacked");
+            false
         };
 
         if !from_backup {
@@ -104,7 +102,7 @@ impl Run<'_> {
                         LogKind::Info,
                         format!("releases/{target} was removed; its backup stays"),
                     );
-                    return self.stop(Step::Setup, err);
+                    return self.stop(Step::Setup, &err);
                 }
             }
         }

@@ -29,8 +29,12 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
     let left_width = (body.width * 40 / 100).clamp(46, 64);
     let [left, right] =
         Layout::horizontal([Constraint::Length(left_width), Constraint::Min(0)]).areas(body);
+    // A path longer than the screen saturates; the panel scrolls its rows.
+    let steps_height = u16::try_from(op.steps.len())
+        .unwrap_or(u16::MAX)
+        .saturating_add(2);
     let [steps_area, progress_area, timeline_area] = Layout::vertical([
-        Constraint::Length(op.steps.len() as u16 + 2),
+        Constraint::Length(steps_height),
         Constraint::Length(10),
         Constraint::Min(0),
     ])
@@ -141,8 +145,7 @@ fn outcome_line(op: &Operation, outcome: &Outcome) -> Line<'static> {
         .steps
         .iter()
         .find(|s| s.state == StepState::Failed)
-        .map(|s| s.name)
-        .unwrap_or("a step");
+        .map_or("a step", |s| s.name);
     match outcome {
         Outcome::Succeeded { release } => Line::from(vec![
             theme::badge("LIVE", OK),
@@ -270,6 +273,13 @@ fn percent_text(progress: &Progress) -> String {
     format!("{}%", (progress.done * 100 / progress.total).min(100))
 }
 
+/// Converts a count for the gauge; the two 32-bit halves add without a cast.
+fn to_f64(value: u64) -> f64 {
+    let high = u32::try_from(value >> 32).unwrap_or(u32::MAX);
+    let low = u32::try_from(value & u64::from(u32::MAX)).unwrap_or(u32::MAX);
+    f64::from(high) * 4_294_967_296.0 + f64::from(low)
+}
+
 fn progress(frame: &mut Frame, area: Rect, op: &Operation, tick: u64) {
     let block = theme::panel("Progress", op.running());
     let inner = block.inner(area);
@@ -304,9 +314,12 @@ fn progress(frame: &mut Frame, area: Rect, op: &Operation, tick: u64) {
         )) => WARN,
         Some(_) => ERR,
     };
+    // Step counts fit u32, so f64 holds them exactly.
+    let ratio = f64::from(u32::try_from(completed).unwrap_or(u32::MAX))
+        / f64::from(u32::try_from(total).unwrap_or(u32::MAX));
     frame.render_widget(
         LineGauge::default()
-            .ratio(completed as f64 / total as f64)
+            .ratio(ratio)
             .filled_style(Style::new().fg(color))
             .unfilled_style(Style::new().fg(BORDER))
             .filled_symbol("━")
@@ -349,10 +362,11 @@ fn timeline(frame: &mut Frame, area: Rect, op: &Operation) {
     }
     let slowest = timed
         .iter()
-        .map(|(_, d)| d.as_secs_f64())
-        .fold(0.0_f64, f64::max)
-        .max(0.001);
-    let bar_width = inner.width.saturating_sub(20) as f64;
+        .map(|(_, elapsed)| elapsed.as_micros())
+        .max()
+        .unwrap_or(0)
+        .max(1_000);
+    let bar_width = u128::from(inner.width.saturating_sub(20));
     let lines: Vec<Line> = timed
         .iter()
         .map(|(step, elapsed)| {
@@ -362,9 +376,9 @@ fn timeline(frame: &mut Frame, area: Rect, op: &Operation) {
                 StepState::Running => ACCENT,
                 _ => OK,
             };
-            let cells = ((elapsed.as_secs_f64() / slowest) * bar_width)
-                .round()
-                .max(1.0) as usize;
+            // Round the time ratio to whole cells, as the seconds ratio did.
+            let doubled = elapsed.as_micros() * bar_width * 2 + slowest;
+            let cells = usize::try_from(doubled / (slowest * 2)).unwrap_or(1).max(1);
             Line::from(vec![
                 Span::styled(format!("{:<10}", step.name), theme::muted()),
                 Span::styled("▆".repeat(cells), Style::new().fg(color)),
@@ -414,7 +428,7 @@ fn focus(frame: &mut Frame, [title, gauge, amounts, label]: [Rect; 4], step: &St
     if p.total == 0 {
         frame.render_widget(indeterminate(gauge.width, tick, color), gauge);
     } else {
-        let ratio = (p.done as f64 / p.total as f64).clamp(0.0, 1.0);
+        let ratio = (to_f64(p.done) / to_f64(p.total)).clamp(0.0, 1.0);
         frame.render_widget(
             Gauge::default()
                 .ratio(ratio)
@@ -444,8 +458,8 @@ fn indeterminate(width: u16, tick: u64, color: Color) -> Line<'static> {
         return Line::default();
     }
     let segment = (width / 5).max(3);
-    let span = width + segment;
-    let head = (tick as usize * 2) % span;
+    let span = u64::try_from(width + segment).unwrap_or(u64::MAX);
+    let head = usize::try_from(((tick % span) * 2) % span).unwrap_or(0);
     let mut spans = Vec::with_capacity(width);
     for x in 0..width {
         let lit = x + segment > head && x <= head;

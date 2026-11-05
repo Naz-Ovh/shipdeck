@@ -24,6 +24,12 @@ use crate::deploy::report::{LogKind, Reporter, Unit};
 /// Runs one shell line with `sh -c` in `dir`; on Windows, the sh of Git for
 /// Windows. Cargo's progress bar becomes the step's progress; every other
 /// line goes to the log.
+///
+/// # Errors
+/// Returns an error when the shell cannot start or the command exits non-zero.
+///
+/// # Panics
+/// Panics when the child's stdout or stderr is missing; both are piped.
 pub async fn run_local(
     command: &str,
     dir: &Path,
@@ -33,8 +39,11 @@ pub async fn run_local(
 ) -> Result<()> {
     let shown = command.trim();
     report.log(LogKind::Command, format!("{shown}  (in {})", dir.display()));
-    let mut child = sh()
-        .await?
+    #[cfg(unix)]
+    let mut shell = sh();
+    #[cfg(windows)]
+    let mut shell = sh().await?;
+    let mut child = shell
         .arg("-c")
         .arg(command)
         .current_dir(dir)
@@ -71,8 +80,8 @@ pub async fn run_local(
 
 /// The shell for local commands: `sh` from PATH.
 #[cfg(unix)]
-async fn sh() -> Result<tokio::process::Command> {
-    Ok(tokio::process::Command::new("sh"))
+fn sh() -> tokio::process::Command {
+    tokio::process::Command::new("sh")
 }
 
 /// Reads a stream, splitting on `\n` and on the `\r` cargo uses to redraw

@@ -12,7 +12,7 @@ use crate::human;
 use crate::release::MANIFEST_FILE;
 use crate::remote::{Place, Server, pick, plan_rotation};
 
-impl<'a> Run<'a> {
+impl Run<'_> {
     /// Whether `pipeline.setup` has anything to run.
     pub(super) fn has_setup(&self) -> bool {
         let setup = &self.config().pipeline.setup;

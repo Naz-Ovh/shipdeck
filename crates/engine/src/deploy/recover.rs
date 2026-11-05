@@ -9,7 +9,7 @@ use super::{Action, Ended, Run, Step, backup::restore, count, short};
 use crate::config::{ROLLBACK_ANSWER_SECS, Rollback};
 use crate::remote::Server;
 
-impl<'a> Run<'a> {
+impl Run<'_> {
     /// Runs `pipeline.failed` when a step failed. Its own failure is only
     /// logged.
     pub(crate) async fn failed(&self, ended: &Ended) {

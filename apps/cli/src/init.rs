@@ -93,25 +93,22 @@ impl From<anyhow::Error> for Stop {
 }
 
 fn answers(root: &Path, given: Given) -> Result<NewDeployable, Stop> {
-    let name = match given.name {
-        Some(name) => {
-            if let Some(problem) = init::name_problem(root, &name) {
-                return Err(anyhow::anyhow!("{name:?}: {problem}").into());
-            }
-            name
+    let name = if let Some(name) = given.name {
+        if let Some(problem) = init::name_problem(root, &name) {
+            return Err(anyhow::anyhow!("{name:?}: {problem}").into());
         }
-        None => {
-            let folder = root.to_path_buf();
-            Text::new("Name:")
-                .with_help_message("the new folder and the service, such as my-api")
-                .with_validator(move |name: &str| {
-                    Ok(match init::name_problem(&folder, name) {
-                        Some(problem) => Validation::Invalid(problem.into()),
-                        None => Validation::Valid,
-                    })
+        name
+    } else {
+        let folder = root.to_path_buf();
+        Text::new("Name:")
+            .with_help_message("the new folder and the service, such as my-api")
+            .with_validator(move |name: &str| {
+                Ok(match init::name_problem(&folder, name) {
+                    Some(problem) => Validation::Invalid(problem.into()),
+                    None => Validation::Valid,
                 })
-                .prompt()?
-        }
+            })
+            .prompt()?
     };
     let preset = match given.preset {
         Some(preset) => preset,

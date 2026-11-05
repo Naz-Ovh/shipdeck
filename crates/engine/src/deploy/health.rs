@@ -14,7 +14,7 @@ pub(super) const STABLE_PROBES: u32 = 3;
 /// The pause before a failed health check runs again.
 pub(super) const CHECK_RETRY: Duration = Duration::from_secs(2);
 
-impl<'a> Run<'a> {
+impl Run<'_> {
     /// Waits until the service is up, then runs the health checks, trying
     /// them again until `timeout_secs` has passed.
     pub(super) async fn health(&self, server: &Server) -> Result<String> {
@@ -157,10 +157,9 @@ pub(crate) async fn wait_healthy(
         streak = if probe.healthy() { streak + 1 } else { 0 };
 
         let http = match &probe.http {
-            HttpCheck::Skipped => String::new(),
+            HttpCheck::Skipped | HttpCheck::NoClient => String::new(),
             HttpCheck::Ok => " · http ok".into(),
             HttpCheck::Failed(why) => format!(" · http: {why}"),
-            HttpCheck::NoClient => String::new(),
         };
         let elapsed = started.elapsed();
         report.progress(

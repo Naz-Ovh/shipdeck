@@ -281,7 +281,7 @@
               "$ref": "#/definitions/Backup"
             }
           ],
-          "description": "Step 7: shipdeck packs the set-up release into `backups/<id>.tar.zst`, which stays when the release folder goes. A rollback to it unpacks it and runs setup again, so what setup makes, such as node_modules, can stay out. A failure removes the new release."
+          "description": "Step 7: shipdeck packs the set-up release into `backups/<id>.tar.zst`, which stays when the release folder goes. A rollback to it unpacks it and runs setup again, so what setup makes, such as `node_modules`, can stay out. A failure removes the new release."
         },
         "build": {
           "allOf": [
@@ -297,7 +297,7 @@
               "$ref": "#/definitions/Done"
             }
           ],
-          "description": "Step 11: the new release is live. shipdeck tidies old releases (see `backup.keep`), then runs `run.server` in `current`, then `run.local`. A failure is only a warning. A manual rollback runs it too, with SHIPDECK_ACTION=rollback."
+          "description": "Step 11: the new release is live. shipdeck tidies old releases (see `backup.keep`), then runs `run.server` in `current`, then `run.local`. A failure is only a warning. A manual rollback runs it too, with `SHIPDECK_ACTION=rollback`."
         },
         "failed": {
           "allOf": [
@@ -305,7 +305,7 @@
               "$ref": "#/definitions/Failed"
             }
           ],
-          "description": "Runs when any step fails, after a rollback if there was one. SHIPDECK_STEP names the step that failed."
+          "description": "Runs when any step fails, after a rollback if there was one. `SHIPDECK_STEP` names the step that failed."
         },
         "health": {
           "allOf": [

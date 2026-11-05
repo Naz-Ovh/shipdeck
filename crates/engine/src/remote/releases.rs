@@ -56,10 +56,12 @@ pub struct RotationPlan {
 }
 
 impl RotationPlan {
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.close.len() + self.drop_open.len() + self.drop_backup.len()
     }
@@ -67,6 +69,7 @@ impl RotationPlan {
 
 /// Keeps `current` plus the newest releases up to `keep.open` unpacked, then
 /// the next `keep.compressed` only as their backup; everything older goes.
+#[must_use]
 pub fn plan_rotation(listing: &Listing, keep: Keep) -> RotationPlan {
     let named: Vec<&ReleaseEntry> = listing
         .entries
@@ -168,6 +171,10 @@ pub(super) fn parse_listing(text: &str) -> Listing {
 }
 
 impl Server {
+    /// The app folder's state, its current release and the service's state.
+    ///
+    /// # Errors
+    /// Returns an error when the status commands cannot run.
     pub async fn status(&self) -> Result<Status> {
         let script = format!(
             "if [ -d {dir} ]; then echo dir=yes; else echo dir=no; fi
@@ -198,6 +205,10 @@ echo \"active=$(systemctl is-active {svc} 2>&1 | head -n1)\"",
         })
     }
 
+    /// The releases on the server, newest first.
+    ///
+    /// # Errors
+    /// Returns an error when the release listing command fails.
     pub async fn list(&self) -> Result<Listing> {
         let script = format!(
             "cd {dir} 2>/dev/null || exit 0
@@ -225,6 +236,10 @@ done",
         Ok(parse_listing(&out.stdout))
     }
 
+    /// Deletes `releases/<id>` and nothing else.
+    ///
+    /// # Errors
+    /// Returns an error when the release name is unsafe or deletion fails.
     pub async fn drop_open(&self, id: &str, report: &Reporter) -> Result<()> {
         ensure_id(id)?;
         let script = format!("cd {dir} && rm -rf releases/{id}", dir = self.q_dir());
@@ -233,6 +248,10 @@ done",
         Ok(())
     }
 
+    /// Deletes `backups/<id>.tar.zst` and nothing else.
+    ///
+    /// # Errors
+    /// Returns an error when the release name is unsafe or deletion fails.
     pub async fn drop_backup(&self, id: &str, report: &Reporter) -> Result<()> {
         ensure_id(id)?;
         let script = format!("cd {dir} && rm -f backups/{id}.tar.zst", dir = self.q_dir());

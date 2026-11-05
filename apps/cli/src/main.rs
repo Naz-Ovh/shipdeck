@@ -68,11 +68,11 @@ struct LoginArgs {
     #[arg(long, value_name = "PATH", conflicts_with_all = ["password", "key_text"])]
     key: Option<PathBuf>,
 
-    /// Log in with this private key's text (it shows in `ps`; SHIPDECK_SSH_KEY does not)
+    /// Log in with this private key's text (it shows in `ps`; `SHIPDECK_SSH_KEY` does not)
     #[arg(long, value_name = "TEXT", conflicts_with = "password")]
     key_text: Option<String>,
 
-    /// Log in with this password (it lands in your shell history; SHIPDECK_PASSWORD does not)
+    /// Log in with this password (it lands in your shell history; `SHIPDECK_PASSWORD` does not)
     #[arg(long, value_name = "PASSWORD")]
     password: Option<String>,
 
@@ -230,7 +230,7 @@ struct SshArgs {
     #[command(flatten)]
     login: LoginArgs,
 
-    /// Trust and record the host key of a server not yet in ~/.ssh/known_hosts; a changed key is still refused
+    /// Trust and record the host key of a server not yet in your `known_hosts` file; a changed key is still refused
     #[arg(long)]
     trust_new_host: bool,
 }

@@ -4,6 +4,7 @@
 //! receipt before the release counts as there.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fmt::Write as _;
 
 use anyhow::Result;
 
@@ -25,6 +26,10 @@ impl Server {
     /// The SHA-256 of each of `paths` in `current/` that is a regular file
     /// and not a link, hashed now by the server. The paths go up as a
     /// NUL-separated list, each with `./` so none reads as an option.
+    ///
+    /// # Errors
+    /// Returns an error when the release name is unsafe, the list cannot be
+    /// sent, or hashing fails.
     pub async fn current_hashes(
         &self,
         id: &str,
@@ -48,6 +53,9 @@ impl Server {
 
     /// Uploads what unpacking checks and copies with, next to the bundle:
     /// the receipt, and for each mode the files to copy from `current`.
+    ///
+    /// # Errors
+    /// Returns an error when the release name is unsafe or an upload fails.
     pub async fn upload_plan(
         &self,
         id: &str,
@@ -71,6 +79,9 @@ impl Server {
     /// files listed for each of `modes` from `current` and gives them that
     /// mode; then checks every file against the receipt. Only a release
     /// that matches is moved into place.
+    ///
+    /// # Errors
+    /// Returns an error when the release name is unsafe or the unpack command fails.
     pub async fn unpack(&self, id: &str, modes: &[u32], report: &Reporter) -> Result<Unpacked> {
         ensure_id(id)?;
         let what = format!("unpack into releases/{id}");
@@ -161,7 +172,8 @@ ok=yes
     );
     for mode in modes {
         let list = quoted(&format!(".{id}.reuse.{mode:04o}"));
-        script.push_str(&format!(
+        let _ = write!(
+            script,
             "(cd {current} && tar -cf - --null --no-recursion -T {list}) | (cd .{id}.partial && tar -xpf -) || ok=no
 (cd .{id}.partial && xargs -0 sh -c '
 for f in \"$@\"; do
@@ -171,9 +183,10 @@ chmod {mode:04o} \"$@\"
 ' sh < {list}) || ok=no
 ",
             current = sh_quote(&format!("{dir}/current")),
-        ));
+        );
     }
-    script.push_str(&format!(
+    let _ = write!(
+        script,
         "(cd .{id}.partial && sha256sum -c {receipt}) > .{id}.checked || ok=no
 if [ \"$ok\" = no ]; then
   sed -n 's/^\\(.*\\): FAILED.*$/mismatch=\\1/p' .{id}.checked
@@ -184,7 +197,7 @@ fi
 rm -f .{id}.paths .{id}.sha256 .{id}.checked .{id}.reuse.*
 mv .{id}.partial {id}",
         receipt = quoted(&format!(".{id}.sha256")),
-    ));
+    );
     script
 }
 

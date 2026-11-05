@@ -23,6 +23,7 @@ pub struct HostConfig {
 }
 
 /// Looks `host` up in `~/.ssh/config`. No file means no settings.
+#[must_use]
 pub fn lookup(host: &str) -> HostConfig {
     match std::env::home_dir() {
         Some(home) => lookup_in(&home.join(".ssh").join("config"), &home, host),
@@ -31,6 +32,7 @@ pub fn lookup(host: &str) -> HostConfig {
 }
 
 /// Looks `host` up in the config file at `path`, with `home` for `~`.
+#[must_use]
 pub fn lookup_in(path: &Path, home: &Path, host: &str) -> HostConfig {
     let mut found = HostConfig::default();
     read_file(path, host, home, 0, &mut found);
@@ -246,12 +248,11 @@ fn tokens(text: &str, host: &str, home: &Path) -> String {
                 let user = if cfg!(windows) { "USERNAME" } else { "USER" };
                 out.push_str(&std::env::var(user).unwrap_or_default());
             }
-            Some('%') => out.push('%'),
+            Some('%') | None => out.push('%'),
             Some(other) => {
                 out.push('%');
                 out.push(other);
             }
-            None => out.push('%'),
         }
     }
     out

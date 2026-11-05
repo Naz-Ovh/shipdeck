@@ -1,6 +1,8 @@
 //! The frame around every screen: brand bar, tabs with the running
 //! operation, and the key hints at the bottom.
 
+use std::fmt::Write;
+
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -15,11 +17,10 @@ pub fn header(frame: &mut Frame, area: Rect, app: &App) {
     let [top, tabs] = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
 
     let login = app.pool.login().describe();
-    let [brand_area, login_area] = Layout::horizontal([
-        Constraint::Min(0),
-        Constraint::Length(login.len() as u16 + 8),
-    ])
-    .areas(top);
+    // A login wider than the terminal saturates instead of wrapping.
+    let login_width = u16::try_from(login.len() + 8).unwrap_or(u16::MAX);
+    let [brand_area, login_area] =
+        Layout::horizontal([Constraint::Min(0), Constraint::Length(login_width)]).areas(top);
     let brand = Line::from(vec![
         Span::styled(
             " ◆ shipdeck ",
@@ -82,9 +83,9 @@ fn operation_status(app: &App) -> Line<'static> {
             let step = op.steps.iter().find(|s| s.state == StepState::Running);
             let mut text = format!("{verb} {slug}");
             if let Some(step) = step {
-                text.push_str(&format!(" · {}", step.name));
+                let _ = write!(text, " · {}", step.name);
                 if let Some(p) = step.progress.as_ref().filter(|p| p.total > 0) {
-                    text.push_str(&format!(" {}%", (p.done * 100 / p.total).min(100)));
+                    let _ = write!(text, " {}%", (p.done * 100 / p.total).min(100));
                 }
             }
             Line::from(vec![

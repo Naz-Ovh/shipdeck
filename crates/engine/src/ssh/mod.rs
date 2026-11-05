@@ -43,11 +43,16 @@ pub struct Output {
 }
 
 impl Output {
+    #[must_use]
     pub fn success(&self) -> bool {
         self.code == 0
     }
 
     /// Turns a non-zero exit into an error that carries the command's own words.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the exit status is not zero.
     pub fn check(self, what: &str) -> Result<Self> {
         if self.success() {
             return Ok(self);
@@ -72,11 +77,18 @@ pub struct Session {
 }
 
 impl Session {
+    #[must_use]
     pub fn is_closed(&self) -> bool {
         self.handle.is_closed()
     }
 
     /// Runs a POSIX `sh` script and collects its output.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the channel cannot be opened, the command cannot start,
+    /// it is killed by a signal, or the connection closes before an exit
+    /// status arrives.
     pub async fn exec(&self, script: &str) -> Result<Output> {
         self.exec_with(script, |_, _| {}).await
     }
@@ -85,6 +97,12 @@ impl Session {
     /// arrives. The script goes through `sh -c` so the login shell (bash,
     /// zsh, fish, ...) does not matter, after the login shell's environment
     /// (see [`ShellEnv`]).
+    ///
+    /// # Errors
+    ///
+    /// Fails when the channel cannot be opened, the command cannot start,
+    /// it is killed by a signal, or the connection closes before an exit
+    /// status arrives.
     pub async fn exec_with(
         &self,
         script: &str,
@@ -134,7 +152,7 @@ impl Session {
             match msg {
                 ChannelMsg::Data { data } => out.feed(&data, |l| on_line(Stream::Out, l)),
                 ChannelMsg::ExtendedData { data, ext: 1 } => {
-                    err.feed(&data, |l| on_line(Stream::Err, l))
+                    err.feed(&data, |l| on_line(Stream::Err, l));
                 }
                 ChannelMsg::ExitStatus { exit_status } => code = Some(exit_status),
                 ChannelMsg::ExitSignal { signal_name, .. } => {
@@ -159,6 +177,10 @@ impl Session {
     /// what the script runs ends with it. The terminal is `dumb`, so
     /// programs print no colours, and stderr comes through with stdout.
     /// Returns the exit code when the script ended on its own.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the terminal cannot be requested or the command started.
     pub async fn follow(
         &self,
         script: &str,
@@ -204,6 +226,11 @@ impl Session {
 
     /// Writes `data` to `remote_path`, over SFTP when the server offers it
     /// and through `cat` otherwise. `progress(sent, total)` follows along.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the file cannot be created, written, or finished, over
+    /// SFTP or through `cat`.
     pub async fn upload(
         &self,
         data: &[u8],
@@ -306,6 +333,7 @@ pub struct Pool {
 }
 
 impl Pool {
+    #[must_use]
     pub fn new(login: Login, asker: UnboundedSender<Question>) -> Self {
         Self {
             login,
@@ -317,12 +345,14 @@ impl Pool {
     }
 
     /// Runs commands without the login shell's environment on every server.
+    #[must_use]
     pub fn without_shell_env(mut self) -> Self {
         self.shell_env = false;
         self
     }
 
     /// Unlocks an encrypted key with `passphrase` instead of asking.
+    #[must_use]
     pub fn with_passphrase(self, passphrase: Option<String>) -> Self {
         if let Some(passphrase) = passphrase {
             self.secrets.give_passphrase(&passphrase);
@@ -336,6 +366,14 @@ impl Pool {
 
     /// The open session for `target`, connecting first if needed. Two callers
     /// for the same target share one connection attempt.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the server cannot be reached or the login is refused.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the pool's slot lock is poisoned.
     pub async fn get(&self, target: &Endpoint) -> Result<Arc<Session>> {
         let slot = {
             let mut slots = self.slots.lock().expect("pool lock");
@@ -397,6 +435,10 @@ impl Pool {
 
     /// Closes the session for `target`, if one is open; the next `get`
     /// connects again.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the pool's slot lock is poisoned.
     pub async fn close(&self, target: &Endpoint) {
         let slot = self.slots.lock().expect("pool lock").get(target).cloned();
         if let Some(slot) = slot
@@ -406,6 +448,11 @@ impl Pool {
         }
     }
 
+    /// Closes every open session; the next `get` connects again.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the pool's slot lock is poisoned.
     pub async fn close_all(&self) {
         let slots: Vec<_> = self
             .slots
@@ -473,6 +520,7 @@ impl Lines {
 }
 
 /// Quotes `text` as one `sh` word.
+#[must_use]
 pub fn sh_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', r"'\''"))
 }

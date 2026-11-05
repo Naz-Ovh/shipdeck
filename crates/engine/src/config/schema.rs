@@ -13,17 +13,20 @@ pub const FILE_NAME: &str = "deploy.schema.json";
 pub const WEBSITE_COPY: &str = "docs/website/public/deploy.schema.json";
 
 /// Where editors fetch the schema for this version of shipdeck.
+#[must_use]
 pub fn url() -> String {
     crate::setup::raw_url(FILE_NAME)
 }
 
 /// The line that gives a deploy.yaml completion in editors using the YAML
-/// language server (VS Code's YAML extension, Neovim, Zed, JetBrains).
+/// language server (VS Code's YAML extension, Neovim, Zed, `JetBrains`).
+#[must_use]
 pub fn modeline() -> String {
     format!("# yaml-language-server: $schema={}", url())
 }
 
 /// The schema as JSON. Draft-07, which every YAML language server reads.
+#[must_use]
 pub fn generate() -> Value {
     let schema = SchemaSettings::draft07()
         .into_generator()
@@ -57,6 +60,10 @@ fn unwrap_lines(value: &mut Value) {
 }
 
 /// The schema as the text of `deploy.schema.json`.
+///
+/// # Panics
+/// Panics when the generated schema cannot be serialized as JSON.
+#[must_use]
 pub fn text() -> String {
     let mut text = serde_json::to_string_pretty(&generate()).expect("a schema is plain JSON");
     text.push('\n');

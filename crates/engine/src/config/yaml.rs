@@ -131,7 +131,6 @@ pub fn parse(text: &str) -> Result<Node, Problem> {
     loop {
         let (event, span) = reader.next()?;
         match event {
-            Event::StreamStart | Event::DocumentEnd => {}
             Event::StreamEnd => break,
             Event::DocumentStart(..) => {
                 if root.is_some() {

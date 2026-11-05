@@ -8,10 +8,11 @@ use shipdeck_engine::bundle::files::{self, Source};
 use shipdeck_engine::remote::{Control, Kind};
 
 impl App {
-    pub fn on_event(&mut self, event: Event) {
+    pub fn on_event(&mut self, event: &Event) {
         let Event::Key(key) = event else {
             return;
         };
+        let key = *key;
         if key.kind != KeyEventKind::Press {
             return;
         }
@@ -297,149 +298,180 @@ impl App {
     }
 
     pub(super) fn on_modal_key(&mut self, key: KeyEvent) {
-        let Some(modal) = self.modals.front_mut() else {
-            return;
-        };
         let ctrl_c =
             key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c');
-        match modal {
-            Modal::Secret { input, reply, .. } => match key.code {
-                KeyCode::Enter => {
-                    if let Some(reply) = reply.take() {
-                        let _ = reply.send(Some(std::mem::take(input)));
-                    }
-                    self.modals.pop_front();
-                }
-                KeyCode::Esc => {
-                    if let Some(reply) = reply.take() {
-                        let _ = reply.send(None);
-                    }
-                    self.modals.pop_front();
-                }
-                _ if ctrl_c => {
-                    if let Some(reply) = reply.take() {
-                        let _ = reply.send(None);
-                    }
-                    self.modals.pop_front();
-                }
-                KeyCode::Backspace => {
-                    input.pop();
-                }
-                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    input.clear()
-                }
-                KeyCode::Char(c) => input.push(c),
-                _ => {}
-            },
-            Modal::TrustHost { reply, .. } => {
-                let answer = match key.code {
-                    KeyCode::Char('y') | KeyCode::Char('Y') => Some(true),
-                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => Some(false),
-                    _ if ctrl_c => Some(false),
-                    _ => None,
-                };
-                if let Some(answer) = answer {
-                    if let Some(reply) = reply.take() {
-                        let _ = reply.send(answer);
-                    }
-                    self.modals.pop_front();
-                }
-            }
-            Modal::ConfirmDeploy { deployable, .. } => {
-                let index = *deployable;
-                match key.code {
-                    KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                        self.modals.pop_front();
-                        self.start_deploy(index);
-                    }
-                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                        self.modals.pop_front();
-                    }
-                    _ if ctrl_c => {
-                        self.modals.pop_front();
-                    }
-                    _ => {}
-                }
-            }
-            Modal::ConfirmRollback {
-                deployable, target, ..
-            } => {
-                let (index, target) = (*deployable, target.clone());
-                match key.code {
-                    KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                        self.modals.pop_front();
-                        self.start_rollback(index, target);
-                    }
-                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                        self.modals.pop_front();
-                    }
-                    _ if ctrl_c => {
-                        self.modals.pop_front();
-                    }
-                    _ => {}
-                }
-            }
-            Modal::AskRollback { .. } => {
-                let answer = match key.code {
-                    KeyCode::Char('y') | KeyCode::Char('Y') => true,
-                    KeyCode::Char('n') | KeyCode::Char('N') => false,
-                    _ => return,
-                };
-                if let Some(Modal::AskRollback { question, .. }) = self.modals.pop_front() {
-                    // The deploy may have stopped waiting a moment ago.
-                    let _ = question.reply.send(answer);
-                }
-            }
-            Modal::AskUnchanged { .. } => {
-                let answer = match key.code {
-                    KeyCode::Char('y') | KeyCode::Char('Y') => true,
-                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc | KeyCode::Enter => {
-                        false
-                    }
-                    _ if ctrl_c => false,
-                    _ => return,
-                };
-                if let Some(Modal::AskUnchanged { question, .. }) = self.modals.pop_front() {
-                    let _ = question.reply.send(answer);
-                }
-            }
-            Modal::ConfirmControl { deployable, action } => {
-                let (index, action) = (*deployable, *action);
-                match key.code {
-                    KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                        self.modals.pop_front();
-                        if self.op_running_on(index) {
-                            self.notify("A deploy started meanwhile; not now", Tone::Warn);
-                        } else {
-                            self.control(index, action);
-                        }
-                    }
-                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                        self.modals.pop_front();
-                    }
-                    _ if ctrl_c => {
-                        self.modals.pop_front();
-                    }
-                    _ => {}
-                }
-            }
-            Modal::Notice { .. } => match key.code {
-                KeyCode::Enter | KeyCode::Esc | KeyCode::Char('q') => {
-                    self.modals.pop_front();
-                }
-                _ if ctrl_c => {
-                    self.modals.pop_front();
-                }
-                _ => {}
-            },
-            Modal::ConfirmQuit => match key.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') => self.quit = true,
-                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                    self.modals.pop_front();
-                }
-                _ if ctrl_c => self.quit = true,
-                _ => {}
-            },
+        match self.modals.front() {
+            Some(Modal::Secret { .. }) => self.on_secret_key(key, ctrl_c),
+            Some(Modal::TrustHost { .. }) => self.on_trust_host_key(key, ctrl_c),
+            Some(Modal::ConfirmDeploy { .. }) => self.on_confirm_deploy_key(key, ctrl_c),
+            Some(Modal::ConfirmRollback { .. }) => self.on_confirm_rollback_key(key, ctrl_c),
+            Some(Modal::ConfirmControl { .. }) => self.on_confirm_control_key(key, ctrl_c),
+            Some(Modal::AskRollback { .. }) => self.on_ask_rollback_key(key),
+            Some(Modal::AskUnchanged { .. }) => self.on_ask_unchanged_key(key, ctrl_c),
+            Some(Modal::Notice { .. }) => self.on_notice_key(key, ctrl_c),
+            Some(Modal::ConfirmQuit) => self.on_confirm_quit_key(key, ctrl_c),
+            None => {}
         }
+    }
+
+    /// Reads a password; enter submits it and esc or ctrl+c cancels.
+    fn on_secret_key(&mut self, key: KeyEvent, ctrl_c: bool) {
+        let Some(Modal::Secret { input, reply, .. }) = self.modals.front_mut() else {
+            return;
+        };
+        let answer = match key.code {
+            KeyCode::Enter => Some(std::mem::take(input)),
+            KeyCode::Esc => None,
+            _ if ctrl_c => None,
+            KeyCode::Backspace => {
+                input.pop();
+                return;
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                input.clear();
+                return;
+            }
+            KeyCode::Char(c) => {
+                input.push(c);
+                return;
+            }
+            _ => return,
+        };
+        if let Some(reply) = reply.take() {
+            let _ = reply.send(answer);
+        }
+        self.modals.pop_front();
+    }
+
+    fn on_trust_host_key(&mut self, key: KeyEvent, ctrl_c: bool) {
+        let answer = match key.code {
+            KeyCode::Char('y' | 'Y') => true,
+            KeyCode::Char('n' | 'N') | KeyCode::Esc => false,
+            _ if ctrl_c => false,
+            _ => return,
+        };
+        let Some(Modal::TrustHost { reply, .. }) = self.modals.front_mut() else {
+            return;
+        };
+        if let Some(reply) = reply.take() {
+            let _ = reply.send(answer);
+        }
+        self.modals.pop_front();
+    }
+
+    fn on_confirm_deploy_key(&mut self, key: KeyEvent, ctrl_c: bool) {
+        let Some(Modal::ConfirmDeploy { deployable, .. }) = self.modals.front() else {
+            return;
+        };
+        let index = *deployable;
+        match confirmation(key.code, ctrl_c) {
+            Some(true) => {
+                self.modals.pop_front();
+                self.start_deploy(index);
+            }
+            Some(false) => {
+                self.modals.pop_front();
+            }
+            None => {}
+        }
+    }
+
+    fn on_confirm_rollback_key(&mut self, key: KeyEvent, ctrl_c: bool) {
+        let Some(Modal::ConfirmRollback {
+            deployable, target, ..
+        }) = self.modals.front()
+        else {
+            return;
+        };
+        let (index, target) = (*deployable, target.clone());
+        match confirmation(key.code, ctrl_c) {
+            Some(true) => {
+                self.modals.pop_front();
+                self.start_rollback(index, target);
+            }
+            Some(false) => {
+                self.modals.pop_front();
+            }
+            None => {}
+        }
+    }
+
+    fn on_confirm_control_key(&mut self, key: KeyEvent, ctrl_c: bool) {
+        let Some(Modal::ConfirmControl { deployable, action }) = self.modals.front() else {
+            return;
+        };
+        let (index, action) = (*deployable, *action);
+        match confirmation(key.code, ctrl_c) {
+            Some(true) => {
+                self.modals.pop_front();
+                if self.op_running_on(index) {
+                    self.notify("A deploy started meanwhile; not now", Tone::Warn);
+                } else {
+                    self.control(index, action);
+                }
+            }
+            Some(false) => {
+                self.modals.pop_front();
+            }
+            None => {}
+        }
+    }
+
+    /// The deploy question takes y or n and nothing else.
+    fn on_ask_rollback_key(&mut self, key: KeyEvent) {
+        let answer = match key.code {
+            KeyCode::Char('y' | 'Y') => true,
+            KeyCode::Char('n' | 'N') => false,
+            _ => return,
+        };
+        if let Some(Modal::AskRollback { question, .. }) = self.modals.pop_front() {
+            // The deploy may have stopped waiting a moment ago.
+            let _ = question.reply.send(answer);
+        }
+    }
+
+    fn on_ask_unchanged_key(&mut self, key: KeyEvent, ctrl_c: bool) {
+        let answer = match key.code {
+            KeyCode::Char('y' | 'Y') => true,
+            KeyCode::Char('n' | 'N') | KeyCode::Esc | KeyCode::Enter => false,
+            _ if ctrl_c => false,
+            _ => return,
+        };
+        if let Some(Modal::AskUnchanged { question, .. }) = self.modals.pop_front() {
+            let _ = question.reply.send(answer);
+        }
+    }
+
+    fn on_notice_key(&mut self, key: KeyEvent, ctrl_c: bool) {
+        match key.code {
+            KeyCode::Enter | KeyCode::Esc | KeyCode::Char('q') => {
+                self.modals.pop_front();
+            }
+            _ if ctrl_c => {
+                self.modals.pop_front();
+            }
+            _ => {}
+        }
+    }
+
+    fn on_confirm_quit_key(&mut self, key: KeyEvent, ctrl_c: bool) {
+        match key.code {
+            KeyCode::Char('y' | 'Y') => self.quit = true,
+            KeyCode::Char('n' | 'N') | KeyCode::Esc => {
+                self.modals.pop_front();
+            }
+            _ if ctrl_c => self.quit = true,
+            _ => {}
+        }
+    }
+}
+
+/// Reads a confirmation key: yes for y/enter, no for n/esc or ctrl+c.
+fn confirmation(code: KeyCode, ctrl_c: bool) -> Option<bool> {
+    match code {
+        KeyCode::Char('y' | 'Y') | KeyCode::Enter => Some(true),
+        KeyCode::Char('n' | 'N') | KeyCode::Esc => Some(false),
+        _ if ctrl_c => Some(false),
+        _ => None,
     }
 }

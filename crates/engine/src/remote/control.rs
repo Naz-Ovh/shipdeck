@@ -24,6 +24,7 @@ pub enum Control {
 }
 
 impl Control {
+    #[must_use]
     pub fn verb(self) -> &'static str {
         match self {
             Self::Stop => "stop",
@@ -38,6 +39,7 @@ impl Control {
 /// requires, so a server set up before them still deploys. The sudoers
 /// rule must allow exactly these; changing one breaks every server set up
 /// before.
+#[must_use]
 pub fn control_commands(service: &str) -> Vec<String> {
     vec![
         format!("systemctl stop {service}"),
@@ -68,6 +70,7 @@ fn log_script(manager: Manager, service: &str, pm2_app: &str, sudo: &str) -> Str
 }
 
 /// What follows `service`'s log, as a screen names it.
+#[must_use]
 pub fn log_command(service: &Service) -> String {
     match service.manager {
         Manager::Systemd => journal_follow(&service.name),
@@ -78,6 +81,10 @@ pub fn log_command(service: &Service) -> String {
 impl Server {
     /// Stops, starts or restarts the service. A PM2 app that is already
     /// running is left as it is by `Start`.
+    ///
+    /// # Errors
+    /// Returns an error when sudo is not allowed, the PM2 state is unreadable,
+    /// or the command fails.
     pub async fn control(&self, action: Control) -> Result<()> {
         let script = match self.manager {
             Manager::Systemd => {
@@ -103,6 +110,9 @@ impl Server {
     /// Follows the service's log, handing each line to `on_line`, until
     /// `stop` resolves (which ends the remote command) or the log ends on
     /// its own; then returns its exit code.
+    ///
+    /// # Errors
+    /// Returns an error when sudo is not allowed or the log command cannot run.
     pub async fn follow_logs(
         &self,
         on_line: impl FnMut(&str),

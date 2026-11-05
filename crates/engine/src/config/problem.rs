@@ -14,6 +14,7 @@ pub struct Span {
 }
 
 impl Span {
+    #[must_use]
     pub fn point(line: usize, col: usize) -> Self {
         Self {
             start: (line, col),
@@ -43,16 +44,19 @@ impl Problem {
         }
     }
 
+    #[must_use]
     pub fn at(mut self, span: Option<Span>) -> Self {
         self.at = span;
         self
     }
 
+    #[must_use]
     pub fn label(mut self, label: impl Into<String>) -> Self {
         self.label = label.into();
         self
     }
 
+    #[must_use]
     pub fn help(mut self, help: impl Into<String>) -> Self {
         self.help = Some(help.into());
         self
@@ -82,6 +86,7 @@ pub struct FileProblems {
 }
 
 impl FileProblems {
+    #[must_use]
     pub fn without_source(path: PathBuf, problem: Problem) -> Self {
         Self {
             path,
@@ -133,7 +138,7 @@ impl Paint {
             if i % 2 == 1 {
                 out.push_str(&self.purple(part));
                 if !base.is_empty() {
-                    out.push_str(&format!("\x1b[{base}m"));
+                    let _ = write!(out, "\x1b[{base}m");
                 }
             } else {
                 out.push_str(part);
@@ -147,6 +152,7 @@ impl Paint {
 /// the folder paths are shown relative to; `color` adds terminal colours.
 /// `outcome` heads the report: what did not happen because of them, such
 /// as `shipdeck did not start`.
+#[must_use]
 pub fn render(files: &[FileProblems], base: &Path, color: bool, outcome: &str) -> String {
     let paint = Paint { on: color };
     let count: usize = files.iter().map(|f| f.problems.len()).sum();
@@ -209,68 +215,65 @@ fn snippet(out: &mut String, paint: &Paint, path: &Path, lines: &[&str], problem
     let at = problem
         .at
         .filter(|at| at.start.0 >= 1 && at.start.0 <= lines.len());
-    let line_no = at.map(|at| at.start.0).unwrap_or(0);
+    let line_no = at.map_or(0, |at| at.start.0);
     let width = line_no.to_string().len().max(2);
     let pad = " ".repeat(width + 2);
     let bar = paint.blue("│");
-    match at {
-        Some(at) => {
-            let _ = writeln!(
-                out,
-                "{pad}{} {}:{}:{}",
-                paint.blue("┌─"),
-                path.display(),
-                at.start.0,
-                at.start.1 + 1
-            );
-            let _ = writeln!(out, "{pad}{bar}");
-            let line = lines[at.start.0 - 1];
-            // The line above, when it is the key this one sits under.
-            if at.start.0 >= 2 {
-                let above = lines[at.start.0 - 2];
-                let indent = |s: &str| s.len() - s.trim_start().len();
-                let trimmed = above.trim_start();
-                if !trimmed.is_empty()
-                    && !trimmed.starts_with('#')
-                    && trimmed.trim_end().ends_with(':')
-                    && indent(above) < indent(line)
-                {
-                    let _ = writeln!(
-                        out,
-                        "{} {bar} {above}",
-                        paint.blue(&format!(" {:>w$}", at.start.0 - 1, w = width))
-                    );
-                }
+    if let Some(at) = at {
+        let _ = writeln!(
+            out,
+            "{pad}{} {}:{}:{}",
+            paint.blue("┌─"),
+            path.display(),
+            at.start.0,
+            at.start.1 + 1
+        );
+        let _ = writeln!(out, "{pad}{bar}");
+        let line = lines[at.start.0 - 1];
+        // The line above, when it is the key this one sits under.
+        if at.start.0 >= 2 {
+            let above = lines[at.start.0 - 2];
+            let indent = |s: &str| s.len() - s.trim_start().len();
+            let trimmed = above.trim_start();
+            if !trimmed.is_empty()
+                && !trimmed.starts_with('#')
+                && trimmed.trim_end().ends_with(':')
+                && indent(above) < indent(line)
+            {
+                let _ = writeln!(
+                    out,
+                    "{} {bar} {above}",
+                    paint.blue(&format!(" {:>w$}", at.start.0 - 1, w = width))
+                );
             }
-            let _ = writeln!(
-                out,
-                "{} {bar} {line}",
-                paint.blue(&format!(" {:>w$}", at.start.0, w = width))
-            );
-            let col = at.start.1.min(line.chars().count());
-            let len = if at.end.0 == at.start.0 && at.end.1 > at.start.1 {
-                at.end.1 - at.start.1
-            } else {
-                line.chars().count().saturating_sub(col)
-            }
-            .max(1);
-            let label = if problem.label.is_empty() {
-                String::new()
-            } else {
-                format!(" {}", problem.label)
-            };
-            let _ = writeln!(
-                out,
-                "{pad}{bar} {}{}",
-                " ".repeat(col),
-                paint.yellow(&format!("{}{label}", "^".repeat(len)))
-            );
-            let _ = writeln!(out, "{pad}{bar}");
         }
-        None => {
-            let _ = writeln!(out, "{pad}{} {}", paint.blue("┌─"), path.display());
-            let _ = writeln!(out, "{pad}{bar}");
+        let _ = writeln!(
+            out,
+            "{} {bar} {line}",
+            paint.blue(&format!(" {:>w$}", at.start.0, w = width))
+        );
+        let col = at.start.1.min(line.chars().count());
+        let len = if at.end.0 == at.start.0 && at.end.1 > at.start.1 {
+            at.end.1 - at.start.1
+        } else {
+            line.chars().count().saturating_sub(col)
         }
+        .max(1);
+        let label = if problem.label.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", problem.label)
+        };
+        let _ = writeln!(
+            out,
+            "{pad}{bar} {}{}",
+            " ".repeat(col),
+            paint.yellow(&format!("{}{label}", "^".repeat(len)))
+        );
+        let _ = writeln!(out, "{pad}{bar}");
+    } else {
+        let _ = writeln!(out, "{pad}{} {}", paint.blue("┌─"), path.display());
+        let _ = writeln!(out, "{pad}{bar}");
     }
     if let Some(help) = &problem.help {
         let _ = writeln!(

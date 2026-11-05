@@ -126,7 +126,7 @@ fn packs_binary_files_manifest_and_unit_with_modes() {
     let contents = gather(&deployable, Some(&unit_file()), |_, _| {}).unwrap();
     let mut last = (0, 0);
     let bundle = pack(&contents, &manifest, &HashMap::new(), |done, total| {
-        last = (done, total)
+        last = (done, total);
     })
     .unwrap();
 
@@ -463,7 +463,7 @@ fn pm2_file_runs_from_current_with_the_options() {
     write(dir.join("app/dist/main.js"), "");
     let (contents, files) = packed_with(&deployable, &own);
     assert!(files.contains_key("demo.pm2.json"));
-    assert!(contents.unused_ecosystem.is_empty());
+    assert_eq!(contents.unused_ecosystem, Vec::<String>::new());
 
     // An ecosystem file shipped by mistake is named, since PM2 never reads it.
     write(dir.join("app/ecosystem.config.js"), "module.exports = {}");

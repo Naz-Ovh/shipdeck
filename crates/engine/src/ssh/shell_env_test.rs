@@ -44,7 +44,9 @@ fn a_command_sees_what_the_interactive_startup_files_set() {
     );
     let captured = sh(&home, CAPTURE);
     let stdout = String::from_utf8(captured.stdout).unwrap();
-    let prelude = prelude(captured.status.code().unwrap() as u32, &stdout).unwrap();
+    // A test process exits with a small, non-negative code.
+    let code = u32::try_from(captured.status.code().unwrap()).unwrap();
+    let prelude = prelude(code, &stdout).unwrap();
     assert!(!stdout.contains("welcome!"));
 
     // Without it the tool is not on PATH; with it, it is, and an awkward
@@ -70,7 +72,9 @@ fn a_failing_startup_is_reported_not_used() {
     let home = home("fails", "exit 3");
     let captured = sh(&home, CAPTURE);
     let stdout = String::from_utf8(captured.stdout).unwrap();
-    let err = prelude(captured.status.code().unwrap() as u32, &stdout).unwrap_err();
+    // A test process exits with a small, non-negative code.
+    let code = u32::try_from(captured.status.code().unwrap()).unwrap();
+    let err = prelude(code, &stdout).unwrap_err();
     assert!(err.contains("failed (exit 3)"), "{err}");
     assert_eq!(
         prelude(0, "  \n").unwrap_err(),

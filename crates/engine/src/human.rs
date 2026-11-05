@@ -2,21 +2,31 @@
 
 use std::time::Duration;
 
+/// Sizes in binary units with one decimal place: `512 B`, `1.5 KiB`.
+#[must_use]
 pub fn bytes(n: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
-    let mut value = n as f64;
     let mut unit = 0;
-    while value >= 1024.0 && unit < UNITS.len() - 1 {
-        value /= 1024.0;
+    let mut divisor = 1;
+    while n / divisor >= 1024 && unit < UNITS.len() - 1 {
+        divisor *= 1024;
         unit += 1;
     }
     if unit == 0 {
-        format!("{n} B")
+        return format!("{n} B");
+    }
+    // Round the tenth with whole numbers; every divisor here is a power of
+    // two, so a tie cannot happen and no float is needed.
+    let whole = n / divisor;
+    let tenth = (n % divisor * 10 + divisor / 2) / divisor;
+    if tenth == 10 {
+        format!("{}.0 {}", whole + 1, UNITS[unit])
     } else {
-        format!("{value:.1} {}", UNITS[unit])
+        format!("{whole}.{tenth} {}", UNITS[unit])
     }
 }
 
+#[must_use]
 pub fn duration(d: Duration) -> String {
     let secs = d.as_secs();
     match secs {
@@ -33,9 +43,13 @@ mod tests {
 
     #[test]
     fn formats_bytes() {
+        assert_eq!(bytes(0), "0 B");
         assert_eq!(bytes(512), "512 B");
         assert_eq!(bytes(1536), "1.5 KiB");
         assert_eq!(bytes(31 * 1024 * 1024), "31.0 MiB");
+        // Rounding carries into the whole part, as it did with floats.
+        assert_eq!(bytes(1024 * 1024 - 1), "1024.0 KiB");
+        assert_eq!(bytes(u64::MAX), "16777216.0 TiB");
     }
 
     #[test]
@@ -43,6 +57,6 @@ mod tests {
         assert_eq!(duration(Duration::from_millis(1500)), "1.5s");
         assert_eq!(duration(Duration::from_secs(42)), "42s");
         assert_eq!(duration(Duration::from_secs(72)), "1m12s");
-        assert_eq!(duration(Duration::from_secs(3720)), "1h02m");
+        assert_eq!(duration(Duration::from_mins(62)), "1h02m");
     }
 }

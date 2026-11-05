@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use super::*;
 
 /// `day` doubles as the build day, so a higher number is newer.
@@ -21,16 +23,16 @@ fn listing_of(
 ) -> Listing {
     let mut text = String::new();
     if let Some(day) = current {
-        text.push_str(&format!("current\treleases/{}\n", id(day)));
+        let _ = writeln!(text, "current\treleases/{}", id(day));
     }
     for day in open {
-        text.push_str(&format!("open\t{}\t100\t\n", id(*day)));
+        let _ = writeln!(text, "open\t{}\t100\t", id(*day));
         if !without_backup.contains(day) {
-            text.push_str(&format!("backup\t{}\t4\n", id(*day)));
+            let _ = writeln!(text, "backup\t{}\t4", id(*day));
         }
     }
     for day in backups {
-        text.push_str(&format!("backup\t{}\t40\n", id(*day)));
+        let _ = writeln!(text, "backup\t{}\t40", id(*day));
     }
     parse_listing(&text)
 }
@@ -84,7 +86,7 @@ fn closes_beyond_open_and_drops_beyond_compressed() {
     let plan = plan_rotation(&listing, keep(5, 3));
     // 4 and 3 leave the open tier; their backups stay.
     assert_eq!(plan.close, [id(4), id(3)]);
-    assert!(plan.drop_open.is_empty());
+    assert_eq!(plan.drop_open, Vec::<String>::new());
     // Backups afterwards, newest first: 4, 3, 2 kept; 1 dropped.
     assert_eq!(plan.drop_backup, [id(1)]);
 }
@@ -94,7 +96,7 @@ fn an_open_release_too_old_for_a_backup_goes_with_its_backup() {
     let listing = listing(&[1, 5, 6], &[2, 3, 4], Some(6));
     let plan = plan_rotation(&listing, keep(2, 3));
     // Open 1 leaves; backups would be 4, 3, 2, 1 → 1 is past the limit.
-    assert!(plan.close.is_empty());
+    assert_eq!(plan.close, Vec::<String>::new());
     assert_eq!(plan.drop_open, [id(1)]);
     assert_eq!(plan.drop_backup, [id(1)]);
 }

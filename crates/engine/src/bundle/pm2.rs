@@ -19,6 +19,7 @@ pub struct Launch {
 /// `node <script> [args]` runs the script with node as PM2's interpreter,
 /// so cluster mode works; node's own flags go in `pm2.options.node_args`
 /// (the rules see to it). Any other program runs as it is.
+#[must_use]
 pub fn launch(deployable: &Deployable, start_path: Option<&str>) -> Launch {
     let (program, rest) = deployable.start();
     let is_node = is_node(&program);
@@ -43,6 +44,10 @@ pub fn launch(deployable: &Deployable, start_path: Option<&str>) -> Launch {
 /// The app file. The environment is not in it: shipdeck exports
 /// `service.env` and `service.env_file` before it calls PM2, which reads
 /// them with `--update-env`.
+///
+/// # Errors
+///
+/// Fails when the app file cannot be serialized to JSON.
 pub fn render(deployable: &Deployable, start_path: Option<&str>) -> Result<String> {
     let service = &deployable.config.service;
     let launch = launch(deployable, start_path);

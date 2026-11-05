@@ -33,7 +33,7 @@ async fn shift_d_shows_a_release_its_files_and_one_file() {
         details: None,
     });
     app.screen = Screen::Releases;
-    app.on_event(Event::Key(KeyEvent::new(
+    app.on_event(&Event::Key(KeyEvent::new(
         KeyCode::Char('D'),
         KeyModifiers::SHIFT,
     )));
@@ -106,7 +106,7 @@ async fn b_switches_an_open_release_between_folder_and_backup() {
         details: None,
     });
     app.screen = Screen::Releases;
-    app.on_event(Event::Key(KeyEvent::new(
+    app.on_event(&Event::Key(KeyEvent::new(
         KeyCode::Char('D'),
         KeyModifiers::SHIFT,
     )));

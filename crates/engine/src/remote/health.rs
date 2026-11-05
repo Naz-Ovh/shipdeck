@@ -28,12 +28,17 @@ pub struct Probe {
 }
 
 impl Probe {
+    #[must_use]
     pub fn healthy(&self) -> bool {
         self.state == "active" && matches!(self.http, HttpCheck::Skipped | HttpCheck::Ok)
     }
 }
 
 impl Server {
+    /// Reads the service's state, restart count and health URL result.
+    ///
+    /// # Errors
+    /// Returns an error when the server cannot be asked for its state.
     pub async fn probe(&self, url: Option<&str>) -> Result<Probe> {
         let svc = self.q_service();
         let http = match url {
@@ -68,8 +73,7 @@ echo \"restarts=$(systemctl show -p NRestarts --value {svc} 2>/dev/null)\"
             values
                 .iter()
                 .find(|(k, _)| *k == key)
-                .map(|(_, v)| v.trim())
-                .unwrap_or("")
+                .map_or("", |(_, v)| v.trim())
         };
         let http = match get("http") {
             "ok" => HttpCheck::Ok,

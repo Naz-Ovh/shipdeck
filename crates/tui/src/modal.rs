@@ -45,90 +45,20 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
             current,
         } => confirm_rollback(app, *deployable, target, *from_backup, current.as_deref()),
         Modal::ConfirmControl { deployable, action } => confirm_control(app, *deployable, *action),
-        Modal::Notice { title, text } => (
-            title.clone(),
-            ERR,
-            text.lines()
-                .map(|line| Line::from(Span::styled(line.to_string(), theme::text())))
-                .collect(),
-            vec![("⏎", "close".into())],
-        ),
-        Modal::ConfirmQuit => (
-            "Quit now?".to_string(),
-            WARN,
-            vec![
-                Line::from(Span::styled(
-                    "An operation is still running.",
-                    theme::bold(TEXT),
-                )),
-                Line::default(),
-                Line::from(Span::styled(
-                    "Quitting stops it midway. If it is past the switch, the server may be left \
-                     on the new release without a health check.",
-                    theme::text(),
-                )),
-            ],
-            vec![("y", "quit anyway".into()), ("n", "keep running".into())],
-        ),
+        Modal::Notice { title, text } => notice(title, text),
+        Modal::ConfirmQuit => confirm_quit(),
         Modal::Secret {
             title,
             prompt,
             input,
             ..
-        } => (
-            title.clone(),
-            ACCENT,
-            vec![
-                Line::from(Span::styled(prompt.clone(), theme::text())),
-                Line::default(),
-                Line::from(vec![
-                    Span::styled(" ", Style::new().bg(SURFACE)),
-                    Span::styled(
-                        "•".repeat(input.chars().count()),
-                        Style::new().fg(TEXT).bg(SURFACE),
-                    ),
-                    Span::styled("▏", Style::new().fg(ACCENT).bg(SURFACE)),
-                    Span::styled(
-                        " ".repeat(40usize.saturating_sub(input.chars().count())),
-                        Style::new().bg(SURFACE),
-                    ),
-                ]),
-                Line::default(),
-                Line::from(Span::styled(
-                    "Kept in memory for this run only; never written to disk.",
-                    theme::faint(),
-                )),
-            ],
-            vec![("⏎", "log in".into()), ("esc", "cancel".into())],
-        ),
+        } => secret(title, prompt, input),
         Modal::TrustHost {
             host,
             algorithm,
             fingerprint,
             ..
-        } => (
-            "New server".to_string(),
-            WARN,
-            vec![
-                Line::from(vec![
-                    Span::styled("First connection to ", theme::text()),
-                    Span::styled(host.clone(), theme::bold(TEXT)),
-                ]),
-                Line::default(),
-                Line::from(Span::styled(
-                    format!("{algorithm} key fingerprint"),
-                    theme::muted(),
-                )),
-                Line::from(Span::styled(fingerprint.clone(), theme::bold(VIOLET))),
-                Line::default(),
-                Line::from(Span::styled(
-                    "Compare it with `ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub` on the server. \
-                     Trusting saves it to ~/.ssh/known_hosts.",
-                    theme::muted(),
-                )),
-            ],
-            vec![("y", "trust and connect".into()), ("n", "refuse".into())],
-        ),
+        } => trust_host(host, algorithm, fingerprint),
     };
 
     lines.push(Line::default());
@@ -140,25 +70,109 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
     lines.push(Line::from(spans));
 
     let width = area.width.saturating_sub(4).min(76);
-    let text_width = width.saturating_sub(4).max(1) as usize;
-    let height: u16 = lines
-        .iter()
-        .map(|l| (l.width().max(1).div_ceil(text_width)) as u16)
-        .sum::<u16>()
-        + 2;
-    let height = height.min(area.height.saturating_sub(2));
+    let text_width = usize::from(width.saturating_sub(4).max(1));
+    // A dialog taller than the screen saturates instead of wrapping.
+    let height = lines.iter().fold(0_u16, |height, line| {
+        let rows = line.width().max(1).div_ceil(text_width);
+        height.saturating_add(u16::try_from(rows).unwrap_or(u16::MAX))
+    });
+    let height = height.saturating_add(2).min(area.height.saturating_sub(2));
     let rect = area.centered(Constraint::Length(width), Constraint::Length(height));
 
     frame.render_widget(Clear, rect);
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
-            .block(dialog(title, color)),
+            .block(dialog(&title, color)),
         rect,
     );
 }
 
-fn dialog<'a>(title: String, color: Color) -> Block<'a> {
+fn notice(title: &str, text: &str) -> Dialog {
+    (
+        title.to_string(),
+        ERR,
+        text.lines()
+            .map(|line| Line::from(Span::styled(line.to_string(), theme::text())))
+            .collect(),
+        vec![("⏎", "close".into())],
+    )
+}
+
+fn confirm_quit() -> Dialog {
+    (
+        "Quit now?".to_string(),
+        WARN,
+        vec![
+            Line::from(Span::styled(
+                "An operation is still running.",
+                theme::bold(TEXT),
+            )),
+            Line::default(),
+            Line::from(Span::styled(
+                "Quitting stops it midway. If it is past the switch, the server may be left \
+                 on the new release without a health check.",
+                theme::text(),
+            )),
+        ],
+        vec![("y", "quit anyway".into()), ("n", "keep running".into())],
+    )
+}
+
+fn secret(title: &str, prompt: &str, input: &str) -> Dialog {
+    let bullets = input.chars().count();
+    (
+        title.to_string(),
+        ACCENT,
+        vec![
+            Line::from(Span::styled(prompt.to_string(), theme::text())),
+            Line::default(),
+            Line::from(vec![
+                Span::styled(" ", Style::new().bg(SURFACE)),
+                Span::styled("•".repeat(bullets), Style::new().fg(TEXT).bg(SURFACE)),
+                Span::styled("▏", Style::new().fg(ACCENT).bg(SURFACE)),
+                Span::styled(
+                    " ".repeat(40usize.saturating_sub(bullets)),
+                    Style::new().bg(SURFACE),
+                ),
+            ]),
+            Line::default(),
+            Line::from(Span::styled(
+                "Kept in memory for this run only; never written to disk.",
+                theme::faint(),
+            )),
+        ],
+        vec![("⏎", "log in".into()), ("esc", "cancel".into())],
+    )
+}
+
+fn trust_host(host: &str, algorithm: &str, fingerprint: &str) -> Dialog {
+    (
+        "New server".to_string(),
+        WARN,
+        vec![
+            Line::from(vec![
+                Span::styled("First connection to ", theme::text()),
+                Span::styled(host.to_string(), theme::bold(TEXT)),
+            ]),
+            Line::default(),
+            Line::from(Span::styled(
+                format!("{algorithm} key fingerprint"),
+                theme::muted(),
+            )),
+            Line::from(Span::styled(fingerprint.to_string(), theme::bold(VIOLET))),
+            Line::default(),
+            Line::from(Span::styled(
+                "Compare it with `ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub` on the server. \
+                 Trusting saves it to ~/.ssh/known_hosts.",
+                theme::muted(),
+            )),
+        ],
+        vec![("y", "trust and connect".into()), ("n", "refuse".into())],
+    )
+}
+
+fn dialog<'a>(title: &str, color: Color) -> Block<'a> {
     Block::bordered()
         .border_type(BorderType::Double)
         .border_style(Style::new().fg(color))
@@ -185,15 +199,10 @@ fn confirm_deploy(app: &App, index: usize, missing: Option<&str>) -> Dialog {
     let config = &deployable.config;
     let pipeline = &config.pipeline;
     let live = match &app.live[index] {
-        Live::Ready(status) => status
-            .current
-            .as_deref()
-            .map(|id| {
-                ReleaseName::parse(id)
-                    .map(|n| n.tag())
-                    .unwrap_or_else(|| id.to_string())
-            })
-            .unwrap_or_else(|| "nothing yet".into()),
+        Live::Ready(status) => status.current.as_deref().map_or_else(
+            || "nothing yet".into(),
+            |id| ReleaseName::parse(id).map_or_else(|| id.to_string(), |n| n.tag()),
+        ),
         _ => "unknown until preflight".into(),
     };
     let build = match pipeline.build.run.local.0.as_slice() {
@@ -253,17 +262,16 @@ fn confirm_deploy(app: &App, index: usize, missing: Option<&str>) -> Dialog {
 /// commit and build time when both have the same version.
 fn names(new: &str, old: &str) -> (String, String) {
     let short = |id: &str| {
-        ReleaseName::parse(id)
-            .map(|n| format!("v{}", n.version))
-            .unwrap_or_else(|| id.to_string())
+        ReleaseName::parse(id).map_or_else(|| id.to_string(), |n| format!("v{}", n.version))
     };
     if short(new) != short(old) {
         return (short(new), short(old));
     }
     let long = |id: &str| {
-        ReleaseName::parse(id)
-            .map(|n| format!("v{} ({} {})", n.version, n.git, n.stamp.format("%H:%M:%S")))
-            .unwrap_or_else(|| id.to_string())
+        ReleaseName::parse(id).map_or_else(
+            || id.to_string(),
+            |n| format!("v{} ({} {})", n.version, n.git, n.stamp.format("%H:%M:%S")),
+        )
     };
     (long(new), long(old))
 }
@@ -380,9 +388,7 @@ fn confirm_rollback(
         row("roll back to", format!("{target}  {}", tag(target))),
         row(
             "live now",
-            current
-                .map(|c| format!("{c}  {}", tag(c)))
-                .unwrap_or_else(|| "nothing".into()),
+            current.map_or_else(|| "nothing".into(), |c| format!("{c}  {}", tag(c))),
         ),
         Line::default(),
     ];

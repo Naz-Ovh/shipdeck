@@ -21,23 +21,25 @@ pub struct Pattern {
     pub negated: bool,
     /// It ended with `/`.
     dir_only: bool,
-    /// `.`: the source folder itself.
-    root: bool,
     /// What fast-glob matches: without `!`, `./` and a trailing `/`.
-    glob: String,
+    /// `None` for `.`: the source folder itself.
+    glob: Option<String>,
     /// The leading folders without wildcards, where any match must be.
     base: Vec<String>,
-    /// After `base`: whether `**`, or braces that could hold a `/`, make the
-    /// depth open-ended.
-    deep: bool,
-    /// How many folders deep a match is, when `deep` is false.
-    depth: usize,
+    /// How many folders deep a match is; `None` when `**` or braces that
+    /// could hold a `/` make the depth open-ended.
+    depth: Option<usize>,
 }
 
 /// Characters fast-glob treats as wildcards or escapes.
 const SPECIAL: [char; 5] = ['*', '?', '[', '{', '\\'];
 
 impl Pattern {
+    /// Reads one pattern.
+    ///
+    /// # Errors
+    /// Returns a message when the pattern is empty, absolute, climbs out with
+    /// `..`, or is not valid fast-glob.
     pub fn parse(text: &str) -> Result<Self, String> {
         let bangs = text.chars().take_while(|c| *c == '!').count();
         let negated = bangs % 2 == 1;
@@ -58,11 +60,9 @@ impl Pattern {
                 text: text.to_string(),
                 negated,
                 dir_only: false,
-                root: true,
-                glob: String::new(),
+                glob: None,
                 base: Vec::new(),
-                deep: true,
-                depth: 0,
+                depth: None,
             });
         }
         if let Err(err) = validate(body) {
@@ -86,37 +86,38 @@ impl Pattern {
         let base: Vec<String> = segments
             .iter()
             .take_while(|s| !wild(s))
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
         let rest = &segments[base.len()..];
+        let deep = rest.iter().any(|s| s.contains("**") || s.contains('{'));
         Ok(Self {
             text: text.to_string(),
             negated,
             dir_only,
-            root: false,
-            glob: body.to_string(),
-            deep: rest.iter().any(|s| s.contains("**") || s.contains('{')),
-            depth: segments.len(),
+            glob: Some(body.to_string()),
             base,
+            depth: (!deep).then_some(segments.len()),
         })
     }
 
     /// Whether `path` (relative, `/`-separated; empty for the source folder)
     /// is one this pattern names. The `!` is the caller's to apply.
+    #[must_use]
     pub fn matches(&self, path: &str, is_dir: bool) -> bool {
         if self.dir_only && !is_dir {
             return false;
         }
-        if self.root {
-            return path.is_empty();
+        match &self.glob {
+            None => path.is_empty(),
+            Some(glob) => glob_match(glob, path),
         }
-        glob_match(&self.glob, path)
     }
 
     /// Whether something strictly inside the folder `dir` could match, so a
     /// walk knows whether to look inside.
+    #[must_use]
     pub fn may_match_below(&self, dir: &str) -> bool {
-        if self.root {
+        if self.glob.is_none() {
             return false;
         }
         let parts: Vec<&str> = dir.split('/').filter(|p| !p.is_empty()).collect();
@@ -127,25 +128,27 @@ impl Pattern {
         if parts.len() < self.base.len() {
             return true;
         }
-        self.deep || self.depth > parts.len()
+        self.depth.is_none_or(|depth| depth > parts.len())
     }
 
     /// The path this pattern names when it has no wildcards and no `!`.
+    #[must_use]
     pub fn literal(&self) -> Option<String> {
         if self.negated {
             None
-        } else if self.root {
-            Some(String::new())
-        } else if self.glob.contains(SPECIAL) {
-            None
         } else {
-            Some(self.glob.clone())
+            match &self.glob {
+                None => Some(String::new()),
+                Some(glob) if glob.contains(SPECIAL) => None,
+                Some(glob) => Some(glob.clone()),
+            }
         }
     }
 
     /// `.`: the whole source.
+    #[must_use]
     pub fn is_root(&self) -> bool {
-        self.root
+        self.glob.is_none()
     }
 }
 
@@ -156,33 +159,45 @@ pub struct Rules {
     pub exclude: Vec<Pattern>,
 }
 
+/// Whether a plain pattern or a `!` pattern matched, for one side.
+#[derive(Debug, Clone, Copy, Default)]
+struct Matched {
+    plain: bool,
+    negated: bool,
+}
+
 /// What the patterns say about one path, carried down into its folder:
 /// a pattern that matches a folder covers everything inside it.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Verdict {
-    included: bool,
-    unincluded: bool,
-    excluded: bool,
-    kept: bool,
+    include: Matched,
+    exclude: Matched,
 }
 
 impl Verdict {
+    #[must_use]
     pub fn ships(&self) -> bool {
         self.included() && !self.excluded()
     }
 
     /// An include pattern names it, and no `!` include leaves it out.
+    #[must_use]
     pub fn included(&self) -> bool {
-        self.included && !self.unincluded
+        self.include.plain && !self.include.negated
     }
 
     /// An exclude pattern names it, and no `!` exclude keeps it.
+    #[must_use]
     pub fn excluded(&self) -> bool {
-        self.excluded && !self.kept
+        self.exclude.plain && !self.exclude.negated
     }
 }
 
 impl Rules {
+    /// Reads include and exclude patterns together.
+    ///
+    /// # Errors
+    /// Returns a message naming the pattern that cannot be read.
     pub fn parse(include: &[String], exclude: &[String]) -> Result<Self, String> {
         let parse = |list: &[String]| {
             list.iter()
@@ -196,6 +211,7 @@ impl Rules {
     }
 
     /// No pattern that brings anything in.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         !self.include.iter().any(|p| !p.negated)
     }
@@ -208,18 +224,18 @@ impl Rules {
             if pattern.matches(path, is_dir) {
                 *hit += 1;
                 if pattern.negated {
-                    verdict.unincluded = true;
+                    verdict.include.negated = true;
                 } else {
-                    verdict.included = true;
+                    verdict.include.plain = true;
                 }
             }
         }
         for pattern in &self.exclude {
             if pattern.matches(path, is_dir) {
                 if pattern.negated {
-                    verdict.kept = true;
+                    verdict.exclude.negated = true;
                 } else {
-                    verdict.excluded = true;
+                    verdict.exclude.plain = true;
                 }
             }
         }
@@ -227,12 +243,13 @@ impl Rules {
     }
 
     /// Whether a walk should look inside the folder `dir`.
+    #[must_use]
     pub fn enter(&self, verdict: Verdict, dir: &str) -> bool {
-        if verdict.unincluded {
+        if verdict.include.negated {
             return false;
         }
-        if verdict.excluded
-            && !verdict.kept
+        if verdict.exclude.plain
+            && !verdict.exclude.negated
             && !self
                 .exclude
                 .iter()
@@ -240,7 +257,7 @@ impl Rules {
         {
             return false;
         }
-        verdict.included
+        verdict.include.plain
             || self
                 .include
                 .iter()

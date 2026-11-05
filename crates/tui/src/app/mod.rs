@@ -191,8 +191,7 @@ impl Operation {
     pub fn elapsed(&self) -> Duration {
         self.finished
             .as_ref()
-            .map(|(_, at)| *at)
-            .unwrap_or_else(Instant::now)
+            .map_or_else(Instant::now, |(_, at)| *at)
             .duration_since(self.started)
     }
 
@@ -476,6 +475,7 @@ impl App {
         }
     }
 
+    #[must_use]
     pub fn selected(&self) -> Option<usize> {
         self.list.selected().filter(|i| *i < self.deployables.len())
     }

@@ -15,6 +15,11 @@ pub const PLACEHOLDERS: [&str; 11] = [
 
 /// Renders the unit. `start_path` is where preflight found the start
 /// program on the server, when `service.start` names one like `node`.
+///
+/// # Errors
+///
+/// Fails when the custom template cannot be read, or a placeholder is
+/// unknown or has no value.
 pub fn render_for(
     deployable: &Deployable,
     release: &ReleaseName,
@@ -70,6 +75,7 @@ pub fn render_for(
 
 /// The `ExecStart=` command: `service.start` (or the binary) with its
 /// program made absolute.
+#[must_use]
 pub fn exec_start(deployable: &Deployable, start_path: Option<&str>) -> String {
     let (program, rest) = deployable.start();
     [program_path(deployable, program, start_path), rest]
@@ -86,12 +92,17 @@ pub fn program_path(deployable: &Deployable, program: Program, start_path: Optio
         Program::InRelease(path) => format!("{}/current/{path}", deployable.config.service.dir),
         // systemd finds a bare name on its own fixed PATH, which may not be
         // where preflight found it; the found path is the one to use.
-        Program::Tool(name) => start_path.map(str::to_string).unwrap_or(name),
+        Program::Tool(name) => start_path.map_or(name, str::to_string),
     }
 }
 
 /// Replaces every `{{name}}`; an unknown placeholder, or one this deployable
 /// has no value for, is an error rather than silent text.
+///
+/// # Errors
+///
+/// Fails when a `{{` is never closed, or a placeholder is unknown or has
+/// no value.
 pub fn render(template: &str, vars: &[(&str, Option<String>)]) -> Result<String> {
     let mut out = String::with_capacity(template.len());
     let mut rest = template;

@@ -121,6 +121,7 @@ impl Service {
     /// The file shipdeck writes into each release for the manager:
     /// `<name>.service`, or `<name>.pm2.json` when there is no
     /// `pm2.ecosystem`.
+    #[must_use]
     pub fn own_file(&self) -> Option<String> {
         match self.manager {
             Manager::Systemd => Some(format!("{}.service", self.name)),
@@ -130,11 +131,13 @@ impl Service {
     }
 
     /// The PM2 app's name.
+    #[must_use]
     pub fn pm2_app(&self) -> &str {
         self.pm2.app.as_deref().unwrap_or(&self.name)
     }
 
     /// The file in the release PM2 starts the app from.
+    #[must_use]
     pub fn pm2_file(&self) -> String {
         match &self.pm2.ecosystem {
             Some(file) => release_path(file),
@@ -157,6 +160,7 @@ pub enum Manager {
 
 impl Manager {
     /// As messages name it.
+    #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             Self::Systemd => "systemd",
@@ -231,7 +235,7 @@ pub struct Pipeline {
     /// Step 7: shipdeck packs the set-up release into
     /// `backups/<id>.tar.zst`, which stays when the release folder goes. A
     /// rollback to it unpacks it and runs setup again, so what setup makes,
-    /// such as node_modules, can stay out. A failure removes the new release.
+    /// such as `node_modules`, can stay out. A failure removes the new release.
     #[serde(default)]
     pub backup: Backup,
     /// Step 10, after shipdeck switches `current` and restarts the service.
@@ -242,11 +246,11 @@ pub struct Pipeline {
     /// Step 11: the new release is live. shipdeck tidies old releases (see
     /// `backup.keep`), then runs `run.server` in `current`, then `run.local`.
     /// A failure is only a warning. A manual rollback runs it too, with
-    /// SHIPDECK_ACTION=rollback.
+    /// `SHIPDECK_ACTION=rollback`.
     #[serde(default)]
     pub done: Done,
     /// Runs when any step fails, after a rollback if there was one.
-    /// SHIPDECK_STEP names the step that failed.
+    /// `SHIPDECK_STEP` names the step that failed.
     #[serde(default)]
     pub failed: Failed,
 }
@@ -468,10 +472,12 @@ pub struct ServerOnly {
 pub struct Commands(pub Vec<String>);
 
 impl Commands {
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.0.len()
     }
@@ -533,6 +539,9 @@ fn default_timeout() -> u64 {
 pub const VERSION_FILES: [&str; 4] = ["Cargo.toml", "package.json", "pyproject.toml", "VERSION"];
 
 /// Reads the text of a `deploy.yaml`, or says everything wrong with it.
+///
+/// # Errors
+/// Returns every problem in the text, each with its line when it has one.
 pub fn parse(text: &str) -> Result<DeployConfig, Vec<Problem>> {
     parse_tree(text).map(|(config, _)| config)
 }
@@ -563,6 +572,7 @@ fn parse_tree(text: &str) -> Result<(DeployConfig, yaml::Node), Vec<Problem>> {
 }
 
 /// The config file in `folder`, if it has one.
+#[must_use]
 pub fn config_file(folder: &Path) -> Option<PathBuf> {
     FILE_NAMES
         .iter()
@@ -597,6 +607,10 @@ pub struct Deployable {
 
 impl Deployable {
     /// Reads `folder`'s config, or every problem with it.
+    ///
+    /// # Errors
+    /// Returns the problems when the folder has no config file or both, the
+    /// file cannot be read, or its contents do not pass the checks.
     pub fn load(folder: &Path) -> Result<Self, FileProblems> {
         let found: Vec<PathBuf> = FILE_NAMES
             .iter()
@@ -628,14 +642,17 @@ impl Deployable {
                 Problem::new(format!("cannot read it: {err}")),
             )
         })?;
-        Self::from_text(folder, path, text)
+        Self::from_text(folder, &path, text)
     }
 
     /// Reads a config's text as if it were `path` in `folder`, or every
     /// problem with it.
-    pub fn from_text(folder: &Path, path: PathBuf, text: String) -> Result<Self, FileProblems> {
+    ///
+    /// # Errors
+    /// Returns the problems in `text`, or when the SSH settings cannot resolve.
+    pub fn from_text(folder: &Path, path: &Path, text: String) -> Result<Self, FileProblems> {
         let failed = |problems| FileProblems {
-            path: path.clone(),
+            path: path.to_path_buf(),
             source: Some(text.clone()),
             problems,
         };
@@ -649,10 +666,10 @@ impl Deployable {
                     .label("cannot log in like this"),
             ])
         })?;
-        let slug = folder
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| folder.display().to_string());
+        let slug = folder.file_name().map_or_else(
+            || folder.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        );
         Ok(Self {
             folder: folder.to_path_buf(),
             slug,
@@ -663,11 +680,13 @@ impl Deployable {
     }
 
     /// Where local commands run and project files come from.
+    #[must_use]
     pub fn project_dir(&self) -> PathBuf {
         self.folder.join(&self.config.project)
     }
 
     /// The binary the build produces, if it produces one.
+    #[must_use]
     pub fn binary_path(&self) -> Option<PathBuf> {
         let binary = self.config.pipeline.pack.binary.as_ref()?;
         Some(self.project_dir().join(binary))
@@ -681,6 +700,7 @@ impl Deployable {
     /// The file whose version names a release: `build.version_from`, else
     /// the first of [`VERSION_FILES`] in `project`. `None` falls back to the
     /// latest git tag.
+    #[must_use]
     pub fn version_file(&self) -> Option<PathBuf> {
         let dir = self.project_dir();
         if let Some(path) = &self.config.pipeline.build.version_from {
@@ -692,11 +712,13 @@ impl Deployable {
             .find(|path| path.is_file())
     }
 
+    #[must_use]
     pub fn unit_template_path(&self) -> PathBuf {
         self.folder.join(UNIT_TEMPLATE)
     }
 
     /// The user the service runs as.
+    #[must_use]
     pub fn run_as(&self) -> &str {
         self.config
             .service
@@ -733,6 +755,7 @@ impl Deployable {
     /// Programs preflight must find on the server: the start program when
     /// it lives outside the release, `pm2` with PM2, then
     /// `preflight.requires`.
+    #[must_use]
     pub fn required_tools(&self) -> Vec<String> {
         let service = &self.config.service;
         let mut tools = Vec::new();
@@ -755,6 +778,7 @@ impl Deployable {
 
 /// A path as it is stored in the release: `./files/` → `files`. Empty for a
 /// path that names the folder itself.
+#[must_use]
 pub fn release_path(entry: &str) -> String {
     Path::new(entry)
         .components()
@@ -769,12 +793,12 @@ pub fn release_path(entry: &str) -> String {
 fn file_name(path: &str) -> String {
     Path::new(path)
         .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.to_string())
+        .map_or_else(|| path.to_string(), |n| n.to_string_lossy().into_owned())
 }
 
 /// `node`, by name or path: PM2 runs its script with node as the
 /// interpreter.
+#[must_use]
 pub fn is_node(program: &Program) -> bool {
     let (Program::Tool(path) | Program::Absolute(path) | Program::InRelease(path)) = program;
     Path::new(path)
@@ -786,6 +810,7 @@ pub fn is_node(program: &Program) -> bool {
 pub const ECOSYSTEM_ENDINGS: [&str; 5] = [".config.js", ".config.cjs", ".json", ".yml", ".yaml"];
 
 /// A name PM2 reads as an ecosystem file.
+#[must_use]
 pub fn is_ecosystem_file(path: &str) -> bool {
     ECOSYSTEM_ENDINGS.iter().any(|end| path.ends_with(end))
 }
@@ -793,6 +818,7 @@ pub fn is_ecosystem_file(path: &str) -> bool {
 /// The arguments in `service.start` after the program, split the way
 /// systemd splits `ExecStart=`: at spaces, with `"..."` or `'...'` kept as
 /// one argument. `None` when a quote is never closed.
+#[must_use]
 pub fn split_args(text: &str) -> Option<Vec<String>> {
     let mut args = Vec::new();
     let mut word: Option<String> = None;
@@ -800,13 +826,12 @@ pub fn split_args(text: &str) -> Option<Vec<String>> {
     for c in text.chars() {
         match (quote, c) {
             (Some(open), c) if c == open => quote = None,
-            (Some(_), c) => word.get_or_insert_default().push(c),
             (None, '"' | '\'') => {
                 quote = Some(c);
                 word.get_or_insert_default();
             }
             (None, c) if c.is_whitespace() => args.extend(word.take()),
-            (None, c) => word.get_or_insert_default().push(c),
+            (_, c) => word.get_or_insert_default().push(c),
         }
     }
     if quote.is_some() {
@@ -827,6 +852,7 @@ fn is_program(text: &str) -> bool {
 }
 
 /// A systemd unit name without `.service`: `my-api`, `worker@1`.
+#[must_use]
 pub fn is_unit_name(name: &str) -> bool {
     !name.is_empty()
         && name
@@ -835,6 +861,7 @@ pub fn is_unit_name(name: &str) -> bool {
 }
 
 /// A user or app name: letters, digits, `.`, `_` and `-`.
+#[must_use]
 pub fn is_plain_name(name: &str) -> bool {
     !name.is_empty()
         && name

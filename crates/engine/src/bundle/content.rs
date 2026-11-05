@@ -32,6 +32,7 @@ impl Contents {
     /// The files the live release may already have: every one from the
     /// project or the deploy folder whose name `sha256sum` reads back.
     /// shipdeck's own files change with each release and are always sent.
+    #[must_use]
     pub fn candidates(&self) -> Vec<String> {
         self.entries
             .iter()
@@ -45,6 +46,10 @@ impl Contents {
     /// rendered without the release's name, so a new id, version or build
     /// time leave it alone; and `deploy.yaml`. Two releases with the same
     /// fingerprint run the same files the same way.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the service file cannot be rendered for the fingerprint.
     pub fn fingerprint(&self, deployable: &Deployable, start_path: Option<&str>) -> Result<String> {
         let own = service_file(deployable, &unnamed(), start_path)?;
         Ok(self.fingerprint_with(own.as_ref(), &deployable.yaml))
@@ -104,6 +109,7 @@ fn unnamed() -> ReleaseName {
 /// Whether `sha256sum` reads a path back as it was written. GNU and
 /// busybox escape a name with a newline, a carriage return or a backslash
 /// differently, so such a file is always sent and never listed.
+#[must_use]
 pub fn listable(path: &str) -> bool {
     !path.contains(['\n', '\r', '\\'])
 }
@@ -185,7 +191,7 @@ pub(super) fn receipt<'a>(entries: impl Iterator<Item = &'a Entry>) -> Vec<u8> {
         .filter(|entry| listable(&entry.path))
         .filter_map(|entry| Some((entry.path.as_str(), entry.sha256.as_deref()?)))
         .collect();
-    lines.sort();
+    lines.sort_unstable();
     let mut text = Vec::new();
     for (path, hash) in lines {
         text.extend_from_slice(format!("{hash}  ./{path}\n").as_bytes());

@@ -20,6 +20,7 @@ pub enum Source {
 }
 
 impl Source {
+    #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             Self::Project => "project",
@@ -55,6 +56,7 @@ pub struct Selection {
 }
 
 impl Selection {
+    #[must_use]
     pub fn files(&self) -> usize {
         self.items
             .values()
@@ -85,6 +87,11 @@ fn source(deployable: &Deployable, source: Source) -> Result<(PathBuf, Rules)> {
 
 /// Picks every file `pipeline.pack.files` names. Fails when a pattern finds
 /// nothing, so a missing build output is caught before anything ships.
+///
+/// # Errors
+///
+/// Fails when either source cannot be walked, or a path is a folder in one
+/// source and a file in the other.
 pub fn select(deployable: &Deployable) -> Result<Selection> {
     let mut selection = Selection::default();
     for from in [Source::Project, Source::Deploy] {
@@ -111,6 +118,11 @@ pub fn select(deployable: &Deployable) -> Result<Selection> {
 }
 
 /// Walks one source and checks every pattern found something.
+///
+/// # Errors
+///
+/// Fails when the include patterns are invalid, the folder is missing or
+/// cannot be read, or a pattern matches nothing.
 pub fn walk_source(deployable: &Deployable, from: Source) -> Result<BTreeMap<String, Item>> {
     let (dir, rules) = source(deployable, from)?;
     if rules.include.is_empty() {
@@ -206,7 +218,11 @@ impl Walk<'_> {
                 let kind = if meta.file_type().is_symlink() {
                     let target = std::fs::read_link(&child)
                         .with_context(|| format!("reading the link {}", child.display()))?;
-                    Some(Kind::Link(link_target(&child, target)?))
+                    #[cfg(unix)]
+                    let target = link_target(&child, target);
+                    #[cfg(windows)]
+                    let target = link_target(&child, target)?;
+                    Some(Kind::Link(target))
                 } else if is_dir {
                     Some(Kind::Dir)
                 } else if meta.is_file() {
@@ -258,8 +274,8 @@ fn file_mode(_meta: &std::fs::Metadata) -> u32 {
 
 /// A link's target as the server reads it: on Unix, as written.
 #[cfg(unix)]
-pub(super) fn link_target(_link: &Path, target: PathBuf) -> Result<PathBuf> {
-    Ok(target)
+pub(super) fn link_target(_link: &Path, target: PathBuf) -> PathBuf {
+    target
 }
 
 /// A link's target as the server reads it: each `\` becomes `/`. A drive or

@@ -83,8 +83,16 @@ impl Rules<'_> {
     }
 
     fn service(&mut self, config: &DeployConfig) {
-        let service = &config.service;
-        let name = &service.name;
+        self.service_name(config);
+        self.service_dir(config);
+        self.service_run(config);
+        self.service_env(config);
+        self.service_shared(config);
+    }
+
+    /// `service.name`: a unit name, without `.service`.
+    fn service_name(&mut self, config: &DeployConfig) {
+        let name = &config.service.name;
         if name.ends_with(".service") {
             self.fail(
                 &["service", "name"],
@@ -100,8 +108,11 @@ impl Rules<'_> {
                 "letters, digits, `.`, `_`, `@` and `-` only",
             );
         }
+    }
 
-        let dir = &service.dir;
+    /// `service.dir`: an absolute folder on the server.
+    fn service_dir(&mut self, config: &DeployConfig) {
+        let dir = &config.service.dir;
         if !(dir.starts_with('/') && dir.len() > 1) {
             self.fail(
                 &["service", "dir"],
@@ -121,7 +132,11 @@ impl Rules<'_> {
                 "and no `..`",
             );
         }
+    }
 
+    /// What runs: `service.start`, `service.run_as` and `service.env_file`.
+    fn service_run(&mut self, config: &DeployConfig) {
+        let service = &config.service;
         let ecosystem = service.manager == Manager::Pm2 && service.pm2.ecosystem.is_some();
         match &service.start {
             None if config.pipeline.pack.binary.is_none() && !ecosystem => self.fail(
@@ -181,7 +196,7 @@ impl Rules<'_> {
             );
         }
         if let Some(file) = &service.env_file
-            && !(is_program(file) && !file.starts_with('/'))
+            && (!is_program(file) || file.starts_with('/'))
         {
             self.fail(
                 &["service", "env_file"],
@@ -190,7 +205,11 @@ impl Rules<'_> {
                 "such as `.env`, shipped with `pipeline.pack.files.include.deploy: [.env]`",
             );
         }
-        for (key, value) in &service.env {
+    }
+
+    /// `service.env`: variable names and values a unit line can carry.
+    fn service_env(&mut self, config: &DeployConfig) {
+        for (key, value) in &config.service.env {
             let valid = !key.is_empty()
                 && !key.starts_with(|c: char| c.is_ascii_digit())
                 && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
@@ -210,8 +229,12 @@ impl Rules<'_> {
                 );
             }
         }
+    }
+
+    /// `service.shared`: folders inside the release, none of them overlapping.
+    fn service_shared(&mut self, config: &DeployConfig) {
         let mut seen: Vec<String> = Vec::new();
-        for (index, entry) in service.shared.iter().enumerate() {
+        for (index, entry) in config.service.shared.iter().enumerate() {
             let at = ["service", "shared", &index.to_string()];
             let stored = release_path(entry);
             if entry.starts_with('/') || !is_program(entry) || stored.is_empty() {
