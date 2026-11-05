@@ -1,2 +1,8 @@
 /target
 /.tmp
+
+.agents/skills/*
+.claude/skills/*
+
+!.agents/skills/easy-english/
+!.claude/skills/easy-english
