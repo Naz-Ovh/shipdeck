@@ -1,21 +1,25 @@
 # Handoff
 
-Where the last session stopped (2026-10-31). Read [README.md](README.md) first; steps and status are in
+Where the last session stopped (2026-11-06). Read [README.md](README.md) first; steps and status are in
 [the plan](../docs/project-progress.html).
 
 ## State
 
-- Branch `feat/gui`, from `b5dff48`. The tracker and spec are committed (`cced8f3`, `874bb03`). Not committed yet:
-  the desktop mockup, the tracker changes for `p2a1`/`p1c5`, `.gitignore` (the owner un-ignores the
-  `easy-english` skill), `.agents/skills/easy-english/`, the relative link `.claude/skills/easy-english` and
-  `skills-lock.json` (the owner's skills installer; ask before adding it). Commit only when the owner asks.
+- One branch: `main`. The owner works alone, so the feature branches are gone, local and on GitHub
+  (`feat/gui`, `feat/windows-support`, `feat/headless`, `feat/delta-upload`, on 2026-11-06). Everything is
+  committed and pushed.
+- The desktop work is deferred for now (owner, 2026-11-05). The next work is the CLI and the headless crate,
+  moving to the new architecture. The tracker rows still say otherwise; ask before changing them.
+- `AGENTS.md` holds only the rules for every session (the owner rewrote it on 2026-11-05, Rust rules
+  included); the detail is in `docs/code/`.
 - `docs/` root holds only `plan.md`, `project-progress.html`, `visual/`, `website/`, `code/` (code guides) and
-  `feature/` (feature plans); the owner wants it kept clean. New, untracked:
+  `feature/` (feature plans); the owner wants it kept clean. Committed:
   - `docs/project-progress.html`: the plan (phases 0 to 9). Phase 0 is what shipdeck does today; five of its
     items are built but not released (`p0b3`, `p0c4`, `p0c5`, `p0e3`, `p0f2`).
   - `docs/visual/Plan/spec.html`: the spec, a pan-and-zoom canvas (`p1a1`, built, waiting for the owner's look).
-    `docs/visual/diagram/` and `docs/visual/prototype/` are empty folders the owner made; the desktop mockup
-    (`p2a1`) presumably goes in `prototype/` (ask).
+  - `docs/visual/prototype/desktop.html`: the second take of the desktop mockup (`p2a1`), with Openship
+    screenshots in `docs/refs/screenshots/openship/` as the look reference.
+  - `docs/code/`: architecture, config, remote, releases. `docs/feature/`: one plan per feature.
 - Merged into the spec and deleted on 2026-10-31: the untracked `PLAN_desktop.html`, `PLAN_roadmap.html`,
   `architecture.html`, `agent-tradeoffs.html`, `scope.html`, `diagrams.html`, and the committed
   `PLAN_config-spec.html`, `PLAN_packaging.html`, `PLAN_status-logs.html` (deleted, not staged). Their open items
@@ -48,6 +52,8 @@ All of it is in the plan; the short version:
 
 ## Next
 
+0. The desktop work waits: the owner deferred it on 2026-11-05 and wants the CLI and the headless crate on the
+   new architecture first. Treat steps 1 and 3 below as on hold until the owner asks again.
 1. The owner clicks through `docs/visual/prototype/desktop.html` (`p2a1`, second take, built) and says yes or
    what to change. The owner rejected the first take (two ways in, plain dev-tool look). Now: everything starts
    from a server; home lists servers; opening one runs a connect screen, then the server's sidebar appears
