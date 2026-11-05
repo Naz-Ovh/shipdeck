@@ -322,7 +322,8 @@
         <dt>keepup</dt><dd>An optional program that would run on the server all the time. Later.</dd>
         <dt>systemd</dt><dd>The part of Linux that runs services, jobs and timers.</dd>
         <dt>journal</dt><dd>Where systemd keeps the logs.</dd>
-        <dt>deployable</dt><dd>One app you deploy, with its own <code>deploy.yaml</code>.</dd>
+        <dt>project</dt><dd>Your own code that shipdeck deploys, with its own <code>deploy.yaml</code>. For example, <code>my-api</code>.</dd>
+        <dt>ready-made app</dt><dd>A well-known app that you host yourself, from the catalog, like n8n. It comes in phase 6.</dd>
         <dt>release</dt><dd>One deploy, kept in its own folder on the server.</dd>
       </dl>
     </div>
@@ -560,7 +561,7 @@
         <h4>Already there</h4>
         <ul class="does">
           <li><code>sshd</code>: how you log in.</li>
-          <li><code>systemd</code>: runs your app, the <code>systemd-run</code> jobs, and timers.</li>
+          <li><code>systemd</code>: runs your project, the <code>systemd-run</code> jobs, and timers.</li>
           <li>The journal: the raw logs.</li>
         </ul>
         <h4>Later, from packages</h4>
@@ -618,7 +619,7 @@
         <h4>Must finish without you</h4>
         <p>Handed to systemd with <code>systemd-run</code>. systemd runs it as its own job and keeps its output in the journal. When you come back, the engine asks how it ended and shows the log. <i>Example: the server half of a deploy, a backup, a migration.</i></p>
         <h4>Nobody connected, ever</h4>
-        <p>A systemd service or timer, written once. systemd keeps it running, or starts it on time, like cron. <i>Example: your app, nightly backups, certificate renewal.</i></p>
+        <p>A systemd service or timer, written once. systemd keeps it running, or starts it on time, like cron. <i>Example: your project, nightly backups, certificate renewal.</i></p>
       </article>
 
     </div>
@@ -723,7 +724,7 @@
           <thead><tr><th>Message</th><th>Sent by</th><th>What it does</th></tr></thead>
           <tbody>
             <tr><td><code>initialize</code>, <code>shutdown</code></td><td>app</td><td>Agree on versions, and learn what this engine can do. Close everything.</td></tr>
-            <tr><td><code>workspace/open</code></td><td>app</td><td>Open a folder of deployables. Returns them, and every config mistake with its line and hint.</td></tr>
+            <tr><td><code>workspace/open</code></td><td>app</td><td>Open a folder of projects. Returns them, and every config mistake with its line and hint.</td></tr>
             <tr><td><code>status/get</code>, <code>connection/close</code></td><td>app</td><td>Read each service's state. Close a server's connection.</td></tr>
             <tr><td><code>service/control</code></td><td>app</td><td>Stop, start or restart a service.</td></tr>
             <tr><td><code>releases/list</code></td><td>app</td><td>List the releases on the server.</td></tr>
@@ -788,7 +789,7 @@
           <tbody>
             <tr><td>Open</td><td>Pick a deploy folder (recent ones are remembered) and how to log in.</td></tr>
             <tr><td>Problems</td><td>Config mistakes, grouped by file, with the line, the text and the hint. Nothing runs until they are fixed, as today.</td></tr>
-            <tr><td>Deployables</td><td>Each app with its host, live release and service state. Connect, deploy, releases, logs, stop, start, restart.</td></tr>
+            <tr><td>Projects</td><td>Each project with its host, live release and service state. Connect, deploy, releases, logs, stop, start, restart.</td></tr>
             <tr><td>Deploy</td><td>The list of steps, a bar for the running step and one for the whole deploy, how long each step took, and the live log. The rollback question sits on top, with its countdown.</td></tr>
             <tr><td>Releases</td><td>Every release, the live one marked. Its files, and a preview of each. Roll back to any of them.</td></tr>
             <tr><td>Logs</td><td>The last 200 lines, then live. Scrolling up pauses it.</td></tr>
@@ -851,7 +852,7 @@ deploy.schema.json  protocol.schema.json  server-setup.sh   <span class="c">publ
           <div class="way">
             <h4>No agent <small style="color:var(--muted)">today</small></h4>
             <figure class="art">
-              <svg viewBox="0 0 320 200" role="img" aria-label="The engine sends shell commands over SSH; sshd runs one shell per command; systemd runs the app.">
+              <svg viewBox="0 0 320 200" role="img" aria-label="The engine sends shell commands over SSH; sshd runs one shell per command; systemd runs the project.">
                 <defs><marker id="mk-w1" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ah" d="M0,0 L8,4 L0,8 z"/></marker></defs>
                 <rect class="n green" x="8" y="70" width="96" height="40" rx="10"/><text class="m b" x="56" y="95">engine</text>
                 <text class="m xs" x="56" y="126">your PC</text>
@@ -861,7 +862,7 @@ deploy.schema.json  protocol.schema.json  server-setup.sh   <span class="c">publ
                 <rect class="grp" x="170" y="8" width="142" height="184" rx="12"/>
                 <rect class="n" x="182" y="22" width="118" height="30" rx="8"/><text class="m sm" x="241" y="42">sshd</text>
                 <rect class="n d" x="182" y="64" width="118" height="44" rx="8"/><text class="m sm" x="241" y="83">sh -c '…'</text><text class="m xs" x="241" y="99">one per command</text>
-                <rect class="n" x="182" y="122" width="118" height="56" rx="8"/><text class="m sm b" x="241" y="144">systemd</text><text class="m xs" x="241" y="162">app · jobs · timers</text>
+                <rect class="n" x="182" y="122" width="118" height="56" rx="8"/><text class="m sm b" x="241" y="144">systemd</text><text class="m xs" x="241" y="162">project · jobs · timers</text>
               </svg>
             </figure>
             <p>The engine sends shell commands over SSH and reads the text that comes back. Best when the features stay small.</p>
@@ -869,7 +870,7 @@ deploy.schema.json  protocol.schema.json  server-setup.sh   <span class="c">publ
           <div class="way pick">
             <h4>On-demand agent <small>chosen</small></h4>
             <figure class="art">
-              <svg viewBox="0 0 320 200" role="img" aria-label="The engine uploads the agent and talks to it with JSON messages over SSH; the agent runs as you and exits after; systemd runs the app and jobs.">
+              <svg viewBox="0 0 320 200" role="img" aria-label="The engine uploads the agent and talks to it with JSON messages over SSH; the agent runs as you and exits after; systemd runs the project and jobs.">
                 <defs><marker id="mk-w2" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ah" d="M0,0 L8,4 L0,8 z"/></marker></defs>
                 <rect class="n green" x="8" y="70" width="96" height="40" rx="10"/><text class="m b" x="56" y="95">engine</text>
                 <text class="m xs" x="56" y="126">your PC</text>
@@ -879,7 +880,7 @@ deploy.schema.json  protocol.schema.json  server-setup.sh   <span class="c">publ
                 <rect class="grp" x="170" y="8" width="142" height="184" rx="12"/>
                 <rect class="n" x="182" y="22" width="118" height="30" rx="8"/><text class="m sm" x="241" y="42">sshd</text>
                 <rect class="n orange" x="182" y="64" width="118" height="44" rx="8"/><text class="m sm b" x="241" y="83">shipdeck-agent</text><text class="m xs" x="241" y="99">runs as you · exits after</text>
-                <rect class="n" x="182" y="122" width="118" height="56" rx="8"/><text class="m sm b" x="241" y="144">systemd</text><text class="m xs" x="241" y="162">app · jobs · timers</text>
+                <rect class="n" x="182" y="122" width="118" height="56" rx="8"/><text class="m sm b" x="241" y="144">systemd</text><text class="m xs" x="241" y="162">project · jobs · timers</text>
               </svg>
             </figure>
             <p>The engine uploads a small shipdeck program and starts it over SSH, the way VS Code starts its server. Best when you want a real program on the server, with nothing running there after you leave.</p>
@@ -896,7 +897,7 @@ deploy.schema.json  protocol.schema.json  server-setup.sh   <span class="c">publ
                 <text class="m xs" x="137" y="104">its own</text><text class="m xs" x="137" y="116">port</text>
                 <rect class="grp" x="170" y="8" width="142" height="184" rx="12"/>
                 <rect class="n pink" x="182" y="22" width="118" height="86" rx="8"/><text class="m sm b" x="241" y="56">agent as root</text><text class="m xs" x="241" y="74">a service</text><text class="m xs" x="241" y="90">always running</text>
-                <rect class="n" x="182" y="122" width="118" height="56" rx="8"/><text class="m sm b" x="241" y="144">systemd</text><text class="m xs" x="241" y="162">app · jobs · timers</text>
+                <rect class="n" x="182" y="122" width="118" height="56" rx="8"/><text class="m sm b" x="241" y="144">systemd</text><text class="m xs" x="241" y="162">project · jobs · timers</text>
               </svg>
             </figure>
             <p>A root service on every server, running all the time. Best when you need access without SSH, like a hosted dashboard or a phone app.</p>
@@ -963,7 +964,7 @@ deploy.schema.json  protocol.schema.json  server-setup.sh   <span class="c">publ
         <table class="tbl">
           <thead><tr><th>What</th><th>Runs as</th><th>Why</th></tr></thead>
           <tbody>
-            <tr><td>Your own apps</td><td>Native: systemd or PM2</td><td>shipdeck's core, as today. Built on your PC, small, any Linux.</td></tr>
+            <tr><td>Your own projects</td><td>Native: systemd or PM2</td><td>shipdeck's core, as today. Built on your PC, small, any Linux.</td></tr>
             <tr><td>nginx</td><td>Native, from the Linux's own packages</td><td>Every Linux has it. It serves ports 80 and 443 for everything else.</td></tr>
             <tr><td>Databases, ready-made apps, mail</td><td>Docker containers (recommended)</td><td>One recipe works on every Linux. Each one is kept apart and pinned to a version.</td></tr>
           </tbody>
@@ -973,7 +974,7 @@ deploy.schema.json  protocol.schema.json  server-setup.sh   <span class="c">publ
 
       <article class="frame" id="folders" data-zoom data-n="#26" data-t="Folders on the server">
         <div class="fhead"><h3>Folders on the server</h3></div>
-<pre class="code">/opt/my-api/                 <span class="c">one folder per app</span>
+<pre class="code">/opt/my-api/                 <span class="c">one folder per project</span>
 ├── current -> releases/&lt;id&gt; <span class="c">the live release</span>
 ├── releases/&lt;id&gt;/           <span class="c">unpacked releases (5 by default)</span>
 ├── backups/&lt;id&gt;.tar.zst     <span class="c">one backup per release (20 in all)</span>
@@ -1000,7 +1001,7 @@ deploy.schema.json  protocol.schema.json  server-setup.sh   <span class="c">publ
 
       <article class="frame wide" id="statuslogs" data-zoom data-n="#28" data-t="Status and logs">
         <div class="fhead"><h3>Status and logs</h3><span class="tag">systemd and PM2</span></div>
-        <p class="when">See whether an app is up and read its log, the same way whichever manager runs it.</p>
+        <p class="when">See whether a project is up and read its log, the same way whichever manager runs it.</p>
         <table class="tbl">
           <thead><tr><th></th><th>systemd</th><th>PM2</th></tr></thead>
           <tbody>
@@ -1161,7 +1162,7 @@ deploy.schema.json  protocol.schema.json  server-setup.sh   <span class="c">publ
           </svg>
         </figure>
         <ul class="plain">
-          <li>Watches your apps and the server while nobody is connected, and sends alerts.</li>
+          <li>Watches your projects, your ready-made apps and the server while nobody is connected, and sends alerts.</li>
           <li>It is its own program, so the agent stays small and nothing has to be rewritten.</li>
           <li>Root only if the server's owner chooses it (<a href="../../project-progress.html#p8a2">p8a2</a>).</li>
         </ul>

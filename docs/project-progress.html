@@ -230,7 +230,7 @@
     <div class="hero">
       <p class="kick">shipdeck · project progress</p>
       <h2>Where shipdeck is, and where it goes next</h2>
-      <p class="lede">shipdeck grows, one phase at a time, into a way to run your own servers: deploys, domains, databases, ready-made apps and mail. Each item has an id, like <code>p1b1</code>. Copy it with the ⧉ button and paste it to an agent.</p>
+      <p class="lede">shipdeck grows, one phase at a time, into a way to run your own servers: deploys, domains, databases, ready-made apps and mail. Words: a project is your own code that shipdeck deploys, like <code>my-api</code>. An app is a ready-made one that you host yourself, like n8n. Each item has an id, like <code>p1b1</code>. Copy it with the ⧉ button and paste it to an agent.</p>
     </div>
 
     <aside class="next">
@@ -239,7 +239,8 @@
         <li>Owner: answer the open decisions marked <b>waiting</b>: four for the desktop app (<a href="#p2d1">p2d1</a> to <a href="#p2d4">p2d4</a>) and two for the agent (<a href="#p3d1">p3d1</a>, <a href="#p3d2">p3d2</a>). None of them blocks the engine work. To see only them, pick “Next, and waiting for you” in the filter.</li>
         <li>Owner: five changes since version 0.6.1 are built but not released. They are Windows support (<a href="#p0f2">p0f2</a>), release details with <kbd>D</kbd> (<a href="#p0b3">p0b3</a>), wrapped log lines (<a href="#p0e3">p0e3</a>), the check for Windows line endings (<a href="#p0c4">p0c4</a>), and the end of support for pre-0.6 releases (<a href="#p0c5">p0c5</a>). Try them, then say when to make a release.</li>
         <li>Owner: look at the spec page, <a href="visual/Plan/spec.html">spec.html</a> (<a href="#p1a1">p1a1</a>), and say yes or what to change. All the older planning pages are merged into it.</li>
-        <li>Next: the clickable HTML mockup of the desktop app (<a href="#p2a1">p2a1</a>).</li>
+        <li>Owner: click through the desktop mockup, <a href="visual/prototype/desktop.html">desktop.html</a> (<a href="#p2a1">p2a1</a>), and say yes or what to change. This is the second take: everything starts from a server. The bar at the bottom of the page switches the theme and the network, shows the first run, picks how the next deploy ends, and opens each dialog.</li>
+        <li>Owner: two questions about the settings backup (<a href="#p1c6">p1c6</a>). Should the file be locked with a password? Should it also hold each project's <code>deploy.yaml</code>? And one about servers that stay connected (<a href="#p1c7">p1c7</a>): how long until an unused one disconnects? Recommended: 10 minutes.</li>
         <li>Then: the new folder layout (<a href="#p1a2">p1a2</a>), and then the protocol crate (<a href="#p1b1">p1b1</a>).</li>
       </ol>
     </aside>
@@ -273,10 +274,10 @@ const PLAN = [
    blurb: "Everything in this phase is built. Most of it is in version 0.6.1. It is the base that the rest of the plan builds on.", subs: [
   { title: "Deploy", items: [
    ["p0a1", "Build on your PC, deploy over SSH", "done", "2026-10-14",
-    "<p>shipdeck builds your app on your own PC. Then it sends the app to your server over SSH and runs it there as a systemd service.</p><p>Every deploy becomes a new release in its own folder. The live release is never changed in place.</p>",
+    "<p>shipdeck builds your project on your own PC. Then it sends the project to your server over SSH and runs it there as a systemd service.</p><p>Every deploy becomes a new release in its own folder. The live release is never changed in place.</p>",
     "<code>crates/engine</code> · docs/plan.md"],
-   ["p0a2", "Any app: Rust, Go, Node.js, Python", "done", "2026-10-14",
-    "<p>One file, <code>deploy.yaml</code>, says what to build, what to send and how to start the app. You can send a binary, a folder of files, or both.</p><p>A binary is checked against the server's CPU and glibc before anything is sent. So a build that cannot run there stops early.</p>",
+   ["p0a2", "Any project: Rust, Go, Node.js, Python", "done", "2026-10-14",
+    "<p>One file, <code>deploy.yaml</code>, says what to build, what to send and how to start the project. You can send a binary, a folder of files, or both.</p><p>A binary is checked against the server's CPU and glibc before anything is sent. So a build that cannot run there stops early.</p>",
     "<code>examples/</code> · README.md"],
    ["p0a3", "Eleven steps, each with your own commands", "done", "2026-10-15",
     "<p>A deploy runs these steps in order: preflight, build, pack, upload, unpack, setup, backup, switch, restart, health and done. If something fails, a step called failed runs.</p><p>Most steps can run your own commands: on your PC, on the server, or both. For example, <code>npm ci --omit=dev</code> can run on the server before the new release goes live.</p>",
@@ -290,8 +291,8 @@ const PLAN = [
    ["p0a6", "A warning when nothing changed", "done", "2026-10-16",
     "<p>If the new release holds exactly what the live one holds, shipdeck asks before it deploys. The answer is No by default, and the server is not touched.</p><p>In scripts, it stops with exit code 6, unless you pass <code>--allow-unchanged</code>.</p>",
     "README.md · <code>crates/headless</code>"],
-   ["p0a7", "Run the app with systemd or PM2", "done", "2026-10-17",
-    "<p>The app can run as a systemd service or under PM2. Any PM2 version works. A version newer than the one we tested gets a warning.</p>",
+   ["p0a7", "Run the project with systemd or PM2", "done", "2026-10-17",
+    "<p>The project can run as a systemd service or under PM2. Any PM2 version works. A version newer than the one we tested gets a warning.</p>",
     "README.md · <code>shipdeck man</code>"],
   ]},
   { title: "Releases and rollback", items: [
@@ -312,8 +313,8 @@ const PLAN = [
    ["p0c2", "Help in your editor", "done", "2026-10-16",
     "<p>The config has a JSON Schema, <code>deploy.schema.json</code>. Editors use it to complete fields and to explain each one. It is published with every release, and the docs website serves it too.</p>",
     "<code>just schema</code>"],
-   ["p0c3", "shipdeck init: start a new app from a preset", "done", "2026-10-15",
-    "<p><code>shipdeck init</code> makes a new deployable folder. It asks only for what the flags leave out, and it writes a comment above every field it fills in.</p>",
+   ["p0c3", "shipdeck init: start a new project from a preset", "done", "2026-10-15",
+    "<p><code>shipdeck init</code> makes a new project folder. It asks only for what the flags leave out, and it writes a comment above every field it fills in.</p>",
     "<code>crates/engine/src/init</code> · <code>bin/shipdeck</code>"],
    ["p0c4", "Refuse Windows line endings in deploy.yaml", "built", "2026-10-18",
     "<p>A <code>deploy.yaml</code> saved with Windows line endings (CRLF) is refused at the config check.</p><p>It is in the code, but not in a release yet.</p>",
@@ -330,15 +331,15 @@ const PLAN = [
     "<p>Commands on the server first load the variables your login shell sets. So tools like <code>node</code> or <code>pm2</code> are found the same way as when you log in by hand. You can turn this off with <code>ssh.shell_env: false</code>.</p>",
     "<code>ssh::shell_env</code>"],
    ["p0d3", "server-setup.sh: an optional deploy user", "done", "2026-10-15",
-    "<p>No server setup is needed: shipdeck deploys as whatever user you choose. If you want a separate user with only the rights one app needs, you run <code>server-setup.sh</code> by hand, as root.</p>",
+    "<p>No server setup is needed: shipdeck deploys as whatever user you choose. If you want a separate user with only the rights one project needs, you run <code>server-setup.sh</code> by hand, as root.</p>",
     "<code>server-setup.sh</code> · <code>crates/engine/src/setup</code>"],
   ]},
   { title: "Screens and scripts", items: [
    ["p0e1", "The terminal UI", "done", "2026-10-14",
-    "<p>A full-screen app in the terminal. It lists your deployables with their live version and status, runs deploys step by step, and shows the releases. It connects to a server only when you ask.</p>",
+    "<p>A full-screen app in the terminal. It lists your projects with their live version and status, runs deploys step by step, and shows the releases. It connects to a server only when you ask.</p>",
     "<code>crates/tui</code>"],
    ["p0e2", "Vim-style commands: :logs, :restart, :stop, :start", "done", "2026-10-16",
-    "<p>Type <kbd>:</kbd> on the Deployables screen, as in vim. <code>:logs</code> follows the app's log live. <code>:restart</code> and <code>:stop</code> ask first. <code>:start</code> starts the app.</p>",
+    "<p>Type <kbd>:</kbd> on the Deployables screen, as in vim. <code>:logs</code> follows the project's log live. <code>:restart</code> and <code>:stop</code> ask first. <code>:start</code> starts the project.</p>",
     "<code>remote::control_commands</code>"],
    ["p0e3", "Long log lines wrap", "built", "2026-10-18",
     "<p>Long log lines now wrap onto the next line, instead of being cut off.</p><p>It is in the code, but not in a release yet.</p>",
@@ -383,17 +384,29 @@ const PLAN = [
   ]},
   { title: "The engine", items: [
    ["p1c1", "shipdeck engine: the headless process", "planned", "",
-    "<p>A new command that reads requests on stdin and writes events on stdout. It does what the TUI starts today: status, logs, deploy, rollback and the list of releases. One engine works on one folder of deployables.</p>",
+    "<p>A new command that reads requests on stdin and writes events on stdout. It does what the TUI starts today: status, logs, deploy, rollback and the list of releases. One engine works on one folder of projects.</p>",
     ""],
    ["p1c2", "Safe when its app closes", "planned", "",
     "<p>The engine is started by its app. When the app closes, the engine takes no new work. It finishes the step that is running, and it answers open questions with the safe choice: roll back, do not deploy a release that did not change, and do not trust a new host key.</p>",
     ""],
    ["p1c3", "One SSH connection per server", "planned", "",
-    "<p>Today shipdeck opens one SSH session per deployable. The engine keeps one connection per server instead, and runs many channels over it. So status, logs and a deploy all share it.</p>",
+    "<p>Today shipdeck opens one SSH session per project. The engine keeps one connection per server instead, and runs many channels over it. So status, logs and a deploy all share it.</p>",
     ""],
    ["p1c4", "An offline copy of the last state", "planned", "",
     "<p>The last known state of your servers and releases is saved on your PC. Without a connection, you can still look at it. It is read-only: nothing is queued to run later.</p><p>Where it lives is decision <a href=\"#p1e1\">p1e1</a>.</p>",
     ""],
+   ["p1c5", "Find the projects on a server", "planned", "",
+    "<p>You log in to a server, and the engine lists the projects that shipdeck deployed there before. You do not need their <code>deploy.yaml</code> on your PC to see them, start them, stop them or read their logs.</p><p>The desktop app needs this for its first way in: start from a server, then pick a project. The owner asked for this on 2026-10-31.</p>",
+    "<a href=\"#p2a1\">p2a1</a>"],
+   ["p1c6", "Back up your settings: export and import", "planned", "",
+    "<p>Everything shipdeck keeps on your PC can be saved to one file: your servers, your projects and the folders they are linked to, the host keys you trusted, and your preferences. Import that file on a new PC, or after a reinstall, and everything is back.</p><p>The engine does it, so the desktop app, the TUI and the CLI all get it. Your SSH keys are not in the file. They stay in <code>~/.ssh</code>. The owner asked for this on 2026-10-31.</p><p>To decide: should the file be locked with a password? Should it also hold a copy of each project's <code>deploy.yaml</code>?</p>",
+    ""],
+   ["p1c7", "Several servers connected at once", "planned", "",
+    "<p>You can be connected to several servers at the same time. Going back to the list of servers does not disconnect you, so opening a server again is instant.</p><p>A server you have not opened for a while disconnects by itself. You pick how long in Settings: 5, 10 or 30 minutes, or never. A running deploy keeps its server connected. The owner asked for this on 2026-10-31.</p><p>To decide: the default time. <b>Recommended:</b> 10 minutes.</p>",
+    "<a href=\"#p1c3\">p1c3</a> · <a href=\"#p2a1\">p2a1</a>"],
+   ["p1c8", "Look inside a project folder", "planned", "",
+    "<p>Give the engine a folder, and it works out what is inside: the language, the framework, the package manager, the build command, what to send and how to start it. It also reads the <code>.env</code> file. People who know nothing about build settings can still deploy.</p><p>It lives in the engine, so the desktop app, the TUI and <code>shipdeck init</code> all use the same check. It only suggests: every value can be changed. The owner asked for this on 2026-10-31.</p>",
+    "<a href=\"#p2b5\">p2b5</a>"],
   ]},
   { title: "The apps on top", items: [
    ["p1d1", "The CLI and the script commands use the engine", "planned", "",
@@ -424,16 +437,16 @@ const PLAN = [
  { n: 2, title: "Desktop app", short: "Desktop", c: "purple",
    blurb: "A native desktop app, built with Avalonia (C#). It should look polished and stay light, unlike Electron apps such as Openship. It starts the engine by itself and does everything the TUI does.", subs: [
   { title: "Design first", items: [
-   ["p2a1", "A clickable HTML mockup", "next", "",
-    "<p>Before any C# code: one HTML page with made-up data, where you can click through every screen. It shows the list of servers and their apps, an app's page, a live deploy with the rollback countdown, releases and their files, live logs, the offline “last seen” state, server setup, and the dialogs. In light and dark.</p><p>The owner says yes, or what to change. Then the real app follows it.</p>",
-    ""],
+   ["p2a1", "A clickable HTML mockup", "built", "2026-10-31",
+    "<p>Before any C# code: one HTML page with made-up data, where you can click through every screen.</p><p><b>Second take.</b> Everything starts from a server. Home shows your servers. You open one, shipdeck connects to it, and then that server's sidebar appears: its projects, deployments, logs and files. Domains, databases, ready-made apps and mail are already in the sidebar, marked “Soon”. Adding a server is guided, step by step, and prepares the server once. After that, you never run a command on it. Setting up a project has a full screen of its own, saved as a draft while you type.</p><p>It should feel like a modern native app, not a web page, with real icons and tech logos. Openship's look was the reference, not a copy. One deploy runs at a time. The owner asked for all of this on 2026-10-31, after the first take.</p><p>The owner says yes, or what to change. Then the real app follows it.</p>",
+    "<a href=\"visual/prototype/desktop.html\">docs/visual/prototype/desktop.html</a>"],
   ]},
   { title: "The app", items: [
    ["p2b1", "Project setup", "planned", "",
     "<p>.NET 10 (the long-term support version), Avalonia with its Fluent theme, and CommunityToolkit.Mvvm. The app starts <code>shipdeck engine</code> as a child process and talks to it with StreamJsonRpc.</p><p>lefthook runs the .NET checks on push, next to the Rust checks.</p>",
     "<a href=\"visual/Plan/spec.html#stack\">spec: Built with</a>"],
    ["p2b2", "Every TUI feature, as screens", "planned", "",
-    "<p>Deployables with live status, deploys step by step, releases and rollback, release details and files, live logs, and the start, stop and restart commands.</p>",
+    "<p>Projects with live status, deploys step by step, releases and rollback, release details and files, live logs, and the start, stop and restart commands.</p>",
     ""],
    ["p2b3", "Questions as dialogs", "planned", "",
     "<p>The questions the TUI asks become dialogs: “Roll back now?”, “Deploy a release that did not change?”, a password or passphrase, and “Trust this new host key?”.</p>",
@@ -441,6 +454,20 @@ const PLAN = [
    ["p2b4", "Works offline", "planned", "",
     "<p>Without a connection, the app shows the last known state, with the time it was last seen. Buttons that change the server stay off until you connect.</p>",
     "<a href=\"#p1c4\">p1c4</a>"],
+   ["p2b5", "Add a project, step by step", "planned", "",
+    "<p>Adding a project takes the whole window, in four steps, like Vercel. <b>Source:</b> drop a folder, choose one, or import from Git. A folder stays where it is. <b>Analyze:</b> the engine looks inside (<a href=\"#p1c8\">p1c8</a>). <b>Configure:</b> the name, the server, the build and start commands, and every variable from <code>.env</code>, all hidden until you show them. <b>Deploy:</b> the live steps, then “It is live”.</p><p>shipdeck saves the config inside the project, in <code>scripts/deploy/&lt;name&gt;/deploy.yaml</code>. You pick that name, like <code>prod</code> or <code>staging</code>. The variables go in a <code>.env</code> next to it, which git ignores. So the same project deploys from the desktop app, the TUI or CI. You run nothing on the server.</p><p>Everything is saved as a draft while you type. Drafts wait in Projects until you deploy them. The owner asked for this on 2026-10-31.</p>",
+    "<a href=\"#p2a1\">p2a1</a> · <a href=\"#p1c8\">p1c8</a> · <a href=\"#p3c1\">p3c1</a>"],
+  ]},
+  { title: "Deploy from Git", items: [
+   ["p2e1", "Import from GitHub, GitLab, Bitbucket or any Git", "planned", "",
+    "<p>Connect your Git account once, pick a repository, and shipdeck clones it to your PC. Then the same steps as a folder. Any Git address works too, over HTTPS or SSH. The owner asked for this on 2026-10-31.</p>",
+    "<a href=\"#p2b5\">p2b5</a>"],
+   ["p2e2", "Deploy on every push or release, built on CI", "planned", "",
+    "<p>You pick “on every push to main” or “on every release”. shipdeck adds a workflow file to the repository (GitHub Actions, GitLab CI or Bitbucket Pipelines) and stores the SSH key as a secret there. Then each push or release runs <code>shipdeck deploy</code> on the CI machine. Your PC can be off.</p><p>It uses the same <code>deploy.yaml</code> as the desktop app and the TUI.</p>",
+    "<code>crates/headless</code>"],
+   ["p2e3", "Deploy on every push, built on your server", "deferred", "",
+    "<p>This is how Vercel and Netlify work: Git sends a message (a webhook) to the server on each push. The server pulls the code, builds it and switches. No CI is needed.</p><p>It needs a helper that is always on (<a href=\"#p8a1\">p8a1</a>) and a web address for Git to call (phase 4), so it comes after those.</p>",
+    "<a href=\"#p8a1\">p8a1</a>"],
   ]},
   { title: "Shipping", items: [
    ["p2c1", "In every GitHub release", "planned", "",
@@ -486,15 +513,15 @@ const PLAN = [
   ]},
   { title: "Server setup", items: [
    ["p3c1", "Set up a server from the app, once", "planned", "",
-    "<p>One guided setup per server, from the app. It replaces the per-server <code>server-setup.sh</code> that the old plan had.</p>",
-    "docs/plan.md, “Still open”"],
+    "<p>One guided setup per server, from the app, when you add the server. shipdeck asks for root once (a sudo or root password). Then it prepares the server by itself: zstd, a place for projects in <code>/opt</code>, and the right to do its own tasks as root. This replaces running <code>server-setup.sh</code> by hand for each project.</p><p><b>The owner's rule (2026-10-31):</b> after this setup, nobody runs a command on the server again, not even to add a project. shipdeck makes each project's folder and service by itself.</p><p>Servers set up the old way keep working. shipdeck offers to bring them to the new setup, once.</p>",
+    "docs/plan.md, “Still open” · <a href=\"#p2a1\">p2a1</a> · <code>server-setup.sh</code>"],
    ["p3c2", "A Servers page", "planned", "",
     "<p>For each server: the Linux version, CPU, memory, disk, uptime, and what is installed.</p>",
     ""],
   ]},
   { title: "Decisions for the owner", items: [
    ["p3d1", "Decide: how the agent gets root", "waiting", "",
-    "<p>Most work runs as your SSH user. Some work needs root, like nginx and Docker.</p><p><b>Recommended:</b> use sudo, and ask for the password once per connection. <b>The other choice:</b> at setup, allow those commands without a password.</p>",
+    "<p>Most work runs as your SSH user. Some work needs root, like nginx and Docker.</p><p><b>Recommended:</b> use sudo, and ask for the password once per connection. <b>The other choice:</b> at setup, allow those commands without a password.</p><p>Both keep the owner's rule from <a href=\"#p3c1\">p3c1</a>: after the one-time setup, nobody runs a command on the server. Adding a project needs root, to install its service. With the first choice, shipdeck asks for the password once per connection. With the second, it asks for nothing after setup.</p>",
     ""],
    ["p3d2", "Decide: plain deploys without the agent", "waiting", "",
     "<p><b>Recommended:</b> yes. Servers you deploy to today keep working exactly as they do now, over SSH and sudo. Only domains, databases, ready-made apps and mail need the agent.</p>",
@@ -503,10 +530,10 @@ const PLAN = [
  ]},
 
  { n: 4, title: "Domains and HTTPS", short: "Domains", c: "teal",
-   blurb: "Give each app a web address with HTTPS, using nginx.", subs: [
+   blurb: "Give each project a web address with HTTPS, using nginx.", subs: [
   { title: "nginx", items: [
-   ["p4a1", "A domain for each app", "planned", "",
-    "<p>For example, <code>https://my-api.example.com</code>. nginx sends the traffic to the app's port. Each app gets one nginx config file, which you can read and extend.</p>",
+   ["p4a1", "A domain for each project", "planned", "",
+    "<p>For example, <code>https://my-api.example.com</code>. nginx sends the traffic to the project's port. Each project gets one nginx config file, which you can read and extend.</p>",
     ""],
    ["p4a2", "Free HTTPS certificates", "planned", "",
     "<p>Certificates come from Let's Encrypt and are renewed by a timer on the server. Plain HTTP redirects to HTTPS, and WebSockets work.</p>",
@@ -526,7 +553,7 @@ const PLAN = [
    blurb: "Create and manage databases from the desktop app.", subs: [
   { title: "Databases", items: [
    ["p5a1", "Create a database in one click", "planned", "",
-    "<p>PostgreSQL, MySQL or MariaDB, and Redis. Its password goes straight into the app's environment.</p>",
+    "<p>PostgreSQL, MySQL or MariaDB, and Redis. Its password goes straight into the project's environment.</p>",
     ""],
    ["p5a2", "Browse tables and run queries", "planned", "",
     "<p>From the desktop app, through the SSH connection. The same tunnel lets your own tools, like DBeaver or TablePlus, connect too.</p>",
@@ -540,19 +567,19 @@ const PLAN = [
     "<p>The engine opens an SSH tunnel and runs the queries. So every app on top (the TUI, the desktop app, the web dashboard) gets the same feature. The desktop app has no database driver of its own.</p><p>The owner chose this on 2026-10-31.</p>",
     "<a href=\"visual/Plan/spec.html#decided\">spec: Decided</a>"],
    ["p5b2", "Decide: databases and ready-made apps in Docker", "deferred", "",
-    "<p><b>Recommended:</b> databases, ready-made apps and mail run in Docker containers. One recipe works on every Linux, each one is kept apart, and each is pinned to a version. Your own apps stay native (systemd or PM2), and nginx stays native too. Not needed until this phase starts.</p>",
+    "<p><b>Recommended:</b> databases, apps and mail run in Docker containers. One recipe works on every Linux, each one is kept apart, and each is pinned to a version. Your own projects stay native (systemd or PM2), and nginx stays native too. Not needed until this phase starts.</p>",
     "<a href=\"visual/Plan/spec.html#runtimes\">spec: What runs how</a>"],
   ]},
  ]},
 
- { n: 6, title: "Ready-made apps", short: "Apps", c: "amber",
+ { n: 6, title: "Apps", short: "Apps", c: "amber",
    blurb: "Install well-known self-hosted apps in a few clicks.", subs: [
   { title: "The catalog", items: [
    ["p6a1", "A catalog of ready-made apps", "planned", "",
     "<p>Apps like n8n, Umami and Uptime Kuma, from versioned recipes in this repository. Each one can get a domain (phase 4) and a database (phase 5) in the same setup.</p>",
     ""],
    ["p6a2", "Docker Compose as a third way to run apps", "planned", "",
-    "<p>Next to systemd and PM2. These apps get releases and rollback, like any other app.</p>",
+    "<p>Next to systemd and PM2. These apps get releases and rollback, like any project.</p>",
     ""],
   ]},
  ]},
@@ -589,10 +616,10 @@ const PLAN = [
   ]},
   { title: "More ideas", items: [
    ["p8c1", "Monitoring and alerts", "deferred", "",
-    "<p>Watch CPU, memory, disk and each app's health, and tell you when something is wrong.</p>",
+    "<p>Watch CPU, memory, disk and the health of each project and app, and tell you when something is wrong.</p>",
     ""],
-   ["p8c2", "Several servers per app", "deferred", "",
-    "<p>Deploy one app to more than one server.</p>",
+   ["p8c2", "Several servers per project", "deferred", "",
+    "<p>Deploy one project to more than one server.</p>",
     ""],
    ["p8c3", "Team access", "deferred", "",
     "<p>More than one person manages the same servers.</p>",
