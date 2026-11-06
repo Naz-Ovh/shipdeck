@@ -4,16 +4,19 @@
 mod app;
 mod chrome;
 mod command;
+mod convert;
 mod deployables;
 mod logs;
 mod modal;
 mod operation;
+mod pump;
 mod release_details;
 mod releases;
 mod theme;
 mod wrap;
 
 pub use app::{App, Fetched};
+pub use pump::{Inboxes, run as pump};
 
 use std::time::Duration;
 
@@ -44,7 +47,7 @@ pub async fn run(mut app: App, mut inbox: Inbox) -> Result<()> {
     let mut terminal = ratatui::init();
     let result = event_loop(&mut terminal, &mut app, &mut inbox).await;
     ratatui::restore();
-    app.pool.close_all().await;
+    app.close().await;
     result
 }
 

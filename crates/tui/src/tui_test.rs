@@ -2,7 +2,6 @@
 //! `SHIPDECK_DUMP=<folder>` to write each frame there as text.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -18,7 +17,9 @@ use shipdeck_engine::deploy::report::{
 use shipdeck_engine::release::ReleaseName;
 use shipdeck_engine::remote::{Control, Kind, Listing, ReleaseEntry, Status};
 use shipdeck_engine::ssh::ssh_config::HostConfig;
-use shipdeck_engine::ssh::{Endpoint, Login, Pool};
+use shipdeck_engine::ssh::{Endpoint, Login};
+
+use shipdeck_protocol::connection::{Connection, Handle};
 
 use super::app::{
     App, Fetch, Fetched, Live, LogsState, Modal, OpKind, Operation, ReleasesView, Screen, Tone,
@@ -125,9 +126,19 @@ fn with_config(slug: &str, host: &str, config: DeployConfig) -> Deployable {
     }
 }
 
+/// The sending half of a pipe nobody answers; the screens are drawn from
+/// state, not from requests.
+fn engine() -> Handle {
+    let (app_read, app_write) = tokio::io::duplex(1024);
+    Connection::start(app_read, app_write).handle()
+}
+
+/// A step list from the engine's names.
+fn names(steps: &[&str]) -> Vec<String> {
+    steps.iter().map(ToString::to_string).collect()
+}
+
 pub(super) fn app() -> App {
-    let (questions, _) = unbounded_channel();
-    let (ops, _) = unbounded_channel();
     let (fetched, _) = unbounded_channel();
     let discovery = Discovery {
         deployables: vec![
@@ -138,12 +149,11 @@ pub(super) fn app() -> App {
         ],
         problems: Vec::new(),
     };
-    let pool = Arc::new(Pool::new(Login::Auto, questions));
     let mut app = App::new(
         PathBuf::from("./scripts/deploy"),
         discovery,
-        pool,
-        ops,
+        Login::Auto,
+        engine(),
         fetched,
     );
     app.live = vec![
@@ -180,7 +190,7 @@ fn send(app: &mut App, event: OpEvent) {
 }
 
 fn running_deploy(app: &mut App) {
-    let steps = deploy_step_names(&app.deployables[0].config);
+    let steps = names(&deploy_step_names(&app.deployables[0].config));
     app.op = Some(Operation::new(1, OpKind::Deploy, 0, &steps));
     app.screen = Screen::Operation;
     send(
@@ -453,8 +463,8 @@ async fn draws_a_node_pipeline() {
 }
 
 /// Builds the node deploy up to its setup step.
-fn node_setup(app: &mut App) -> Vec<&'static str> {
-    let steps = deploy_step_names(&app.deployables[3].config);
+fn node_setup(app: &mut App) -> Vec<String> {
+    let steps = names(&deploy_step_names(&app.deployables[3].config));
     app.op = Some(Operation::new(1, OpKind::Deploy, 3, &steps));
     app.screen = Screen::Operation;
     for (step, detail) in [
@@ -535,7 +545,7 @@ async fn asks_before_rolling_back_a_failed_node_release() {
             OpEvent::AskRollback(RollbackQuestion {
                 release: "v1.4.0-77aa001-20261014.160501".into(),
                 previous: "v1.3.9-5d6e7f8-20261013.090000".into(),
-                step: "Health",
+                step: "Health".to_string(),
                 error: "not healthy after 20s: the health url said: 502".into(),
                 seconds: 30,
                 reply,
@@ -585,7 +595,7 @@ async fn asks_before_rolling_back_a_failed_node_release() {
 #[tokio::test]
 async fn an_unanswered_question_closes_when_its_time_is_up() {
     let mut app = app();
-    let steps = deploy_step_names(&app.deployables[0].config);
+    let steps = names(&deploy_step_names(&app.deployables[0].config));
     app.op = Some(Operation::new(1, OpKind::Deploy, 0, &steps));
     let (reply, _answer) = tokio::sync::oneshot::channel();
     send(
@@ -593,7 +603,7 @@ async fn an_unanswered_question_closes_when_its_time_is_up() {
         OpEvent::AskRollback(RollbackQuestion {
             release: RELEASES[0].into(),
             previous: RELEASES[1].into(),
-            step: "Restart",
+            step: "Restart".to_string(),
             error: "restart failed".into(),
             seconds: 0,
             reply,
@@ -610,15 +620,18 @@ pub(super) fn press(app: &mut App, code: KeyCode) {
 
 #[tokio::test]
 async fn nothing_connects_until_asked() {
-    let (questions, _) = unbounded_channel();
-    let (ops, _) = unbounded_channel();
     let (fetched, _) = unbounded_channel();
     let discovery = Discovery {
         deployables: vec![deployable("api-prod", "My API (prod)", "203.0.113.10")],
         problems: Vec::new(),
     };
-    let pool = Arc::new(Pool::new(Login::Auto, questions));
-    let mut app = App::new(PathBuf::from("."), discovery, pool, ops, fetched);
+    let mut app = App::new(
+        PathBuf::from("."),
+        discovery,
+        Login::Auto,
+        engine(),
+        fetched,
+    );
     assert!(matches!(app.live[..], [Live::Disconnected]));
     render(&mut app, 100, 30, "disconnected");
 
@@ -656,15 +669,12 @@ async fn c_keeps_a_connection_an_operation_uses() {
 
 #[tokio::test]
 async fn draws_an_empty_root() {
-    let (questions, _) = unbounded_channel();
-    let (ops, _) = unbounded_channel();
     let (fetched, _) = unbounded_channel();
-    let pool = Arc::new(Pool::new(Login::Auto, questions));
     let mut app = App::new(
         PathBuf::from("./scripts/deploy"),
         Discovery::default(),
-        pool,
-        ops,
+        Login::Auto,
+        engine(),
         fetched,
     );
     render(&mut app, 100, 30, "empty");
@@ -680,7 +690,7 @@ async fn an_unchanged_release_asks_first_and_no_is_the_default() {
     ] {
         let mut app = app();
         app.screen = Screen::Deployables;
-        let steps = deploy_step_names(&app.deployables[0].config);
+        let steps = names(&deploy_step_names(&app.deployables[0].config));
         app.op = Some(Operation::new(1, OpKind::Deploy, 0, &steps));
         let (reply, answer) = tokio::sync::oneshot::channel();
         send(
@@ -703,7 +713,7 @@ async fn an_unchanged_release_asks_first_and_no_is_the_default() {
     }
 
     let mut app = app();
-    let steps = deploy_step_names(&app.deployables[0].config);
+    let steps = names(&deploy_step_names(&app.deployables[0].config));
     app.op = Some(Operation::new(1, OpKind::Deploy, 0, &steps));
     send(
         &mut app,
@@ -827,13 +837,15 @@ async fn the_log_view_follows_lines_and_closes_with_q() {
     press(&mut app, KeyCode::Char(':'));
     type_in(&mut app, "logs");
     press(&mut app, KeyCode::Enter);
-    let view = app.logs.as_ref().unwrap().id;
+    // The engine names the view; until it answers, the screen waits.
+    assert_eq!(app.logs.as_ref().unwrap().id, None);
     assert_eq!(
         app.logs.as_ref().unwrap().command,
         "journalctl -u api-prod -f -n 200 --no-pager"
     );
     render(&mut app, 100, 30, "logs-connecting");
 
+    let view = 1;
     app.on_fetched(Fetched::LogsOpen { view });
     for n in 0..40 {
         app.on_fetched(Fetched::LogLine {

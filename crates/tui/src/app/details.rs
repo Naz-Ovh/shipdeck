@@ -4,7 +4,14 @@
 use crossterm::event::{KeyCode, KeyEvent};
 
 use super::{App, DetailsTab, Fetch, Fetched, OpenFile, ReleaseDetails};
-use shipdeck_engine::remote::{FileKind, FileText, Kind, ReleaseContents, Server, Source};
+use shipdeck_protocol::message::method;
+use shipdeck_protocol::message::request::{
+    ReleaseContents as AskContents, ReleaseContentsResult, ReleaseReadFile, ReleaseReadFileResult,
+};
+
+use shipdeck_engine::remote::{FileKind, FileText, Kind, ReleaseContents, Source};
+
+use crate::convert;
 
 impl App {
     /// Opens the popup on the selected release.
@@ -38,16 +45,18 @@ impl App {
         let Some(deployable) = self.deployables.get(index).cloned() else {
             return;
         };
-        let (pool, tx) = (self.pool.clone(), self.fetched.clone());
+        let (engine, tx) = (self.engine.clone(), self.fetched.clone());
         tokio::spawn(async move {
-            let result = async {
-                let session = pool.get(&deployable.endpoint).await?;
-                Server::new(session, &deployable.config.service)
-                    .contents(&id, source)
-                    .await
-            }
-            .await
-            .map_err(|err| format!("{err:#}"));
+            let asked = AskContents {
+                deployable: deployable.slug.clone(),
+                release: id.clone(),
+                source: convert::source(source),
+            };
+            let result = engine
+                .request::<_, ReleaseContentsResult>(method::RELEASE_CONTENTS, &asked)
+                .await
+                .map(convert::contents)
+                .map_err(|err| err.reason());
             let _ = tx.send(Fetched::Contents {
                 index,
                 id,
@@ -84,16 +93,19 @@ impl App {
         let Some(deployable) = self.deployables.get(index).cloned() else {
             return;
         };
-        let (pool, tx) = (self.pool.clone(), self.fetched.clone());
+        let (engine, tx) = (self.engine.clone(), self.fetched.clone());
         tokio::spawn(async move {
-            let result = async {
-                let session = pool.get(&deployable.endpoint).await?;
-                Server::new(session, &deployable.config.service)
-                    .read(&id, source, &path)
-                    .await
-            }
-            .await
-            .map_err(|err| format!("{err:#}"));
+            let asked = ReleaseReadFile {
+                deployable: deployable.slug.clone(),
+                release: id.clone(),
+                source: convert::source(source),
+                path: path.clone(),
+            };
+            let result = engine
+                .request::<_, ReleaseReadFileResult>(method::RELEASE_READ_FILE, &asked)
+                .await
+                .map(convert::file_text)
+                .map_err(|err| err.reason());
             let _ = tx.send(Fetched::FileText {
                 index,
                 id,

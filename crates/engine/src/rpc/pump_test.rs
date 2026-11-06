@@ -80,7 +80,7 @@ async fn how_a_run_ended_reaches_the_app() {
 #[tokio::test]
 async fn a_rollback_question_reaches_the_app_and_comes_back() {
     let (reporter, mut lines, mut app, _connection) = pair();
-    let answer = reporter.ask_rollback("v2", "v1", "Health", "it did not answer", 30);
+    let answer = reporter.ask_rollback("v2", "v1", "Health".to_string(), "it did not answer", 30);
 
     let asked = next(&mut lines).await;
     assert_eq!(asked["method"], "ask/rollback");

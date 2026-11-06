@@ -44,7 +44,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
             right,
             &app.deployables[index],
             &app.live[index],
-            app.pool.login(),
+            &app.login,
             app.tick,
         );
     }

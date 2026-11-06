@@ -9,9 +9,14 @@ repository.workspace = true
 
 [dependencies]
 shipdeck-engine.workspace = true
+shipdeck-protocol.workspace = true
 anyhow.workspace = true
 crossterm.workspace = true
 futures.workspace = true
 ratatui.workspace = true
 tokio.workspace = true
 unicode-width.workspace = true
+
+# the fake engine in the tests speaks raw JSON
+[dev-dependencies]
+serde_json.workspace = true

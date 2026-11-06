@@ -3,7 +3,7 @@
 use std::process::ExitCode;
 use std::time::Instant;
 
-use shipdeck_protocol::connection::{Connection, Error, Handle, Incoming};
+use shipdeck_protocol::connection::{Connection, Handle, Incoming};
 use shipdeck_protocol::message::ask::{Ask, SecretAnswer};
 use shipdeck_protocol::message::common::{DeployableInfo, OnFailure, Outcome};
 use shipdeck_protocol::message::event::Event;
@@ -71,7 +71,7 @@ impl Console {
                 .await
             {
                 Ok(started) => started,
-                Err(err) => return self.fail(&reason(&err)),
+                Err(err) => return self.fail(&err.reason()),
             };
             let code = self.watch(project, &started.steps).await;
             if code != 0 {
@@ -116,7 +116,7 @@ impl Console {
             .await
         {
             Ok(started) => started,
-            Err(err) => return self.fail(&reason(&err)),
+            Err(err) => return self.fail(&err.reason()),
         };
         ExitCode::from(self.watch(&project, &started.steps).await)
     }
@@ -143,7 +143,7 @@ impl Console {
                 print!("{}", table(&listing));
                 ExitCode::SUCCESS
             }
-            Err(err) => self.fail(&reason(&err)),
+            Err(err) => self.fail(&err.reason()),
         }
     }
 
@@ -222,14 +222,6 @@ impl Console {
     fn fail(&self, error: &str) -> ExitCode {
         eprintln!("{}", self.paint.error(&format!("✘ {error}")));
         ExitCode::FAILURE
-    }
-}
-
-/// What the engine said, without the protocol's own words around it.
-fn reason(err: &Error) -> String {
-    match err {
-        Error::Rpc(object) => object.message.clone(),
-        other => other.to_string(),
     }
 }
 

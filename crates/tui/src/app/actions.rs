@@ -1,17 +1,22 @@
-//! What the app starts: connecting, controlling the service, opening logs and releases, deploys and rollbacks.
+//! What the app starts: connecting, controlling the service, opening logs and
+//! releases, deploys and rollbacks. Each one is a request to the engine.
 
 use std::collections::VecDeque;
 
 use ratatui::widgets::TableState;
-use tokio::sync::oneshot;
+
+use shipdeck_protocol::message::method;
+use shipdeck_protocol::message::request::{
+    ConnectionClose, DeployStart, Done, LogsFollow, LogsFollowResult, LogsStop, OperationStarted,
+    ReleasesList, ReleasesListResult, RollbackStart, ServiceControl, StatusGet, StatusGetResult,
+};
+
+use shipdeck_engine::remote::{Control, log_command};
 
 use super::{
-    App, Fetch, Fetched, Live, LogsState, LogsView, Modal, OpKind, Operation, ReleasesView, Screen,
-    Tone,
+    App, Fetch, Fetched, Live, LogsState, LogsView, Modal, OpKind, ReleasesView, Screen, Tone,
 };
-use shipdeck_engine::deploy;
-use shipdeck_engine::deploy::report::{OpId, Reporter};
-use shipdeck_engine::remote::{Control, Server, log_command};
+use crate::convert;
 
 impl App {
     /// Connects the deployable, or disconnects it when it is connected.
@@ -45,8 +50,15 @@ impl App {
             format!("Disconnected from {}", endpoint.label()),
             Tone::Info,
         );
-        let pool = self.pool.clone();
-        tokio::spawn(async move { pool.close(&endpoint).await });
+        let asked = ConnectionClose {
+            deployable: self.deployables[index].slug.clone(),
+        };
+        let engine = self.engine.clone();
+        tokio::spawn(async move {
+            let _ = engine
+                .request::<_, Done>(method::CONNECTION_CLOSE, &asked)
+                .await;
+        });
     }
 
     /// Fetches the status again for every connected deployable.
@@ -69,16 +81,16 @@ impl App {
             return;
         };
         self.live[index] = Live::Loading;
-        let (pool, tx) = (self.pool.clone(), self.fetched.clone());
+        let (engine, tx) = (self.engine.clone(), self.fetched.clone());
         tokio::spawn(async move {
-            let result = async {
-                let session = pool.get(&deployable.endpoint).await?;
-                Server::new(session, &deployable.config.service)
-                    .status()
-                    .await
-            }
-            .await
-            .map_err(|err| format!("{err:#}"));
+            let asked = StatusGet {
+                deployable: deployable.slug.clone(),
+            };
+            let result = engine
+                .request::<_, StatusGetResult>(method::STATUS_GET, &asked)
+                .await
+                .map(convert::status)
+                .map_err(|err| err.reason());
             let _ = tx.send(Fetched::Status { index, result });
         });
     }
@@ -96,16 +108,17 @@ impl App {
         self.controlling.push(index);
         let name = deployable.config.service.name.clone();
         self.notify(format!("{} {name}…", doing(action)), Tone::Info);
-        let (pool, tx) = (self.pool.clone(), self.fetched.clone());
+        let (engine, tx) = (self.engine.clone(), self.fetched.clone());
         tokio::spawn(async move {
-            let result = async {
-                let session = pool.get(&deployable.endpoint).await?;
-                Server::new(session, &deployable.config.service)
-                    .control(action)
-                    .await
-            }
-            .await
-            .map_err(|err| format!("{err:#}"));
+            let asked = ServiceControl {
+                deployable: deployable.slug.clone(),
+                action: convert::action(action),
+            };
+            let result = engine
+                .request::<_, Done>(method::SERVICE_CONTROL, &asked)
+                .await
+                .map(|_| ())
+                .map_err(|err| err.reason());
             let _ = tx.send(Fetched::Controlled {
                 index,
                 action,
@@ -137,43 +150,41 @@ impl App {
         let Some(deployable) = self.deployables.get(index).cloned() else {
             return;
         };
-        let view = self.next_logs;
-        self.next_logs += 1;
-        let (stop, stopped) = oneshot::channel::<()>();
         self.logs = Some(LogsView {
-            id: view,
+            id: None,
             deployable: index,
             command: log_command(&deployable.config.service),
             lines: VecDeque::new(),
             scroll: 0,
             state: LogsState::Connecting,
-            _stop: stop,
         });
-        let (pool, tx) = (self.pool.clone(), self.fetched.clone());
+        let (engine, tx) = (self.engine.clone(), self.fetched.clone());
         tokio::spawn(async move {
-            let result = async {
-                let session = pool.get(&deployable.endpoint).await?;
-                let server = Server::new(session, &deployable.config.service);
-                let _ = tx.send(Fetched::LogsOpen { view });
-                let line_tx = tx.clone();
-                server
-                    .follow_logs(
-                        |line| {
-                            let _ = line_tx.send(Fetched::LogLine {
-                                view,
-                                line: line.to_string(),
-                            });
-                        },
-                        async {
-                            // The view closed: its sender is gone.
-                            let _ = stopped.await;
-                        },
-                    )
-                    .await
+            let asked = LogsFollow {
+                deployable: deployable.slug.clone(),
+            };
+            match engine
+                .request::<_, LogsFollowResult>(method::LOGS_FOLLOW, &asked)
+                .await
+            {
+                Ok(follow) => {
+                    let _ = tx.send(Fetched::LogsOpen { view: follow.view });
+                }
+                Err(err) => {
+                    let _ = tx.send(Fetched::LogsFailed {
+                        result: err.reason(),
+                    });
+                }
             }
-            .await
-            .map_err(|err| format!("{err:#}"));
-            let _ = tx.send(Fetched::LogsEnded { view, result });
+        });
+    }
+
+    /// Stops a live log the view is done with.
+    pub(super) fn stop_log(&self, view: u64) {
+        let asked = LogsStop { view };
+        let engine = self.engine.clone();
+        tokio::spawn(async move {
+            let _ = engine.request::<_, Done>(method::LOGS_STOP, &asked).await;
         });
     }
 
@@ -197,64 +208,87 @@ impl App {
         if let Some(view) = self.releases.as_mut().filter(|v| v.deployable == index) {
             view.listing = Fetch::Loading;
         }
-        let (pool, tx) = (self.pool.clone(), self.fetched.clone());
+        let (engine, tx) = (self.engine.clone(), self.fetched.clone());
         tokio::spawn(async move {
-            let result = async {
-                let session = pool.get(&deployable.endpoint).await?;
-                Server::new(session, &deployable.config.service)
-                    .list()
-                    .await
-            }
-            .await
-            .map_err(|err| format!("{err:#}"));
+            let asked = ReleasesList {
+                deployable: deployable.slug.clone(),
+            };
+            let result = engine
+                .request::<_, ReleasesListResult>(method::RELEASES_LIST, &asked)
+                .await
+                .map(convert::listing)
+                .map_err(|err| err.reason());
             let _ = tx.send(Fetched::Releases { index, result });
         });
     }
 
     pub(super) fn start_deploy(&mut self, index: usize) {
-        if self.op_running() {
+        if self.busy() {
             self.notify("An operation is already running", Tone::Warn);
             return;
         }
         let deployable = self.deployables[index].clone();
-        let id = self.next_op_id();
-        let steps = deploy::deploy_step_names(&deployable.config);
-        self.op = Some(Operation::new(id, OpKind::Deploy, index, &steps));
-        self.screen = Screen::Operation;
-        let reporter = Reporter::new(id, self.ops.clone());
-        tokio::spawn(deploy::deploy(deployable, self.pool.clone(), reporter));
+        self.starting = true;
+        let (engine, tx) = (self.engine.clone(), self.fetched.clone());
+        let kind = OpKind::Deploy;
+        tokio::spawn(async move {
+            let asked = DeployStart {
+                deployable: deployable.slug.clone(),
+                on_failure: None,
+            };
+            let result = engine
+                .request::<_, OperationStarted>(method::DEPLOY_START, &asked)
+                .await
+                .map(|started| (started.op, started.steps))
+                .map_err(|err| err.reason());
+            let _ = tx.send(Fetched::Started {
+                index,
+                kind,
+                result,
+            });
+        });
     }
 
     pub(super) fn start_rollback(&mut self, index: usize, target: String) {
-        if self.op_running() {
+        if self.busy() {
             self.notify("An operation is already running", Tone::Warn);
             return;
         }
         let deployable = self.deployables[index].clone();
-        let id = self.next_op_id();
-        let steps = deploy::rollback_step_names(&deployable.config);
-        self.op = Some(Operation::new(
-            id,
-            OpKind::Rollback {
-                target: target.clone(),
-            },
-            index,
-            &steps,
-        ));
-        self.screen = Screen::Operation;
-        let reporter = Reporter::new(id, self.ops.clone());
-        tokio::spawn(deploy::rollback(
-            deployable,
-            target,
-            self.pool.clone(),
-            reporter,
-        ));
+        self.starting = true;
+        let (engine, tx) = (self.engine.clone(), self.fetched.clone());
+        let kind = OpKind::Rollback {
+            target: target.clone(),
+        };
+        tokio::spawn(async move {
+            let asked = RollbackStart {
+                deployable: deployable.slug.clone(),
+                release: target,
+            };
+            let result = engine
+                .request::<_, OperationStarted>(method::ROLLBACK_START, &asked)
+                .await
+                .map(|started| (started.op, started.steps))
+                .map_err(|err| err.reason());
+            let _ = tx.send(Fetched::Started {
+                index,
+                kind,
+                result,
+            });
+        });
     }
 
-    pub(super) fn next_op_id(&mut self) -> OpId {
-        let id = self.next_op;
-        self.next_op += 1;
-        id
+    /// Whether a deploy or rollback is running, or on its way.
+    fn busy(&self) -> bool {
+        self.op_running() || self.starting
+    }
+
+    /// Says goodbye, so the engine stops taking work and exits.
+    pub async fn close(&self) {
+        let _ = self
+            .engine
+            .request::<_, Done>(method::SHUTDOWN, &Done {})
+            .await;
     }
 }
 

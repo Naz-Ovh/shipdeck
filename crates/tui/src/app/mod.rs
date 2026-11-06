@@ -8,12 +8,13 @@ mod keys;
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ratatui::widgets::{ListState, TableState};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
+
+use shipdeck_protocol::connection::Handle;
 
 use shipdeck_engine::config::{Deployable, Discovery};
 use shipdeck_engine::deploy::report::{
@@ -22,7 +23,7 @@ use shipdeck_engine::deploy::report::{
 use shipdeck_engine::remote::{
     Control, FileInfo, FileText, Listing, ReleaseContents, ReleaseEntry, Source, Status,
 };
-use shipdeck_engine::ssh::Pool;
+use shipdeck_engine::ssh::Login;
 
 use crate::command::CommandLine;
 
@@ -73,11 +74,21 @@ pub enum Fetched {
         path: String,
         result: Result<FileText, String>,
     },
+    /// An operation was accepted: its id, and the steps it will go through.
+    Started {
+        index: usize,
+        kind: OpKind,
+        result: Result<(OpId, Vec<String>), String>,
+    },
     /// A `:stop`, `:start` or `:restart` is done.
     Controlled {
         index: usize,
         action: Control,
         result: Result<(), String>,
+    },
+    /// The log could not start.
+    LogsFailed {
+        result: String,
     },
     /// The log view `view` is connected and following.
     LogsOpen {
@@ -114,7 +125,7 @@ pub struct Progress {
 
 #[derive(Debug, Clone)]
 pub struct StepView {
-    pub name: &'static str,
+    pub name: String,
     pub state: StepState,
     pub detail: Option<String>,
     pub progress: Option<Progress>,
@@ -160,7 +171,7 @@ pub struct Operation {
 }
 
 impl Operation {
-    pub(super) fn new(id: OpId, kind: OpKind, deployable: usize, steps: &[&'static str]) -> Self {
+    pub(super) fn new(id: OpId, kind: OpKind, deployable: usize, steps: &[String]) -> Self {
         Self {
             id,
             kind,
@@ -169,7 +180,7 @@ impl Operation {
             steps: steps
                 .iter()
                 .map(|name| StepView {
-                    name,
+                    name: name.clone(),
                     state: StepState::Pending,
                     detail: None,
                     progress: None,
@@ -337,7 +348,8 @@ pub enum LogsState {
 
 /// A service's log, followed live over the whole screen.
 pub struct LogsView {
-    pub id: u64,
+    /// The engine's id for this log; `None` until `logs/follow` answers.
+    pub id: Option<u64>,
     pub deployable: usize,
     /// What follows it on the server.
     pub command: String,
@@ -345,8 +357,6 @@ pub struct LogsView {
     /// Lines up from the bottom; 0 follows new output.
     pub scroll: usize,
     pub state: LogsState,
-    /// Dropping it, as closing the view does, stops the log on the server.
-    _stop: oneshot::Sender<()>,
 }
 
 pub enum Modal {
@@ -432,19 +442,24 @@ pub struct App {
     pub toast: Option<Toast>,
     pub tick: u64,
     pub quit: bool,
-    pub pool: Arc<Pool>,
-    ops: UnboundedSender<OpUpdate>,
+    /// The sending half of the pipe to the engine.
+    pub engine: Handle,
+    /// How this run logs in; the details pane says so.
+    pub login: Login,
     fetched: UnboundedSender<Fetched>,
-    next_op: OpId,
-    next_logs: u64,
+    /// A deploy or rollback was asked for and its answer is on the way; the
+    /// events of it are kept in `early` until it arrives.
+    starting: bool,
+    early: Vec<OpUpdate>,
 }
 
 impl App {
+    #[must_use]
     pub fn new(
         root: PathBuf,
         discovery: Discovery,
-        pool: Arc<Pool>,
-        ops: UnboundedSender<OpUpdate>,
+        login: Login,
+        engine: Handle,
         fetched: UnboundedSender<Fetched>,
     ) -> Self {
         let count = discovery.deployables.len();
@@ -467,11 +482,11 @@ impl App {
             toast: None,
             tick: 0,
             quit: false,
-            pool,
-            ops,
+            engine,
+            login,
             fetched,
-            next_op: 1,
-            next_logs: 1,
+            starting: false,
+            early: Vec::new(),
         }
     }
 

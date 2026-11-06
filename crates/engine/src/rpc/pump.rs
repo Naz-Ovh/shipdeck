@@ -162,7 +162,7 @@ async fn ask_rollback(connection: &Handle, op: OpId, question: RollbackQuestion)
         op,
         release: question.release,
         previous: question.previous,
-        step: question.step.to_string(),
+        step: question.step,
         error: question.error,
         seconds: question.seconds,
     };

@@ -2788,7 +2788,9 @@ dependencies = [
  "crossterm",
  "futures",
  "ratatui",
+ "serde_json",
  "shipdeck-engine",
+ "shipdeck-protocol",
  "tokio",
  "unicode-width",
 ]

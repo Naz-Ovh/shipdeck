@@ -53,6 +53,18 @@ impl Display for Error {
 
 impl std::error::Error for Error {}
 
+impl Error {
+    /// The message for a person: what the other side said, without the
+    /// protocol's own words around it.
+    #[must_use]
+    pub fn reason(&self) -> String {
+        match self {
+            Self::Rpc(object) => object.message.clone(),
+            other => other.to_string(),
+        }
+    }
+}
+
 impl From<std::io::Error> for Error {
     fn from(err: std::io::Error) -> Self {
         Self::Io(err)

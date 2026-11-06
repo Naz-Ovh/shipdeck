@@ -1,8 +1,11 @@
-//! How results from the background change the app: fetches, operation updates and SSH questions.
+//! How results from the engine change the app: fetches, operation events and
+//! the engine's questions.
 
 use std::time::{Duration, Instant};
 
-use super::{App, Asked, Fetch, Fetched, LOG_LIMIT, Live, LogsState, Modal, Screen};
+use super::{
+    App, Asked, Fetch, Fetched, LOG_LIMIT, Live, LogsState, Modal, OpId, OpKind, Operation, Screen,
+};
 use shipdeck_engine::deploy::report::{OpEvent, OpUpdate};
 use shipdeck_engine::ssh::Question;
 
@@ -48,13 +51,34 @@ impl App {
                 action,
                 result,
             } => self.controlled(index, action, result),
-            Fetched::LogsOpen { view } => {
-                if let Some(logs) = self.logs.as_mut().filter(|l| l.id == view) {
-                    logs.state = LogsState::Following;
+            Fetched::Started {
+                index,
+                kind,
+                result,
+            } => self.started(index, kind, result),
+            Fetched::LogsFailed { result } => {
+                if let Some(logs) = self.logs.as_mut() {
+                    logs.state = LogsState::Ended(result);
                 }
             }
+            Fetched::LogsOpen { view } => match self.logs.as_mut().filter(|l| l.id.is_none()) {
+                Some(logs) => {
+                    logs.id = Some(view);
+                    logs.state = LogsState::Following;
+                }
+                // The view closed before the engine answered; stop the stream
+                // it has just opened.
+                None => self.stop_log(view),
+            },
             Fetched::LogLine { view, line } => {
-                if let Some(logs) = self.logs.as_mut().filter(|l| l.id == view) {
+                if let Some(logs) = self.logs.as_mut() {
+                    // A line can beat the answer that carries its view.
+                    if logs.id.is_none() {
+                        logs.id = Some(view);
+                    }
+                    if logs.id != Some(view) {
+                        return;
+                    }
                     logs.lines.push_back(line);
                     if logs.lines.len() > LOG_LIMIT {
                         logs.lines.pop_front();
@@ -66,7 +90,7 @@ impl App {
                 }
             }
             Fetched::LogsEnded { view, result } => {
-                if let Some(logs) = self.logs.as_mut().filter(|l| l.id == view) {
+                if let Some(logs) = self.logs.as_mut().filter(|l| l.id == Some(view)) {
                     logs.state = LogsState::Ended(match result {
                         Ok(Some(code)) => format!("the log ended (exit {code})"),
                         Ok(None) => "the log ended".to_string(),
@@ -77,7 +101,36 @@ impl App {
         }
     }
 
+    /// The engine accepted a deploy or rollback: from here its events belong
+    /// to an operation the screen knows.
+    fn started(&mut self, index: usize, kind: OpKind, result: Result<(OpId, Vec<String>), String>) {
+        self.starting = false;
+        match result {
+            Ok((id, steps)) => {
+                self.op = Some(Operation::new(id, kind, index, &steps));
+                self.screen = Screen::Operation;
+                // Events that beat the answer are shown now, in order.
+                for update in std::mem::take(&mut self.early) {
+                    self.on_op(update);
+                }
+            }
+            Err(err) => {
+                self.early.clear();
+                self.modals.push_back(Modal::Notice {
+                    title: "Could not start".to_string(),
+                    text: err,
+                });
+            }
+        }
+    }
+
     pub fn on_op(&mut self, update: OpUpdate) {
+        // The answer to `deploy/start` may still be on its way; nothing here
+        // can be placed until it says which operation this is.
+        if self.starting && self.op.is_none() {
+            self.early.push(update);
+            return;
+        }
         let Some(op) = self.op.as_mut().filter(|op| op.id == update.op) else {
             return;
         };

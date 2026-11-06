@@ -149,7 +149,7 @@ impl Run<'_> {
         let answer = report.ask_rollback(
             &id,
             previous,
-            step.name(),
+            step.name().to_string(),
             &short(err),
             ROLLBACK_ANSWER_SECS,
         );

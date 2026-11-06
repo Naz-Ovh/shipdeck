@@ -5,16 +5,15 @@
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
-use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::unbounded_channel;
 
 use shipdeck_engine::config::{self, Discovery, Manager};
 use shipdeck_engine::init::Preset;
-use shipdeck_engine::ssh::{Login, PASSPHRASE_ENV, Pool, Question};
+use shipdeck_engine::ssh::Login;
 use shipdeck_protocol::message::Problem;
 
 use console::{Choices, Console};
@@ -261,12 +260,7 @@ async fn main() -> Result<ExitCode> {
             let root = cli
                 .root
                 .expect("clap requires DEPLOY_ROOT without --schema or a command");
-            let shell_env = !cli.login.no_shell_env;
-            #[cfg(windows)]
-            if let Some(path) = &cli.login.gitshell_path {
-                shipdeck_engine::build::set_gitshell_path(path.clone());
-            }
-            return run_tui(root, login(cli.login)?, shell_env).await;
+            return run_tui(root, cli.login).await;
         }
     };
 
@@ -277,10 +271,6 @@ async fn main() -> Result<ExitCode> {
     };
     let shell_env = !ssh.login.no_shell_env;
     let gitshell = gitshell(&ssh.login);
-    #[cfg(windows)]
-    if let Some(path) = &ssh.login.gitshell_path {
-        shipdeck_engine::build::set_gitshell_path(path.clone());
-    }
     let login = login(ssh.login.clone())?;
     // The engine reports the same problems; checking here keeps the caret
     // block, the colours and the exact output scripts have seen until now.
@@ -389,15 +379,51 @@ fn run_init(args: InitArgs) -> Result<ExitCode> {
     init::run(given)
 }
 
-async fn run_tui(root: PathBuf, login: Login, shell_env: bool) -> Result<ExitCode> {
-    let Some(discovery) = discover(&root)? else {
+async fn run_tui(root: PathBuf, args: LoginArgs) -> Result<ExitCode> {
+    let login = login(args.clone())?;
+    // The CLI reads every file for its own error report; the engine answers
+    // with the projects the TUI then follows.
+    if discover(&root)?.is_none() {
         return Ok(ExitCode::FAILURE);
-    };
+    }
+    let engine = engine::Engine::start(gitshell(&args).as_deref()).await?;
+    let workspace = engine
+        .open(&root, &wire(&login), !args.no_shell_env)
+        .await?;
+    let mut deployables = Vec::with_capacity(workspace.deployables.len());
+    for info in &workspace.deployables {
+        let folder = PathBuf::from(&info.folder);
+        let Ok(found) = shipdeck_engine::config::Deployable::load(&folder) else {
+            bail!(
+                "{}: its deploy.yaml cannot be read any more",
+                folder.display()
+            );
+        };
+        deployables.push(found);
+    }
+    let (connection, mut child) = engine.into_parts();
+    let handle = connection.handle();
     let (questions_tx, questions) = unbounded_channel();
     let (ops_tx, ops) = unbounded_channel();
     let (fetched_tx, fetched) = unbounded_channel();
-    let pool = Arc::new(pool(login, questions_tx, shell_env));
-    let app = shipdeck_tui::App::new(root, discovery, pool, ops_tx, fetched_tx);
+    shipdeck_tui::pump(
+        connection,
+        shipdeck_tui::Inboxes {
+            ops: ops_tx,
+            questions: questions_tx,
+            fetched: fetched_tx.clone(),
+        },
+    );
+    let app = shipdeck_tui::App::new(
+        root,
+        Discovery {
+            deployables,
+            problems: Vec::new(),
+        },
+        login,
+        handle,
+        fetched_tx,
+    );
     shipdeck_tui::run(
         app,
         shipdeck_tui::Inbox {
@@ -407,6 +433,7 @@ async fn run_tui(root: PathBuf, login: Login, shell_env: bool) -> Result<ExitCod
         },
     )
     .await?;
+    let _ = child.wait().await;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -432,21 +459,6 @@ fn login(args: LoginArgs) -> Result<Login> {
         Some(password) => Login::Password(password),
         None => Login::Auto,
     })
-}
-
-/// The session pool for this run, with the passphrase and shell settings
-/// from the environment and the flags.
-fn pool(login: Login, asker: UnboundedSender<Question>, shell_env: bool) -> Pool {
-    let pool = Pool::new(login, asker).with_passphrase(passphrase());
-    if shell_env {
-        pool
-    } else {
-        pool.without_shell_env()
-    }
-}
-
-fn passphrase() -> Option<String> {
-    std::env::var(PASSPHRASE_ENV).ok().filter(|p| !p.is_empty())
 }
 
 /// Every deployable under `root`, or `None` once every problem in every

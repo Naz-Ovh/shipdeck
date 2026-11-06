@@ -78,7 +78,7 @@ pub struct RollbackQuestion {
     /// The release that was live before it.
     pub previous: String,
     /// The step that failed, such as `Health`.
-    pub step: &'static str,
+    pub step: String,
     pub error: String,
     pub seconds: u64,
     /// `true` rolls back; `false` keeps the new release.
@@ -215,7 +215,7 @@ impl Reporter {
         &self,
         release: &str,
         previous: &str,
-        step: &'static str,
+        step: String,
         error: &str,
         seconds: u64,
     ) -> oneshot::Receiver<bool> {

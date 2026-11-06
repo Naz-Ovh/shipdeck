@@ -107,7 +107,7 @@ fn banner(frame: &mut Frame, area: Rect, app: &App, op: &Operation) {
             });
             let what = match running {
                 _ if asking => "Waiting for your answer",
-                Some(step) => step.name,
+                Some(step) => step.name.as_str(),
                 None if op.completed_steps() > 0 => "Working",
                 None => "Starting",
             };
@@ -145,7 +145,7 @@ fn outcome_line(op: &Operation, outcome: &Outcome) -> Line<'static> {
         .steps
         .iter()
         .find(|s| s.state == StepState::Failed)
-        .map_or("a step", |s| s.name);
+        .map_or("a step", |s| s.name.as_str());
     match outcome {
         Outcome::Succeeded { release } => Line::from(vec![
             theme::badge("LIVE", OK),
@@ -246,7 +246,7 @@ fn steps(frame: &mut Frame, area: Rect, op: &Operation, tick: u64) {
                 Cell::from(Line::from(vec![
                     theme::step_icon(step.state, tick),
                     Span::styled(format!(" {} ", index + 1), theme::faint()),
-                    Span::styled(step.name, name_style),
+                    Span::styled(step.name.clone(), name_style),
                 ])),
                 Cell::from(Span::styled(detail, detail_style)),
                 Cell::from(Line::from(Span::styled(time, theme::muted())).right_aligned()),

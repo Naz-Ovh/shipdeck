@@ -9,6 +9,10 @@ Where the last session stopped (2026-11-06). Read [README.md](README.md) first; 
   one go, later.
 - Done this session:
   - `p1c1`: `shipdeck engine`, the process apps talk to (`crates/engine/src/rpc`), with tests.
+  - `p1d2`: the TUI is a client of that engine. `crates/tui/src/pump.rs` turns the pipe into the three
+    channels the screens already read; `convert.rs` puts the answers into the engine types they draw. Every
+    action is a request, every question a dialog that answers by message id. `apps/cli/src/run_tui` spawns the
+    child and opens the folder first. Nothing calls `deploy` or `remote` in-process any more.
   - `p1d1`: `shipdeck deploy`, `rollback` and `releases` start that engine as a child and print what it
     reports. `apps/cli/src/console` holds `Console`: it sends the requests, answers the questions
     from the flags, and maps the outcome to the exit code. `apps/cli/src/engine.rs` holds the
@@ -34,19 +38,17 @@ Where the last session stopped (2026-11-06). Read [README.md](README.md) first; 
   as line/column/message, which cannot draw the caret block the console has always printed.
 - The engine runs in its own process group, so the terminal's Ctrl-C stays with the app: the app decides, and
   its death closes the pipe, which ends the engine.
-- `apps/cli/src/console` still uses `shipdeck-engine` for `human` (bytes and durations). The protocol is its
-  other shipdeck edge. If the isolation matters more than the shared formatter, `human` has to move; ask the
-  owner first.
+- `crates/tui` and `apps/cli/src/console` still use `shipdeck-engine` for types and `human` (bytes,
+  durations), and the TUI reads the project's own `deploy.yaml` through it for the description panes. The
+  protocol is their other shipdeck edge. If the isolation matters more than the shared formatter or the
+  shared config reader, those have to move; ask the owner first.
 
 ## Next
 
-1. `p1d2`: the TUI starts the child (`apps/cli/src/engine.rs`) and moves its screens onto the protocol. The
-   shared part comes first: spawn, `initialize`, `workspace/open`, route `Incoming`. Then one screen at a
-   time. The TUI still calls the engine in-process, so both paths work during the move.
-2. `p1c2`: safe when the app closes. Today `shutdown` answers, waits for the requests it already took, closes
+1. `p1c2`: safe when the app closes. Today `shutdown` answers, waits for the requests it already took, closes
    the pool and exits; a deploy that is running dies with the process.
-3. Owner still to look at: the spec (`p1a1`) and the desktop mockup (`p2a1`). Both stay `built`.
-4. Still open: `p1c6` (settings backup), `p1c7` (idle disconnect), `p2d1`–`p2d4` (desktop), `p3d1`, `p3d2`
+2. Owner still to look at: the spec (`p1a1`) and the desktop mockup (`p2a1`). Both stay `built`.
+3. Still open: `p1c6` (settings backup), `p1c7` (idle disconnect), `p2d1`–`p2d4` (desktop), `p3d1`, `p3d2`
    (agent).
 
 ## Open threads

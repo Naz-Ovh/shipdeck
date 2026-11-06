@@ -16,7 +16,7 @@ use super::theme::{self, ACCENT, ERR, INK, MUTED, OK, SURFACE, WARN};
 pub fn header(frame: &mut Frame, area: Rect, app: &App) {
     let [top, tabs] = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
 
-    let login = app.pool.login().describe();
+    let login = app.login.describe();
     // A login wider than the terminal saturates instead of wrapping.
     let login_width = u16::try_from(login.len() + 8).unwrap_or(u16::MAX);
     let [brand_area, login_area] =
