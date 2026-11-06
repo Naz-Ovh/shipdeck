@@ -23,6 +23,33 @@ pub fn gather_monorepo(
     facts: &Facts,
     progress: impl FnMut(u64, u64),
 ) -> Result<Contents> {
+    let files = process_files(config, folder, apps, user, release, facts)?;
+    let sources: Vec<_> = apps
+        .iter()
+        .zip(&files)
+        .map(|(app, file)| AppSource {
+            project: &app.project,
+            deploy_folder: folder,
+            pack: &app.pipeline.pack,
+            service: &app.service,
+            service_file: file.as_ref(),
+            release_dir: &app.release_dir,
+            excluded_configs: &config.app_files,
+        })
+        .collect();
+    let metadata = config.release_metadata()?;
+    gather_apps(&sources, &metadata, progress)
+}
+
+/// Renders every app's manager file for packing or stable fingerprinting.
+fn process_files(
+    config: &MonorepoConfig,
+    folder: &Path,
+    apps: &[ResolvedApp],
+    user: &str,
+    release: &ReleaseName,
+    facts: &Facts,
+) -> Result<Vec<Option<ServiceFile>>> {
     let template = folder.join(UNIT_TEMPLATE);
     let mut files: Vec<Option<ServiceFile>> = Vec::with_capacity(apps.len());
     for app in apps {
@@ -50,21 +77,25 @@ pub fn gather_monorepo(
                 .with_context(|| format!("rendering the process for app {}", app.name))?,
         );
     }
-    let sources: Vec<_> = apps
-        .iter()
-        .zip(&files)
-        .map(|(app, file)| AppSource {
-            project: &app.project,
-            deploy_folder: folder,
-            pack: &app.pipeline.pack,
-            service: &app.service,
-            service_file: file.as_ref(),
-            release_dir: &app.release_dir,
-            excluded_configs: &config.app_files,
-        })
-        .collect();
-    let metadata = config.release_metadata()?;
-    gather_apps(&sources, &metadata, progress)
+    Ok(files)
+}
+
+/// Fingerprints process files with a fixed release name, including custom templates.
+///
+/// # Errors
+/// Returns an error when a process file cannot be rendered.
+pub fn fingerprint_monorepo(
+    contents: &Contents,
+    config: &MonorepoConfig,
+    folder: &Path,
+    apps: &[ResolvedApp],
+    user: &str,
+    facts: &Facts,
+) -> Result<String> {
+    let unnamed = ReleaseName::new("0.0.0", "unnamed", false, chrono::DateTime::UNIX_EPOCH);
+    let files = process_files(config, folder, apps, user, &unnamed, facts)?;
+    let files: Vec<_> = files.iter().filter_map(Option::as_ref).collect();
+    Ok(contents.fingerprint_apps(&files, &serde_json::to_string(config)?))
 }
 
 #[cfg(test)]

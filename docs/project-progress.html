@@ -236,6 +236,7 @@
     <aside class="next">
       <h2>Up next</h2>
       <ol>
+        <li>Monorepo deployment is built and verified through SSH in Podman: shared releases, saved app settings, rollback, controls, and logs (<a href="#p1d3">p1d3</a>). Nginx and oxmgr remain future work.</li>
         <li>Owner: answer the open decisions marked <b>waiting</b>: four for the desktop app (<a href="#p2d1">p2d1</a> to <a href="#p2d4">p2d4</a>) and two for the agent (<a href="#p3d1">p3d1</a>, <a href="#p3d2">p3d2</a>). None of them blocks the engine work. To see only them, pick “Next, and waiting for you” in the filter.</li>
         <li>Owner: five changes since version 0.6.1 are built but not released. They are Windows support (<a href="#p0f2">p0f2</a>), release details with <kbd>D</kbd> (<a href="#p0b3">p0b3</a>), wrapped log lines (<a href="#p0e3">p0e3</a>), the check for Windows line endings (<a href="#p0c4">p0c4</a>), and the end of support for pre-0.6 releases (<a href="#p0c5">p0c5</a>). Try them, then say when to make a release.</li>
         <li>Owner: look at the spec page, <a href="visual/Plan/spec.html">spec.html</a> (<a href="#p1a1">p1a1</a>), and say yes or what to change. All the older planning pages are merged into it.</li>
@@ -263,7 +264,7 @@
 </div>
 
 <script>
-const UPDATED = "2026-11-06";
+const UPDATED = "2026-11-07";
 // Status rules: never start a "planned" step without the owner's go. Only the owner moves a step to "done".
 // Each phase: { n, title, short (for the road at a glance), c (its colour), blurb, subs }.
 // Each item: [id, title, status, date, body (HTML), references (optional)].
@@ -412,6 +413,9 @@ const PLAN = [
    ["p1d1", "The CLI and the script commands use the engine", "built", "2026-11-06",
     "<p><code>shipdeck deploy</code>, <code>rollback</code> and <code>releases</code> start the engine as a child process and print what it reports. Their lines and their exit codes are the same as before.</p><p>The engine asks; the flags answer: <code>--trust-new-host</code>, <code>--allow-unchanged</code> and <code>--on-failure</code>. Nothing waits for a keyboard. One engine works for one command, and it ends with it, so nothing stays behind.</p>",
     "<a href=\"code/protocol.md\">docs/code/protocol.md</a> · <code>apps/cli/src/engine.rs</code> · <code>apps/cli/src/console</code>"],
+   ["p1d3", "Monorepo deployment through the engine, CLI and TUI", "built", "2026-11-07",
+    "<p>Several apps share one verified release, one switch, backups and retention. Saved settings restore app additions, removals and process-manager changes. Global and app commands, status, logs and controls use the engine.</p><p>SSH tests in Podman cover mixed systemd and PM2 managers, external app files, shared data, unchanged content, backup rollback and failure recovery. The 302 workspace tests, strict Clippy checks, and documentation website build passed. Nginx and oxmgr stay deferred.</p>",
+    "docs/feature/monorepo-deploy.md · docs/code/monorepo-ssh-tests.md"],
    ["p1d2", "The TUI uses the engine", "built", "2026-11-06",
     "<p>The terminal UI starts the engine as a separate process and asks it for everything: the service state, the releases, a release's files, the live log, a deploy or a rollback. Its questions arrive as messages and the dialogs answer them.</p><p>Every screen looks and works as before. Nothing in the app touches SSH or deploys anything itself any more.</p>",
     "<a href=\"code/protocol.md\">docs/code/protocol.md</a> · <code>crates/tui/src/pump.rs</code> · <code>apps/cli/src/engine.rs</code>"],

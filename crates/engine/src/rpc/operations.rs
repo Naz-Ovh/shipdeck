@@ -9,7 +9,7 @@ use tokio::sync::mpsc::unbounded_channel;
 use shipdeck_protocol::message::request::{DeployStart, OperationStarted, RollbackStart};
 use shipdeck_protocol::wire::{ErrorObject, Id};
 
-use crate::config::{DeployConfig, Deployable};
+use crate::config::{DeployConfig, Deployment};
 use crate::deploy::report::{OpId, Reporter};
 use crate::deploy::{self, Step};
 use crate::ssh::Pool;
@@ -20,7 +20,7 @@ use super::session::Session;
 
 /// One long run, once its checks pass.
 struct Work {
-    deployable: Deployable,
+    deployable: Deployment,
     pool: Arc<Pool>,
     op: OpId,
     steps: Vec<Step>,
@@ -31,9 +31,19 @@ struct Work {
 pub async fn deploy(session: &Arc<Session>, id: Id, params: Value) {
     let prepared = async {
         let asked: DeployStart = convert::params(params)?;
-        let mut deployable = session.deployable(&asked.deployable)?;
+        let mut deployable = session.deployment(&asked.deployable)?;
         if let Some(choice) = asked.on_failure {
-            deployable.config.pipeline.failed.rollback = convert::on_failure(choice);
+            match &mut deployable {
+                Deployment::Single(d) => {
+                    d.config.pipeline.failed.rollback = convert::on_failure(choice);
+                }
+                Deployment::Monorepo(d) => {
+                    d.config.pipeline["failed"]["rollback"] = serde_json::json!(match choice {
+                        shipdeck_protocol::message::common::OnFailure::Rollback => "auto",
+                        shipdeck_protocol::message::common::OnFailure::Keep => "ask",
+                    });
+                }
+            }
         }
         ready(session, deployable, deploy::deploy_steps)
     }
@@ -43,14 +53,21 @@ pub async fn deploy(session: &Arc<Session>, id: Id, params: Value) {
         Err(error) => return session.reply_error(id, error),
     };
     let reporter = start(session, id, &work);
-    tokio::spawn(deploy::deploy(work.deployable, work.pool, reporter));
+    match work.deployable {
+        Deployment::Single(d) => {
+            tokio::spawn(deploy::deploy(*d, work.pool, reporter));
+        }
+        Deployment::Monorepo(d) => {
+            tokio::spawn(deploy::deploy_monorepo(*d, work.pool, reporter));
+        }
+    }
 }
 
 /// Puts one release back. The answer is the same shape as a deploy's.
 pub async fn rollback(session: &Arc<Session>, id: Id, params: Value) {
     let prepared = async {
         let asked: RollbackStart = convert::params(params)?;
-        let deployable = session.deployable(&asked.deployable)?;
+        let deployable = session.deployment(&asked.deployable)?;
         let work = ready(session, deployable, deploy::rollback_steps)?;
         Ok::<(Work, String), ErrorObject>((work, asked.release))
     }
@@ -60,22 +77,27 @@ pub async fn rollback(session: &Arc<Session>, id: Id, params: Value) {
         Err(error) => return session.reply_error(id, error),
     };
     let reporter = start(session, id, &work);
-    tokio::spawn(deploy::rollback(
-        work.deployable,
-        target,
-        work.pool,
-        reporter,
-    ));
+    match work.deployable {
+        Deployment::Single(d) => {
+            tokio::spawn(deploy::rollback(*d, target, work.pool, reporter));
+        }
+        Deployment::Monorepo(d) => {
+            tokio::spawn(deploy::rollback_monorepo(*d, target, work.pool, reporter));
+        }
+    }
 }
 
 /// The project, its connections and a free engine, or why the run cannot
 /// start.
 fn ready(
     session: &Session,
-    deployable: Deployable,
+    deployable: Deployment,
     plan: fn(&DeployConfig) -> Vec<Step>,
 ) -> Result<Work, ErrorObject> {
-    let steps = plan(&deployable.config);
+    let steps = match &deployable {
+        Deployment::Single(d) => plan(&d.config),
+        Deployment::Monorepo(_) => deploy::monorepo_steps(),
+    };
     let pool = session.pool()?;
     let op = session.begin()?;
     Ok(Work {

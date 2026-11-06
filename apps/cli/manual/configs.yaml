@@ -342,3 +342,39 @@ pipeline:
               text: |
                 Runs on your PC after any failed step, after the rollback if there was one, e.g. a
                 notification. Its own failure is only logged.
+
+dir:
+  type: absolute server path, monorepos only
+  brief: shared deployment folder for every app
+  text: Holds current, releases, backups and shared. Use service.dir for a single app.
+
+process_manager:
+  brief: default process manager for monorepo apps
+  fields:
+    name:
+      type: systemd or pm2, default systemd
+      brief: manager inherited by apps without their own section
+    run_as:
+      type: user, optional
+      brief: systemd service user; defaults to the SSH user
+    app:
+      type: text, optional
+      brief: PM2 app name; must be unique across apps
+    ecosystem:
+      type: path, optional
+      brief: custom PM2 ecosystem file inside each app release folder
+    options:
+      type: map, default empty
+      brief: extra settings in generated PM2 process files
+
+apps:
+  type: named map, monorepos only
+  brief: inline app settings or paths to app YAML files
+  text: |
+    A monorepo uses name, project, ssh, dir, process_manager, pipeline and apps.
+    Each app accepts project, start, env, env_file, shared, process_manager and pipeline.
+    An app file path is relative to deploy.yaml and must stay inside that folder.
+    App projects are relative to the repository project folder and must stay inside it.
+    App process_manager replaces the whole global section. App pipeline fields override
+    matching global settings. Global commands run once, then explicit app commands run
+    in app-name order. See `shipdeck man details monorepo` for execution and rollback.

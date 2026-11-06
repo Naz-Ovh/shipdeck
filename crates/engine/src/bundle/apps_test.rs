@@ -50,5 +50,23 @@ fn collects_both_processes_and_their_release_settings() {
     ] {
         assert!(names.contains(&name), "missing {name}");
     }
+    let fingerprint =
+        fingerprint_monorepo(&contents, &config, &folder, &apps, "deploy", &facts).unwrap();
+    let later = ReleaseName::new("2.0.0", "later", true, chrono::Utc::now());
+    let changed_id =
+        gather_monorepo(&config, &folder, &apps, "deploy", &later, &facts, |_, _| {}).unwrap();
+    assert_eq!(
+        fingerprint,
+        fingerprint_monorepo(&changed_id, &config, &folder, &apps, "deploy", &facts).unwrap()
+    );
+    std::fs::write(
+        folder.join(UNIT_TEMPLATE),
+        "[Service]\nExecStart={{exec}}\nEnvironment=CHANGED=yes\n",
+    )
+    .unwrap();
+    assert_ne!(
+        fingerprint,
+        fingerprint_monorepo(&contents, &config, &folder, &apps, "deploy", &facts).unwrap()
+    );
     std::fs::remove_dir_all(folder).unwrap();
 }

@@ -258,7 +258,10 @@ pipeline:
 
 [`examples/`](examples) has complete files for [Rust](examples/rust/deploy.yaml),
 [Go](examples/go/deploy.yaml), [Node.js](examples/node/deploy.yaml) and
-[Python](examples/python/deploy.yaml); a test keeps them valid.
+[Python](examples/python/deploy.yaml), plus a [monorepo](examples/monorepo)
+with systemd and PM2 apps in one release; a test keeps them valid.
+See the [monorepo guide](docs/feature/monorepo-deploy.md) for shared releases,
+app commands, backups and rollback.
 
 ### The steps
 

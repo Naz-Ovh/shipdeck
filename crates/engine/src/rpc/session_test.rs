@@ -31,7 +31,7 @@ async fn a_second_run_is_busy() {
 #[tokio::test]
 async fn a_project_needs_the_workspace_first() {
     let (session, _connection, _lines) = session();
-    assert_eq!(session.deployable("web").unwrap_err().code, -32007);
+    assert_eq!(session.deployment("web").unwrap_err().code, -32007);
     let error = session.pool().err().expect("the workspace is not open");
     assert_eq!(error.code, -32007);
 }
@@ -46,4 +46,29 @@ async fn a_reply_is_written_for_the_app() {
     let answer: Value = serde_json::from_str(&line).unwrap();
     assert_eq!(answer["id"], 4);
     assert_eq!(answer["result"], json!({}));
+}
+
+#[tokio::test]
+async fn opens_a_monorepo_as_a_shared_deployment() {
+    let folder = std::env::temp_dir().join(format!("shipdeck-rpc-monorepo-{}", std::process::id()));
+    std::fs::create_dir_all(folder.join("product")).unwrap();
+    std::fs::write(folder.join("product/deploy.yaml"), "name: product\nssh: {host: 127.0.0.1, user: deploy}\ndir: /opt/product\npipeline: {pack: {files: {include: {project: [server.js]}}}}\napps: {api: {start: node server.js}}\n").unwrap();
+    let (session, _connection, _lines) = session();
+    let opened = session
+        .open(&shipdeck_protocol::message::request::WorkspaceOpen {
+            root: folder.display().to_string(),
+            login: shipdeck_protocol::message::common::Login::Auto,
+            no_shell_env: true,
+        })
+        .await
+        .unwrap();
+    assert_eq!(opened.problems, Vec::new());
+    assert_eq!(opened.deployables.len(), 1);
+    assert_eq!(opened.deployables[0].dir, "/opt/product");
+    assert!(matches!(
+        session.deployment("product").unwrap(),
+        crate::config::Deployment::Monorepo(_)
+    ));
+    session.close().await;
+    std::fs::remove_dir_all(folder).unwrap();
 }

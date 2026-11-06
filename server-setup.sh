@@ -91,6 +91,7 @@ SUDO_COMMANDS=(
 CONTROL_COMMANDS=(
   "systemctl stop $SERVICE"
   "systemctl start $SERVICE"
+  "systemctl disable $SERVICE"
   "journalctl -u $SERVICE -f -n 200 --no-pager"
 )
 

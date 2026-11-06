@@ -14,9 +14,37 @@ use super::session::Session;
 pub async fn status(session: &Session, id: Id, params: Value) {
     let reply = async {
         let asked: StatusGet = convert::params(params)?;
-        let deployable = session.deployable(&asked.deployable)?;
-        let server = session.server(&deployable).await?;
-        let state = server.status().await.map_err(|err| convert::failed(&err))?;
+        let deployable = session.deployment(&asked.deployable)?;
+        let servers = session.servers(&deployable).await?;
+        let server = servers
+            .first()
+            .ok_or_else(|| convert::failed(&anyhow::anyhow!("no apps")))?;
+        let mut state = server.status().await.map_err(|err| convert::failed(&err))?;
+        if servers.len() > 1 {
+            let mut states = Vec::with_capacity(servers.len());
+            for server in &servers {
+                states.push((
+                    server.process_name().to_string(),
+                    server
+                        .status()
+                        .await
+                        .map_err(|err| convert::failed(&err))?
+                        .active,
+                ));
+            }
+            state.active = if states.iter().all(|(_, state)| state == "active") {
+                "active".to_string()
+            } else {
+                format!(
+                    "apps: {}",
+                    states
+                        .iter()
+                        .map(|(name, state)| format!("{name}: {state}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+        }
         convert::value(&convert::status(&state))
     }
     .await;
@@ -28,9 +56,9 @@ pub async fn status(session: &Session, id: Id, params: Value) {
 pub async fn close(session: &Session, id: Id, params: Value) {
     let reply = async {
         let asked: ConnectionClose = convert::params(params)?;
-        let deployable = session.deployable(&asked.deployable)?;
+        let deployable = session.deployment(&asked.deployable)?;
         let pool = session.pool()?;
-        pool.close(&deployable.endpoint).await;
+        pool.close(deployable.endpoint()).await;
         convert::value(&Done {})
     }
     .await;
@@ -41,12 +69,14 @@ pub async fn close(session: &Session, id: Id, params: Value) {
 pub async fn control(session: &Session, id: Id, params: Value) {
     let reply = async {
         let asked: ServiceControl = convert::params(params)?;
-        let deployable = session.deployable(&asked.deployable)?;
-        let server = session.server(&deployable).await?;
-        server
-            .control(convert::control(asked.action))
-            .await
-            .map_err(|err| convert::failed(&err))?;
+        let deployable = session.deployment(&asked.deployable)?;
+        let servers = session.servers(&deployable).await?;
+        for server in &servers {
+            server
+                .control(convert::control(asked.action))
+                .await
+                .map_err(|err| convert::failed(&err))?;
+        }
         convert::value(&Done {})
     }
     .await;

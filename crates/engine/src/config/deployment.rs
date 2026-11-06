@@ -25,6 +25,24 @@ pub struct MonorepoDeployment {
 }
 
 impl Deployment {
+    /// The SSH endpoint shared by this deployment.
+    #[must_use]
+    pub fn endpoint(&self) -> &Endpoint {
+        match self {
+            Self::Single(d) => &d.endpoint,
+            Self::Monorepo(d) => &d.endpoint,
+        }
+    }
+
+    /// The workspace name used by RPC requests.
+    #[must_use]
+    pub fn slug(&self) -> &str {
+        match self {
+            Self::Single(d) => &d.slug,
+            Self::Monorepo(d) => &d.slug,
+        }
+    }
+
     /// Loads a deployment and resolves its SSH endpoint.
     ///
     /// # Errors

@@ -50,6 +50,11 @@ pub async fn preflight_apps<'a>(
             tools.insert(name);
         }
     }
+    let http = apps.iter().any(|app| app.pipeline.health.url.is_some());
+    if http {
+        tools.insert("curl".to_string());
+        tools.insert("wget".to_string());
+    }
     let tools: Vec<_> = tools.into_iter().collect();
     let mut servers = Vec::with_capacity(apps.len());
     for app in apps {
@@ -67,10 +72,15 @@ pub async fn preflight_apps<'a>(
                 facts.sudo_missing.join(", ")
             );
         }
+        if http && facts.tool_path("curl").is_none() && facts.tool_path("wget").is_none() {
+            bail!("HTTP health checks require curl or wget on the server");
+        }
         let missing: Vec<_> = facts
             .tools
             .iter()
-            .filter(|(_, path)| path.is_none())
+            .filter(|(name, path)| {
+                path.is_none() && !(http && matches!(name.as_str(), "curl" | "wget"))
+            })
             .map(|(name, _)| name.as_str())
             .collect();
         if !missing.is_empty() {

@@ -1,0 +1,55 @@
+---
+title: Monorepos
+description: Deploy several apps as one release.
+---
+
+A monorepo deploy has one `name`, one server folder, and named `apps`.
+Use `dir` and `apps` instead of the single-app `service` section.
+
+```yaml
+name: product
+ssh: {host: prod, user: deploy}
+dir: /opt/product
+process_manager: {name: systemd}
+pipeline:
+  pack: {files: {include: {project: [server.js]}}}
+  backup: {keep: {open: 3, compressed: 15}}
+apps:
+  api:
+    project: api
+    start: node server.js
+    env: {PORT: '3000'}
+  web:
+    project: web
+    start: node server.js
+    env: {PORT: '3001'}
+    process_manager: {name: pm2}
+```
+
+An app can also name a YAML file relative to the main deploy file:
+`api: configs/api.yaml`. App projects must stay inside the repository project.
+An app manager replaces the whole global manager section. Other pipeline fields
+inherit defaults and replace matching fields. Lists replace lists.
+
+Global commands run once, then explicit app commands run in app-name order.
+Local commands use the repository or app project folder. Setup commands use the
+new release root or `apps/<app>`. Health and done use the corresponding live
+folders. Preflight server commands use the shared deployment folder.
+
+One archive carries every app, process file, and saved release setting.
+Shipdeck verifies it, runs setup, creates one backup, switches once, restarts
+all apps, and checks each one. Global retention and rollback policy apply to
+the shared release. App backup rules select paths inside each app folder.
+
+App `shared` folders live under `shared/apps/<app>` and survive release changes.
+They are excluded from backups. Rollback preserves shared data.
+
+Manual and automatic rollback use saved release settings, including removed or
+added apps and manager changes. Compressed backups are unpacked and set up again.
+External changes, such as database migrations, are not undone.
+
+Use the normal `deploy`, `rollback`, and `releases` commands, or open the TUI.
+Status and service controls cover all live apps. Combined logs label each app.
+Run `shipdeck man details monorepo` for execution details.
+
+Nginx and oxmgr remain future work.

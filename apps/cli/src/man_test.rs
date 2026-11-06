@@ -11,7 +11,7 @@ fn args(list: &[&str]) -> Vec<String> {
 
 /// Every property path the JSON Schema has, blocks included.
 fn schema_paths() -> BTreeSet<String> {
-    let root = schema::generate();
+    let root = schema::published();
     let mut paths = BTreeSet::new();
     walk(&root, &root, "", &mut paths);
     paths
@@ -19,6 +19,11 @@ fn schema_paths() -> BTreeSet<String> {
 
 fn walk(root: &Value, node: &Value, prefix: &str, out: &mut BTreeSet<String>) {
     let node = resolve(root, node);
+    if let Some(alternatives) = node.get("oneOf").and_then(Value::as_array) {
+        for alternative in alternatives {
+            walk(root, alternative, prefix, out);
+        }
+    }
     let Some(properties) = node.get("properties").and_then(Value::as_object) else {
         return;
     };

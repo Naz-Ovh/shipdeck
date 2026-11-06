@@ -3,8 +3,13 @@
 //! failed. A failure after the switch asks whether to put the previous
 //! release back.
 
+pub(crate) mod apps;
 mod backup;
 mod health;
+mod multiple;
+mod multiple_hooks;
+mod multiple_recover;
+mod multiple_release;
 mod preflight;
 mod recover;
 pub mod report;
@@ -12,6 +17,7 @@ mod rollback;
 mod ship;
 mod steps;
 
+pub use multiple::{deploy_monorepo, monorepo_steps, rollback_monorepo};
 pub use preflight::{AppServer, preflight_apps};
 pub use rollback::{rollback, rollback_step_names, rollback_steps};
 

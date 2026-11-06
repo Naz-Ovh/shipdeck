@@ -13,7 +13,7 @@ use shipdeck_protocol::connection::Handle;
 use shipdeck_protocol::message::request::{WorkspaceOpen, WorkspaceOpenResult};
 use shipdeck_protocol::wire::{ErrorObject, Id, code};
 
-use crate::config::{self, Deployable};
+use crate::config::{self, Deployment};
 use crate::deploy::report::OpId;
 use crate::remote::Server;
 use crate::ssh::{PASSPHRASE_ENV, Pool};
@@ -39,7 +39,7 @@ struct State {
 
 struct Workspace {
     /// By slug, which is what every other message calls a project.
-    deployables: BTreeMap<String, Deployable>,
+    deployables: BTreeMap<String, Deployment>,
     pool: Arc<Pool>,
 }
 
@@ -92,17 +92,12 @@ impl Session {
             ));
         }
         let found = config::discover(&root).map_err(|err| convert::failed(&err))?;
-        if !found.monorepos.is_empty() {
-            return Err(ErrorObject::new(
-                code::INTERNAL_ERROR,
-                "monorepo deployment is not available yet",
-            ));
-        }
         let answer = WorkspaceOpenResult {
             deployables: found
                 .deployables
                 .iter()
                 .map(convert::deployable_info)
+                .chain(found.monorepos.iter().map(convert::monorepo_info))
                 .collect(),
             problems: found.problems.iter().flat_map(convert::problems).collect(),
         };
@@ -118,7 +113,16 @@ impl Session {
         let pool = Arc::new(pool);
         let mut deployables = BTreeMap::new();
         for deployable in found.deployables {
-            deployables.insert(deployable.slug.clone(), deployable);
+            deployables.insert(
+                deployable.slug.clone(),
+                Deployment::Single(Box::new(deployable)),
+            );
+        }
+        for deployable in found.monorepos {
+            deployables.insert(
+                deployable.slug.clone(),
+                Deployment::Monorepo(Box::new(deployable)),
+            );
         }
         let replaced = {
             let mut state = self.state();
@@ -145,7 +149,7 @@ impl Session {
     /// # Errors
     /// Returns `WORKSPACE_NOT_OPEN` before `workspace/open`, and
     /// `UNKNOWN_DEPLOYABLE` for a name that is not in the workspace.
-    pub fn deployable(&self, slug: &str) -> Result<Deployable, ErrorObject> {
+    pub fn deployment(&self, slug: &str) -> Result<Deployment, ErrorObject> {
         let state = self.state();
         let workspace = state.workspace.as_ref().ok_or_else(not_open)?;
         workspace
@@ -153,6 +157,38 @@ impl Session {
             .get(slug)
             .cloned()
             .ok_or_else(|| convert::unknown_deployable(slug))
+    }
+
+    /// Opens release storage without requiring readable live process metadata.
+    pub async fn storage(&self, deployment: &Deployment) -> Result<Server, ErrorObject> {
+        let pool = self.pool()?;
+        let session = pool
+            .get(deployment.endpoint())
+            .await
+            .map_err(|err| convert::failed(&err))?;
+        match deployment {
+            Deployment::Single(d) => Ok(Server::new(session, &d.config.service)),
+            Deployment::Monorepo(d) => crate::deploy::apps::servers(&d.config, &session)
+                .map_err(|err| convert::failed(&err))?
+                .into_iter()
+                .next()
+                .ok_or_else(|| convert::failed(&anyhow::anyhow!("no apps"))),
+        }
+    }
+
+    /// Connects all processes, using saved live settings for monorepos.
+    pub async fn servers(&self, deployment: &Deployment) -> Result<Vec<Server>, ErrorObject> {
+        let pool = self.pool()?;
+        let session = pool
+            .get(deployment.endpoint())
+            .await
+            .map_err(|err| convert::failed(&err))?;
+        match deployment {
+            Deployment::Single(d) => Ok(vec![Server::new(session, &d.config.service)]),
+            Deployment::Monorepo(d) => crate::deploy::apps::live_servers(&d.config, session)
+                .await
+                .map_err(|err| convert::failed(&err)),
+        }
     }
 
     /// The connections of this workspace.
@@ -163,20 +199,6 @@ impl Session {
         let state = self.state();
         let workspace = state.workspace.as_ref().ok_or_else(not_open)?;
         Ok(Arc::clone(&workspace.pool))
-    }
-
-    /// A server for `deployable`, connected when it is not connected yet.
-    ///
-    /// # Errors
-    /// Returns `WORKSPACE_NOT_OPEN`, or `INTERNAL_ERROR` when the login fails
-    /// or the app cancels a question.
-    pub async fn server(&self, deployable: &Deployable) -> Result<Server, ErrorObject> {
-        let pool = self.pool()?;
-        let session = pool
-            .get(&deployable.endpoint)
-            .await
-            .map_err(|err| convert::failed(&err))?;
-        Ok(Server::new(session, &deployable.config.service))
     }
 
     /// Takes the engine for a deploy or rollback, or says it is taken.

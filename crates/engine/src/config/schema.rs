@@ -40,6 +40,42 @@ pub fn generate() -> Value {
     value
 }
 
+/// The editor schema accepts either deployment shape.
+#[must_use]
+pub fn published() -> Value {
+    let single = generate();
+    let mut mono = SchemaSettings::draft07()
+        .into_generator()
+        .into_root_schema_for::<super::monorepo::MonorepoConfig>()
+        .to_value();
+    unwrap_lines(&mut mono);
+    let mut definitions = single["definitions"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    if let Some(extra) = mono.get("definitions").and_then(Value::as_object) {
+        definitions.extend(
+            extra
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
+    }
+    let mut single = single;
+    if let Some(object) = single.as_object_mut() {
+        object.remove("definitions");
+        object.remove("$id");
+        object.remove("$schema");
+    }
+    if let Some(object) = mono.as_object_mut() {
+        object.remove("definitions");
+        object.remove("$schema");
+    }
+    serde_json::json!({
+        "$schema": "http://json-schema.org/draft-07/schema#", "$id": url(),
+        "title": "shipdeck deploy.yaml", "oneOf": [single, mono], "definitions": definitions,
+    })
+}
+
 /// Doc comments arrive wrapped at 80 columns; editors show descriptions as
 /// flowing text, so the breaks go.
 fn unwrap_lines(value: &mut Value) {
@@ -65,7 +101,7 @@ fn unwrap_lines(value: &mut Value) {
 /// Panics when the generated schema cannot be serialized as JSON.
 #[must_use]
 pub fn text() -> String {
-    let mut text = serde_json::to_string_pretty(&generate()).expect("a schema is plain JSON");
+    let mut text = serde_json::to_string_pretty(&published()).expect("a schema is plain JSON");
     text.push('\n');
     text
 }

@@ -1,8 +1,89 @@
 {
   "$id": "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.7.1/docs/schema/deploy.schema.json",
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "additionalProperties": false,
   "definitions": {
+    "AppConfig": {
+      "additionalProperties": false,
+      "description": "Settings for one app in a shared release.",
+      "properties": {
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "Environment variables for the app.",
+          "type": "object"
+        },
+        "env_file": {
+          "default": null,
+          "description": "Environment file inside the app's release folder.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pipeline": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Pipeline"
+            }
+          ],
+          "default": {},
+          "description": "Pipeline settings that replace the corresponding global settings."
+        },
+        "process_manager": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ProcessManager"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Replaces the global process manager when present."
+        },
+        "project": {
+          "default": ".",
+          "description": "App source folder, relative to the repository root.",
+          "type": "string"
+        },
+        "shared": {
+          "default": [],
+          "description": "App folders kept across releases.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "start": {
+          "default": null,
+          "description": "Command that starts the app, or omit it when a binary is packed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "AppDefinition": {
+      "anyOf": [
+        {
+          "description": "Path relative to the main deploy.yaml.",
+          "type": "string"
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AppConfig"
+            }
+          ],
+          "description": "The app's settings in the main file."
+        }
+      ],
+      "description": "An inline app or the path to its config file."
+    },
     "Backup": {
       "additionalProperties": false,
       "properties": {
@@ -393,6 +474,52 @@
       },
       "type": "object"
     },
+    "ProcessManager": {
+      "additionalProperties": false,
+      "description": "The process manager and its own settings.",
+      "properties": {
+        "app": {
+          "default": null,
+          "description": "An optional app name for PM2.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ecosystem": {
+          "default": null,
+          "description": "A PM2 ecosystem file inside the app's release folder.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Manager"
+            }
+          ],
+          "default": "systemd",
+          "description": "`systemd` by default, or `pm2`."
+        },
+        "options": {
+          "additionalProperties": true,
+          "default": {},
+          "description": "Additional PM2 app options.",
+          "type": "object"
+        },
+        "run_as": {
+          "default": null,
+          "description": "The user that runs the app. Default: the SSH user.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "Rollback": {
       "oneOf": [
         {
@@ -581,47 +708,119 @@
       "type": "object"
     }
   },
-  "description": "One deployable: what it is, where it runs, and the pipeline that ships it.",
-  "properties": {
-    "name": {
-      "description": "The name shipdeck shows, such as `My API (prod)`. Also the systemd unit's description.",
-      "type": "string"
-    },
-    "pipeline": {
-      "allOf": [
-        {
-          "$ref": "#/definitions/Pipeline"
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "description": "One deployable: what it is, where it runs, and the pipeline that ships it.",
+      "properties": {
+        "name": {
+          "description": "The name shipdeck shows, such as `My API (prod)`. Also the systemd unit's description.",
+          "type": "string"
+        },
+        "pipeline": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Pipeline"
+            }
+          ],
+          "description": "The steps of a deploy, in order: preflight, build, pack, setup, backup, health, done, and failed when a step fails. upload, unpack, switch and restart are done by shipdeck and take no settings."
+        },
+        "project": {
+          "default": ".",
+          "description": "Your source folder, relative to this deploy.yaml. Local commands run here, and `pipeline.pack` takes project files from here. Default: the folder of this deploy.yaml.",
+          "type": "string"
+        },
+        "service": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Service"
+            }
+          ],
+          "description": "The service on the server (a systemd unit or a PM2 app), and where its releases live."
+        },
+        "ssh": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SshTarget"
+            }
+          ],
+          "description": "How to log in to the server."
         }
+      },
+      "required": [
+        "name",
+        "ssh",
+        "service"
       ],
-      "description": "The steps of a deploy, in order: preflight, build, pack, setup, backup, health, done, and failed when a step fails. upload, unpack, switch and restart are done by shipdeck and take no settings."
+      "title": "shipdeck deploy.yaml",
+      "type": "object"
     },
-    "project": {
-      "default": ".",
-      "description": "Your source folder, relative to this deploy.yaml. Local commands run here, and `pipeline.pack` takes project files from here. Default: the folder of this deploy.yaml.",
-      "type": "string"
-    },
-    "service": {
-      "allOf": [
-        {
-          "$ref": "#/definitions/Service"
+    {
+      "additionalProperties": false,
+      "description": "The shared settings and app definitions of one monorepo deploy.",
+      "properties": {
+        "apps": {
+          "additionalProperties": {
+            "$ref": "#/definitions/AppDefinition"
+          },
+          "description": "Named apps, inline or in a separate file.",
+          "type": "object"
+        },
+        "dir": {
+          "description": "The server folder that holds the single release and its backups.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The deploy's name.",
+          "type": "string"
+        },
+        "pipeline": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Pipeline"
+            }
+          ],
+          "default": {},
+          "description": "Global pipeline settings inherited by apps."
+        },
+        "process_manager": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ProcessManager"
+            }
+          ],
+          "default": {
+            "app": null,
+            "ecosystem": null,
+            "name": "systemd",
+            "options": {},
+            "run_as": null
+          },
+          "description": "The default process manager for apps."
+        },
+        "project": {
+          "default": ".",
+          "description": "The repository root, relative to deploy.yaml.",
+          "type": "string"
+        },
+        "ssh": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SshTarget"
+            }
+          ],
+          "description": "The server where every app runs."
         }
+      },
+      "required": [
+        "name",
+        "ssh",
+        "dir",
+        "apps"
       ],
-      "description": "The service on the server (a systemd unit or a PM2 app), and where its releases live."
-    },
-    "ssh": {
-      "allOf": [
-        {
-          "$ref": "#/definitions/SshTarget"
-        }
-      ],
-      "description": "How to log in to the server."
+      "title": "MonorepoConfig",
+      "type": "object"
     }
-  },
-  "required": [
-    "name",
-    "ssh",
-    "service"
   ],
-  "title": "shipdeck deploy.yaml",
-  "type": "object"
+  "title": "shipdeck deploy.yaml"
 }

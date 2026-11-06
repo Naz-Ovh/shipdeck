@@ -15,8 +15,8 @@ use super::session::Session;
 pub async fn list(session: &Session, id: Id, params: Value) {
     let reply = async {
         let asked: ReleasesList = convert::params(params)?;
-        let deployable = session.deployable(&asked.deployable)?;
-        let server = session.server(&deployable).await?;
+        let deployable = session.deployment(&asked.deployable)?;
+        let server = session.storage(&deployable).await?;
         let found = server.list().await.map_err(|err| convert::failed(&err))?;
         convert::value(&convert::listing(&found))
     }
@@ -28,8 +28,8 @@ pub async fn list(session: &Session, id: Id, params: Value) {
 pub async fn contents(session: &Session, id: Id, params: Value) {
     let reply = async {
         let asked: ReleaseContents = convert::params(params)?;
-        let deployable = session.deployable(&asked.deployable)?;
-        let server = session.server(&deployable).await?;
+        let deployable = session.deployment(&asked.deployable)?;
+        let server = session.storage(&deployable).await?;
         let found = server
             .contents(&asked.release, convert::source(asked.source))
             .await
@@ -44,8 +44,8 @@ pub async fn contents(session: &Session, id: Id, params: Value) {
 pub async fn read_file(session: &Session, id: Id, params: Value) {
     let reply = async {
         let asked: ReleaseReadFile = convert::params(params)?;
-        let deployable = session.deployable(&asked.deployable)?;
-        let server = session.server(&deployable).await?;
+        let deployable = session.deployment(&asked.deployable)?;
+        let server = session.storage(&deployable).await?;
         let found = server
             .read(&asked.release, convert::source(asked.source), &asked.path)
             .await

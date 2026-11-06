@@ -9,7 +9,7 @@ pub mod files;
 pub mod pm2;
 pub mod unit;
 
-pub use apps::gather_monorepo;
+pub use apps::{fingerprint_monorepo, gather_monorepo};
 pub use content::{Contents, listable};
 
 use std::collections::{BTreeMap, HashMap};

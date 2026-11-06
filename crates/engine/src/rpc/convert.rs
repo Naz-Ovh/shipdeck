@@ -82,6 +82,19 @@ pub fn deployable_info(deployable: &Deployable) -> wire::DeployableInfo {
     }
 }
 
+/// The shared deployment shown by CLI and TUI.
+pub fn monorepo_info(d: &crate::config::MonorepoDeployment) -> wire::DeployableInfo {
+    wire::DeployableInfo {
+        slug: d.slug.clone(),
+        name: d.config.name.clone(),
+        host: d.endpoint.name.clone(),
+        user: Some(d.endpoint.user.clone()),
+        port: d.endpoint.port,
+        dir: d.config.dir.clone(),
+        folder: d.folder.display().to_string(),
+    }
+}
+
 /// What a failure after the switch does: the app's choice wins over
 /// `pipeline.failed.rollback`.
 pub fn on_failure(choice: wire::OnFailure) -> Rollback {

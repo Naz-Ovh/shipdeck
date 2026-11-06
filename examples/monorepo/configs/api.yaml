@@ -1,0 +1,6 @@
+project: api
+start: node server.js
+env: {PORT: '3000'}
+shared: [uploads]
+pipeline:
+  health: {url: 'http://127.0.0.1:3000'}

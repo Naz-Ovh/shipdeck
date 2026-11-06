@@ -1835,3 +1835,29 @@ troubleshooting:
 
     Still unclear: watch the deploy in the TUI, or read the headless log from the top. Every
     command shipdeck runs on the server is logged after `›` before it runs, with its output below.
+
+monorepo:
+  text: |
+    Deploy several apps as one release. Use top-level dir and apps instead of service.
+    Each app can be inline or a path to a YAML file next to deploy.yaml. App source
+    folders live inside the repository project folder. Processes are named <name>-<app>.
+    systemd and PM2 can run in the same release. Nginx and oxmgr are future work.
+
+    Global commands run once, followed by explicit app commands in app-name order.
+    Local commands run in the repository or app project folder. Preflight server
+    commands run in dir. Setup runs in the new release root or apps/<app> folder.
+    Health and done run in current or current/apps/<app>. Global pipeline settings
+    provide defaults. App fields replace matching settings; arrays replace arrays.
+    Commands inherited as defaults are not repeated for each app.
+
+    All app files, process definitions and resolved app settings travel in one bundle.
+    After verification and setup, one current switch activates it. Every process is
+    installed, restarted and checked. Shared data lives in shared/apps/<app>.
+    Retention and rollback policy come from the global pipeline. App backup file rules
+    apply inside apps/<app>. Shared data is never archived or removed by rollback.
+
+    Rollback reads the target release settings, including added or removed apps and
+    manager changes. Compressed backups are restored and set up again. Automatic
+    rollback checks every restored app. Database migrations are not undone.
+    Status and service controls cover all live apps; combined logs label each app.
+    The deploy, rollback and releases CLI commands and TUI work with both shapes.

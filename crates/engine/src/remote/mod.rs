@@ -80,6 +80,12 @@ impl Server {
         Ok(server)
     }
 
+    /// The process name used to label combined app logs.
+    #[must_use]
+    pub fn process_name(&self) -> &str {
+        &self.service
+    }
+
     #[must_use]
     pub fn session(&self) -> &Session {
         &self.session

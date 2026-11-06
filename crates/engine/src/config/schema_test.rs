@@ -9,7 +9,11 @@ fn examples_parse_and_point_at_this_schema() {
     for entry in std::fs::read_dir(&examples).unwrap() {
         let file = entry.unwrap().path().join(FILE_NAMES[0]);
         let text = std::fs::read_to_string(&file).unwrap();
-        if let Err(problems) = parse(&text) {
+        if text.contains("\napps:") {
+            if let Err(problems) = monorepo::MonorepoConfig::load(file.parent().unwrap(), &file) {
+                panic!("{}: {problems:#?}", file.display());
+            }
+        } else if let Err(problems) = parse(&text) {
             panic!("{}: {problems:#?}", file.display());
         }
         assert_eq!(
@@ -39,10 +43,11 @@ fn the_published_schema_is_current() {
 
 #[test]
 fn the_schema_closes_every_object_and_documents_every_field() {
-    let schema = schema::generate();
+    let schema = schema::published();
     assert_eq!(schema["$id"], schema::url());
     assert_eq!(schema["$schema"], "http://json-schema.org/draft-07/schema#");
     let mut objects = vec![&schema];
+    objects.extend(schema["oneOf"].as_array().unwrap());
     objects.extend(schema["definitions"].as_object().unwrap().values());
     for object in objects {
         let Some(properties) = object.get("properties").and_then(|p| p.as_object()) else {

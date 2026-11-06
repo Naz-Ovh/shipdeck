@@ -78,3 +78,7 @@
     - { key: examples, brief: "complete deploy.yaml files" }
     - { key: recipes, brief: "migrations, secrets, CI, monorepo, cross-compile" }
     - { key: troubleshooting, brief: "error messages and fixes" }
+
+- section: Monorepos
+  topics:
+    - { key: monorepo, brief: "several apps in one release, hooks, backups and rollback" }

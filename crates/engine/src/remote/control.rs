@@ -44,6 +44,7 @@ pub fn control_commands(service: &str) -> Vec<String> {
     vec![
         format!("systemctl stop {service}"),
         format!("systemctl start {service}"),
+        format!("systemctl disable {service}"),
         journal_follow(service),
     ]
 }
@@ -79,6 +80,45 @@ pub fn log_command(service: &Service) -> String {
 }
 
 impl Server {
+    /// Checks stop rights before a deployment changes any live process.
+    ///
+    /// # Errors
+    /// Returns an error when stop or disable is not permitted.
+    pub async fn check_stop_permission(&self) -> Result<()> {
+        if self.manager == Manager::Systemd {
+            self.check_sudo(|service| systemctl(Control::Stop, service))
+                .await?;
+            self.check_sudo(|service| format!("systemctl disable {service}"))
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Removes a process that is absent or uses another manager in the target.
+    ///
+    /// # Errors
+    /// Returns an error when retiring the process fails.
+    pub async fn retire(&self, report: &crate::deploy::report::Reporter) -> Result<()> {
+        self.check_stop_permission().await?;
+        let script = match self.manager {
+            Manager::Systemd => format!(
+                "set -e\nstate=$(systemctl show {} -p LoadState --value)\nif [ \"$state\" != not-found ]; then {}systemctl stop {}; {}systemctl disable {}; fi",
+                self.q_service(),
+                self.sudo(),
+                self.q_service(),
+                self.sudo(),
+                self.q_service()
+            ),
+            Manager::Pm2 => format!(
+                "set -e\npids=$(pm2 pid {})\nif [ -n \"$pids\" ]; then pm2 delete {}; fi\npm2 save --force",
+                sh_quote(&self.pm2_app),
+                sh_quote(&self.pm2_app)
+            ),
+        };
+        self.run("retire previous process", &script, report).await?;
+        Ok(())
+    }
+
     /// Stops, starts or restarts the service. A PM2 app that is already
     /// running is left as it is by `Start`.
     ///
