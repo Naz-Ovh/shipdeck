@@ -451,6 +451,7 @@
               "$ref": "#/definitions/Manager"
             }
           ],
+          "default": "systemd",
           "description": "What keeps the app running: `systemd`, a unit shipdeck installs with sudo, or `pm2`, run as the SSH user without sudo. Default: systemd."
         },
         "name": {

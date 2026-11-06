@@ -18,11 +18,16 @@ pub struct Checked {
 /// Checks `root` against the schema.
 pub fn structure(root: &Node) -> Checked {
     let schema = schema::generate();
+    structure_with(root, &schema)
+}
+
+/// Checks a YAML tree against a supplied config schema.
+pub(super) fn structure_with(root: &Node, schema: &Json) -> Checked {
     let mut walk = Walk {
-        root: &schema,
+        root: schema,
         problems: Vec::new(),
     };
-    let value = walk.node(root, &schema, &mut Vec::new(), None);
+    let value = walk.node(root, schema, &mut Vec::new(), None);
     Checked {
         value: value.unwrap_or(Json::Null),
         problems: walk.problems,

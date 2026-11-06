@@ -12,6 +12,8 @@ directory. Global steps and app-specific steps can both be configured.
 - All apps share one release. If an app fails after the switch, rollback
   restores the previous release for all apps. External changes, such as
   database migrations, are not automatically undone.
+- Use the existing engine steps for single-app and monorepo deploys. Extend
+  them where multiple apps need different work. Avoid unnecessary abstraction.
 - Apps can be configured inline in that file or in separate files. Separate
   app files are recommended when the config grows.
 - A global `process_manager` sets the default for apps. Each app can customize

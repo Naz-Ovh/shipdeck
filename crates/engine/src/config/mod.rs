@@ -7,24 +7,28 @@
 //! checks the values. Only a clean file becomes a [`DeployConfig`].
 
 mod check;
+mod deployment;
 mod discover;
 #[cfg(test)]
 mod fixtures;
 pub mod glob;
+pub mod monorepo;
 mod problem;
 mod rules;
 pub mod schema;
+mod service;
 mod yaml;
 
+pub use deployment::{Deployment, MonorepoDeployment};
 pub use discover::{Discovery, discover};
 pub use problem::{FileProblems, Problem, Span, render};
+pub use service::{Manager, Pm2, Service};
 
 use std::borrow::Cow;
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::ssh::Endpoint;
 
@@ -59,7 +63,7 @@ pub struct DeployConfig {
 
 /// How to log in. `host` may be an alias from `~/.ssh/config`; `port` and
 /// `user` then come from it unless set here.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SshTarget {
     /// The server's address, or an alias from `~/.ssh/config`.
@@ -75,118 +79,6 @@ pub struct SshTarget {
     /// `config.fish` set up PATH (nvm and the like). Default: true.
     #[serde(default = "default_true")]
     pub shell_env: bool,
-}
-
-/// The service shipdeck runs, and where its releases live.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Service {
-    /// The unit's name without `.service`: `my-api` becomes my-api.service.
-    /// With PM2, also the app's name unless `pm2.app` is set.
-    pub name: String,
-    /// An absolute folder on the server, such as `/opt/my-api`. It holds
-    /// `current` (the live release), `releases/`, `backups/` and `shared/`.
-    pub dir: String,
-    /// What keeps the app running: `systemd`, a unit shipdeck installs with
-    /// sudo, or `pm2`, run as the SSH user without sudo. Default: systemd.
-    #[serde(default)]
-    pub manager: Manager,
-    /// How PM2 runs the app, with `manager: pm2`.
-    #[serde(default)]
-    pub pm2: Pm2,
-    /// The command the service runs, from the release folder:
-    /// `./my-api -E=.env` or `node dist/main.js`. A bare program name such as
-    /// `node` is looked up on the server. Default: `./<binary>` from
-    /// `pipeline.pack.binary`.
-    #[serde(default)]
-    pub start: Option<String>,
-    /// The user the service runs as. Default: the SSH user. PM2 always runs
-    /// the app as the SSH user.
-    #[serde(default)]
-    pub run_as: Option<String>,
-    /// A `KEY=value` file in the release, such as `.env`. The service gets it
-    /// as its environment, and server commands load it too.
-    #[serde(default)]
-    pub env_file: Option<String>,
-    /// Environment variables for the service and for server commands.
-    #[serde(default)]
-    pub env: BTreeMap<String, String>,
-    /// Folders kept across releases, such as `uploads`. Each lives in
-    /// `shared/` and is linked into every release.
-    #[serde(default)]
-    pub shared: Vec<String>,
-}
-
-impl Service {
-    /// The file shipdeck writes into each release for the manager:
-    /// `<name>.service`, or `<name>.pm2.json` when there is no
-    /// `pm2.ecosystem`.
-    #[must_use]
-    pub fn own_file(&self) -> Option<String> {
-        match self.manager {
-            Manager::Systemd => Some(format!("{}.service", self.name)),
-            Manager::Pm2 if self.pm2.ecosystem.is_some() => None,
-            Manager::Pm2 => Some(format!("{}.pm2.json", self.name)),
-        }
-    }
-
-    /// The PM2 app's name.
-    #[must_use]
-    pub fn pm2_app(&self) -> &str {
-        self.pm2.app.as_deref().unwrap_or(&self.name)
-    }
-
-    /// The file in the release PM2 starts the app from.
-    #[must_use]
-    pub fn pm2_file(&self) -> String {
-        match &self.pm2.ecosystem {
-            Some(file) => release_path(file),
-            None => format!("{}.pm2.json", self.name),
-        }
-    }
-}
-
-/// What keeps the app running on the server.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum Manager {
-    /// A systemd unit, installed and restarted with sudo.
-    #[default]
-    Systemd,
-    /// PM2, run as the SSH user: no sudo. Reloaded with
-    /// `pm2 startOrReload`, then saved with `pm2 save`.
-    Pm2,
-}
-
-impl Manager {
-    /// As messages name it.
-    #[must_use]
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Systemd => "systemd",
-            Self::Pm2 => "PM2",
-        }
-    }
-}
-
-/// How PM2 runs the app. Either shipdeck writes the app file from
-/// `service.start`, `service.env` and `options`, or `ecosystem` names your own.
-#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Pm2 {
-    /// The app's name in PM2, as `pm2 list` shows it. Default: `service.name`.
-    #[serde(default)]
-    pub app: Option<String>,
-    /// Your own PM2 file in the release, such as `ecosystem.config.js`.
-    /// shipdeck reloads the app `app` from it; `service.start` and `options`
-    /// are not used. Ship it with `pipeline.pack.files`.
-    #[serde(default)]
-    pub ecosystem: Option<String>,
-    /// More PM2 app settings for the file shipdeck writes, such as
-    /// `instances: max`, `exec_mode: cluster` or `max_memory_restart: 300M`.
-    /// shipdeck sets `name`, `cwd` and the environment itself.
-    #[serde(default)]
-    pub options: BTreeMap<String, serde_json::Value>,
 }
 
 /// Old releases kept on the server, for rollback.
@@ -728,28 +620,9 @@ impl Deployable {
     }
 
     /// The program the service starts, and the rest of `service.start`.
+    #[must_use]
     pub fn start(&self) -> (Program, String) {
-        let (program, rest) = match &self.config.service.start {
-            Some(start) => {
-                let start = start.trim();
-                match start.split_once(char::is_whitespace) {
-                    Some((program, rest)) => (program.to_string(), rest.trim().to_string()),
-                    None => (start.to_string(), String::new()),
-                }
-            }
-            None => (
-                format!("./{}", self.binary_name().unwrap_or_default()),
-                String::new(),
-            ),
-        };
-        let program = if program.starts_with('/') {
-            Program::Absolute(program)
-        } else if program.contains('/') {
-            Program::InRelease(release_path(&program))
-        } else {
-            Program::Tool(program)
-        };
-        (program, rest)
+        self.config.service.command(self.binary_name().as_deref())
     }
 
     /// Programs preflight must find on the server: the start program when

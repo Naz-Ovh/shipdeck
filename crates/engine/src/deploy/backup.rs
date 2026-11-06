@@ -111,8 +111,7 @@ impl Run<'_> {
 
 /// Points `current` back at `id` and reinstalls its unit.
 pub(super) async fn restore(server: &Server, id: &str, report: &Reporter) -> Result<()> {
-    server.switch(id, report).await?;
-    server.install_unit(report).await
+    super::switch_processes(&[server], id, report).await
 }
 
 pub(super) async fn rotate(

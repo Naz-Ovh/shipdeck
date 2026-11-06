@@ -5,12 +5,14 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use super::problem::FileProblems;
-use super::{Deployable, config_file};
+use super::{Deployable, Deployment, MonorepoDeployment, config_file};
 
 /// What a scan of the deploy root found.
 #[derive(Debug, Default)]
 pub struct Discovery {
     pub deployables: Vec<Deployable>,
+    /// Deployments that share a release between several apps.
+    pub monorepos: Vec<MonorepoDeployment>,
     /// Config files that cannot be used, with everything wrong in each.
     /// shipdeck does not start while there are any.
     pub problems: Vec<FileProblems>,
@@ -31,8 +33,9 @@ pub fn discover(root: &Path) -> Result<Discovery> {
 
     let mut found = Discovery::default();
     for folder in folders {
-        match Deployable::load(&folder) {
-            Ok(deployable) => found.deployables.push(deployable),
+        match Deployment::load(&folder) {
+            Ok(Deployment::Single(deployable)) => found.deployables.push(*deployable),
+            Ok(Deployment::Monorepo(deployable)) => found.monorepos.push(*deployable),
             Err(problems) => found.problems.push(problems),
         }
     }

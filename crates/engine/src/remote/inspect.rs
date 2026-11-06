@@ -58,6 +58,24 @@ pub struct FileText {
 }
 
 impl Server {
+    /// Reads the app settings saved with a shared release.
+    ///
+    /// # Errors
+    /// Returns an error if the settings cannot be read or are invalid.
+    pub async fn monorepo_config(
+        &self,
+        id: &str,
+        source: Source,
+    ) -> Result<crate::config::monorepo::MonorepoConfig> {
+        let file = self
+            .read(id, source, crate::config::monorepo::RELEASE_METADATA)
+            .await?;
+        if file.binary {
+            bail!("release settings are not text");
+        }
+        crate::config::monorepo::MonorepoConfig::from_release_metadata(file.text.as_bytes())
+    }
+
     /// Every path of release `id` in `source`. A backup is listed by `tar`
     /// as it decompresses, and its `release.json` read the same way.
     ///

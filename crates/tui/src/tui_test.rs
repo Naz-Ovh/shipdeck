@@ -147,6 +147,7 @@ pub(super) fn app() -> App {
             deployable("api-beta", "My API (beta)", "203.0.113.12"),
             node_app(),
         ],
+        monorepos: Vec::new(),
         problems: Vec::new(),
     };
     let mut app = App::new(
@@ -623,6 +624,7 @@ async fn nothing_connects_until_asked() {
     let (fetched, _) = unbounded_channel();
     let discovery = Discovery {
         deployables: vec![deployable("api-prod", "My API (prod)", "203.0.113.10")],
+        monorepos: Vec::new(),
         problems: Vec::new(),
     };
     let mut app = App::new(

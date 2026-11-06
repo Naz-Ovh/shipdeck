@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 
 use crate::config::glob::{Rules, Verdict};
-use crate::config::{Deployable, FILE_NAMES, UNIT_TEMPLATE, release_path};
+use crate::config::{Deployable, FILE_NAMES, Files, UNIT_TEMPLATE, release_path};
 
 /// Never shipped, at any depth.
 const ALWAYS_LEFT_OUT: &str = ".git";
@@ -93,9 +93,53 @@ fn source(deployable: &Deployable, source: Source) -> Result<(PathBuf, Rules)> {
 /// Fails when either source cannot be walked, or a path is a folder in one
 /// source and a file in the other.
 pub fn select(deployable: &Deployable) -> Result<Selection> {
+    select_excluding(deployable, &[])
+}
+
+/// Selects release files while excluding resolved deploy config files.
+///
+/// # Errors
+/// Returns an error when a config path is not absolute or a source cannot be read.
+pub fn select_excluding(deployable: &Deployable, excluded: &[PathBuf]) -> Result<Selection> {
+    select_paths(
+        &deployable.project_dir(),
+        &deployable.folder,
+        &deployable.config.pipeline.pack.files,
+        excluded,
+    )
+}
+
+/// Selects files from project and deploy folders using the given settings.
+///
+/// # Errors
+/// Returns an error when patterns, config exclusions, or source files are invalid.
+pub fn select_paths(
+    project: &Path,
+    deploy: &Path,
+    files: &Files,
+    excluded: &[PathBuf],
+) -> Result<Selection> {
+    if excluded.iter().any(|path| !path.is_absolute()) {
+        bail!("excluded config paths must be absolute");
+    }
     let mut selection = Selection::default();
-    for from in [Source::Project, Source::Deploy] {
-        let walked = walk_source(deployable, from)?;
+    for (from, dir, include, exclude) in [
+        (
+            Source::Project,
+            project,
+            &files.include.project,
+            &files.exclude.project,
+        ),
+        (
+            Source::Deploy,
+            deploy,
+            &files.include.deploy,
+            &files.exclude.deploy,
+        ),
+    ] {
+        let rules = Rules::parse(include, exclude)
+            .map_err(|why| anyhow::anyhow!("pipeline.pack.files.*.{}: {why}", from.name()))?;
+        let walked = walk_selected(dir, &rules, from, excluded)?;
         for (path, item) in walked {
             match selection.items.get(&path) {
                 None => {}
@@ -124,7 +168,26 @@ pub fn select(deployable: &Deployable) -> Result<Selection> {
 /// Fails when the include patterns are invalid, the folder is missing or
 /// cannot be read, or a pattern matches nothing.
 pub fn walk_source(deployable: &Deployable, from: Source) -> Result<BTreeMap<String, Item>> {
+    walk_source_excluding(deployable, from, &[])
+}
+
+/// Walks one source while leaving out deploy config files.
+fn walk_source_excluding(
+    deployable: &Deployable,
+    from: Source,
+    excluded: &[PathBuf],
+) -> Result<BTreeMap<String, Item>> {
     let (dir, rules) = source(deployable, from)?;
+    walk_selected(&dir, &rules, from, excluded)
+}
+
+/// Walks a source folder with the supplied include and exclude rules.
+fn walk_selected(
+    dir: &Path,
+    rules: &Rules,
+    from: Source,
+    excluded: &[PathBuf],
+) -> Result<BTreeMap<String, Item>> {
     if rules.include.is_empty() {
         return Ok(BTreeMap::new());
     }
@@ -140,14 +203,15 @@ pub fn walk_source(deployable: &Deployable, from: Source) -> Result<BTreeMap<Str
         Source::Deploy => &[FILE_NAMES[0], FILE_NAMES[1], UNIT_TEMPLATE],
     };
     let mut walk = Walk {
-        rules: &rules,
+        rules,
         skip,
+        excluded,
         source: from,
         hits: vec![0; rules.include.len()],
         items: BTreeMap::new(),
     };
     let verdict = rules.judge(Verdict::default(), "", true, &mut walk.hits);
-    walk.visit(&dir, "", verdict)?;
+    walk.visit(dir, "", verdict)?;
 
     let missing: Vec<String> = rules
         .include
@@ -173,6 +237,7 @@ pub fn walk_source(deployable: &Deployable, from: Source) -> Result<BTreeMap<Str
 struct Walk<'a> {
     rules: &'a Rules,
     skip: &'a [&'a str],
+    excluded: &'a [PathBuf],
     source: Source,
     hits: Vec<usize>,
     items: BTreeMap<String, Item>,
@@ -180,6 +245,14 @@ struct Walk<'a> {
 
 impl Walk<'_> {
     fn visit(&mut self, dir: &Path, rel: &str, verdict: Verdict) -> Result<()> {
+        let resolved_dir = if self.excluded.is_empty() {
+            None
+        } else {
+            Some(
+                dir.canonicalize()
+                    .with_context(|| format!("resolving {}", dir.display()))?,
+            )
+        };
         let mut children: Vec<PathBuf> = std::fs::read_dir(dir)
             .with_context(|| format!("reading {}", dir.display()))?
             .filter_map(|e| e.ok().map(|e| e.path()))
@@ -193,6 +266,12 @@ impl Walk<'_> {
             if name == ALWAYS_LEFT_OUT || (rel.is_empty() && self.skip.contains(&name.as_str())) {
                 continue;
             }
+            if resolved_dir
+                .as_ref()
+                .is_some_and(|dir| self.excluded.contains(&dir.join(&name)))
+            {
+                continue;
+            }
             let path = if rel.is_empty() {
                 name
             } else {
@@ -200,6 +279,14 @@ impl Walk<'_> {
             };
             let mut meta = std::fs::symlink_metadata(&child)
                 .with_context(|| format!("reading {}", child.display()))?;
+            if !self.excluded.is_empty() && meta.file_type().is_symlink() {
+                let target = child
+                    .canonicalize()
+                    .with_context(|| format!("resolving {}", child.display()))?;
+                if self.excluded.contains(&target) {
+                    continue;
+                }
+            }
             // A link the config names by its exact path is followed, so
             // `dist -> build/out` ships the folder.
             if meta.file_type().is_symlink()

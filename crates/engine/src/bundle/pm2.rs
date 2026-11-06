@@ -4,8 +4,9 @@
 use anyhow::Result;
 use serde_json::{Map, Value, json};
 
-use super::unit::program_path;
-use crate::config::{Deployable, is_node, split_args};
+use super::ProcessSpec;
+use super::unit::{program_path_for, workdir};
+use crate::config::{Deployable, Service, is_node, split_args};
 
 /// How PM2 starts the program in `service.start`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,9 +22,29 @@ pub struct Launch {
 /// (the rules see to it). Any other program runs as it is.
 #[must_use]
 pub fn launch(deployable: &Deployable, start_path: Option<&str>) -> Launch {
-    let (program, rest) = deployable.start();
+    launch_in(deployable, start_path, "")
+}
+
+/// Resolves the command inside an app's release folder.
+fn launch_in(deployable: &Deployable, start_path: Option<&str>, release_dir: &str) -> Launch {
+    launch_service(
+        &deployable.config.service,
+        deployable.binary_name().as_deref(),
+        start_path,
+        release_dir,
+    )
+}
+
+/// Resolves a PM2 command from process settings.
+fn launch_service(
+    service: &Service,
+    binary: Option<&str>,
+    start_path: Option<&str>,
+    release_dir: &str,
+) -> Launch {
+    let (program, rest) = service.command(binary);
     let is_node = is_node(&program);
-    let path = program_path(deployable, program, start_path);
+    let path = program_path_for(service, program, start_path, release_dir);
     // The rules refuse an unclosed quote before this runs.
     let mut words = split_args(&rest).unwrap_or_default();
     if is_node && !words.is_empty() {
@@ -49,11 +70,40 @@ pub fn launch(deployable: &Deployable, start_path: Option<&str>) -> Launch {
 ///
 /// Fails when the app file cannot be serialized to JSON.
 pub fn render(deployable: &Deployable, start_path: Option<&str>) -> Result<String> {
+    render_in(deployable, start_path, "")
+}
+
+/// Renders a PM2 file for a folder within the shared release.
+pub(super) fn render_in(
+    deployable: &Deployable,
+    start_path: Option<&str>,
+    release_dir: &str,
+) -> Result<String> {
     let service = &deployable.config.service;
-    let launch = launch(deployable, start_path);
+    render_service(
+        service,
+        deployable.binary_name().as_deref(),
+        start_path,
+        release_dir,
+    )
+}
+
+/// Renders PM2 settings from a process specification.
+pub(super) fn render_spec(spec: &ProcessSpec<'_>, start_path: Option<&str>) -> Result<String> {
+    render_service(spec.service, spec.binary_name, start_path, spec.release_dir)
+}
+
+/// Creates the PM2 file for the given service and working folder.
+fn render_service(
+    service: &Service,
+    binary: Option<&str>,
+    start_path: Option<&str>,
+    release_dir: &str,
+) -> Result<String> {
+    let launch = launch_service(service, binary, start_path, release_dir);
     let mut app = Map::new();
     app.insert("name".into(), json!(service.pm2_app()));
-    app.insert("cwd".into(), json!(format!("{}/current", service.dir)));
+    app.insert("cwd".into(), json!(workdir(service, release_dir)));
     app.insert("script".into(), json!(launch.script));
     app.insert("args".into(), json!(launch.args));
     app.insert("interpreter".into(), json!(launch.interpreter));

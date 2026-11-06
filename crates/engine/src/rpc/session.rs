@@ -92,6 +92,12 @@ impl Session {
             ));
         }
         let found = config::discover(&root).map_err(|err| convert::failed(&err))?;
+        if !found.monorepos.is_empty() {
+            return Err(ErrorObject::new(
+                code::INTERNAL_ERROR,
+                "monorepo deployment is not available yet",
+            ));
+        }
         let answer = WorkspaceOpenResult {
             deployables: found
                 .deployables

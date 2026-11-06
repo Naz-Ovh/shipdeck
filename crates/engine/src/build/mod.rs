@@ -11,7 +11,7 @@ pub use binary::{BinaryInfo, GlibcVersion, inspect, normalize_arch};
 pub use gitshell::set_gitshell_path;
 #[cfg(windows)]
 use gitshell::sh;
-pub use version::{deployer, read_version, release_name};
+pub use version::{deployer, read_version, release_name, release_name_in};
 
 use std::path::Path;
 use std::process::Stdio;

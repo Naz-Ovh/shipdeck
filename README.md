@@ -636,6 +636,7 @@ edit it. Placeholders:
 `{{name}}` `{{tag}}` `{{id}}` `{{version}}` `{{git}}` `{{dir}}` `{{service}}`
 `{{user}}` `{{exec}}` (the whole `ExecStart=` command) `{{binary}}`
 `{{env}}` (the `EnvironmentFile=` and `Environment=` lines)
+`{{workdir}}` (the live working folder)
 
 An unknown placeholder stops the deploy at Preflight; `{{binary}}` does too
 when there is no `pipeline.pack.binary`.

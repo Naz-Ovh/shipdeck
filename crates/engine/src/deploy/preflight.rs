@@ -9,11 +9,84 @@ use super::report::{LogKind, Reporter, Unit};
 use crate::build;
 use crate::bundle;
 use crate::bundle::files::{self, Kind, Source};
+use crate::config::monorepo::ResolvedApp;
 use crate::config::{Deployable, Manager, Program};
 use crate::human;
 use crate::release::ReleaseName;
 use crate::remote::{Facts, PM2_NEWEST_MAJOR, Server, parse_version};
 use crate::ssh::{Pool, ShellEnv};
+
+/// A checked connection for an app in a shared release.
+pub struct AppServer<'a> {
+    pub app: &'a ResolvedApp,
+    pub server: Server,
+    pub facts: Facts,
+}
+
+/// Checks all process managers and required tools before a shared deploy.
+///
+/// # Errors
+/// Returns an error when any app cannot run or the server is not ready.
+pub async fn preflight_apps<'a>(
+    apps: &'a [ResolvedApp],
+    endpoint: &crate::ssh::Endpoint,
+    pool: &Pool,
+    report: &Reporter,
+) -> Result<Vec<AppServer<'a>>> {
+    if apps.is_empty() {
+        bail!("the monorepo has no apps");
+    }
+    let session = pool.get(endpoint).await?;
+    let mut tools = std::collections::BTreeSet::new();
+    tools.extend(SERVER_TOOLS.iter().map(|(name, _)| (*name).to_string()));
+    for app in apps {
+        tools.extend(app.pipeline.preflight.requires.iter().cloned());
+        if app.service.manager == Manager::Pm2 {
+            tools.insert("pm2".to_string());
+        }
+        if app.service.pm2.ecosystem.is_none()
+            && let (Program::Tool(name) | Program::Absolute(name), _) = app.service.command(None)
+        {
+            tools.insert(name);
+        }
+    }
+    let tools: Vec<_> = tools.into_iter().collect();
+    let mut servers = Vec::with_capacity(apps.len());
+    for app in apps {
+        let server = Server::for_app(std::sync::Arc::clone(&session), &app.service, &app.name)?;
+        let facts = server.facts(&tools).await?;
+        if !facts.dir_exists {
+            server.create_app_dir(report).await?;
+        } else if !facts.dir_writable {
+            bail!("{} cannot write to {}", endpoint.user, app.service.dir);
+        }
+        if !facts.sudo_missing.is_empty() {
+            bail!(
+                "app {}: sudo does not allow {}",
+                app.name,
+                facts.sudo_missing.join(", ")
+            );
+        }
+        let missing: Vec<_> = facts
+            .tools
+            .iter()
+            .filter(|(_, path)| path.is_none())
+            .map(|(name, _)| name.as_str())
+            .collect();
+        if !missing.is_empty() {
+            bail!("app {}: server is missing {}", app.name, missing.join(", "));
+        }
+        if facts.free_bytes.is_some_and(|free| free < MIN_FREE) {
+            bail!("less than 100 MiB is free on the server");
+        }
+        if app.service.manager == Manager::Pm2 {
+            let version = facts.pm2_version.as_deref().unwrap_or_default();
+            parse_version(version).map_err(|why| anyhow!(why))?;
+        }
+        servers.push(AppServer { app, server, facts });
+    }
+    Ok(servers)
+}
 
 /// Below this much free space on the server, preflight stops.
 pub(super) const MIN_FREE: u64 = 100 * 1024 * 1024;

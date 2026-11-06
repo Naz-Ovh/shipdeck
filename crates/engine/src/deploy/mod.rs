@@ -12,6 +12,7 @@ mod rollback;
 mod ship;
 mod steps;
 
+pub use preflight::{AppServer, preflight_apps};
 pub use rollback::{rollback, rollback_step_names, rollback_steps};
 
 use std::path::Path;
@@ -565,11 +566,7 @@ impl<'a> Run<'a> {
     /// Switch: point `current` at the new release and install its unit.
     async fn step_switch(&self, server: &Server, id: &str) -> Result<(), Ended> {
         self.start(Step::Switch, "making it the current release");
-        let switched = async {
-            server.switch(id, self.report).await?;
-            server.install_unit(self.report).await
-        }
-        .await;
+        let switched = async { switch_processes(&[server], id, self.report).await }.await;
         if let Err(err) = switched {
             return Err(self.recover(server, Step::Switch, err).await);
         }
@@ -580,7 +577,7 @@ impl<'a> Run<'a> {
     /// Restart: bring the service up on the new release.
     async fn step_restart(&self, server: &Server) -> Result<(), Ended> {
         self.start(Step::Restart, &self.config().service.name);
-        if let Err(err) = server.restart(self.report).await {
+        if let Err(err) = restart_processes(&[server], self.report).await {
             return Err(self.recover(server, Step::Restart, err).await);
         }
         self.finish(Step::Restart, "");
@@ -638,6 +635,34 @@ impl<'a> Run<'a> {
             failed: None,
         }
     }
+}
+
+/// Switches one shared release, then installs each process in that release.
+async fn switch_processes(servers: &[&Server], id: &str, report: &Reporter) -> Result<()> {
+    let first = servers
+        .first()
+        .ok_or_else(|| anyhow!("no processes to switch"))?;
+    if servers.iter().any(|server| {
+        server.dir() != first.dir() || !std::ptr::eq(server.session(), first.session())
+    }) {
+        bail!("processes must share one server and deployment folder");
+    }
+    first.switch(id, report).await?;
+    for server in servers {
+        server.install_unit(report).await?;
+    }
+    Ok(())
+}
+
+/// Restarts each process after the shared release has been switched.
+async fn restart_processes(servers: &[&Server], report: &Reporter) -> Result<()> {
+    if servers.is_empty() {
+        bail!("no processes to restart");
+    }
+    for server in servers {
+        server.restart(report).await?;
+    }
+    Ok(())
 }
 
 /// `1 command`, `3 commands`.

@@ -16,15 +16,26 @@ use crate::release::ReleaseName;
 /// Returns an error when the version file cannot be read or parsed.
 pub async fn release_name(deployable: &Deployable) -> Result<(ReleaseName, String)> {
     let dir = deployable.project_dir();
-    let (version, source) = match deployable.version_file() {
+    release_name_in(&dir, deployable.version_file().as_deref()).await
+}
+
+/// Names a release using a project folder and an optional version file.
+///
+/// # Errors
+/// Returns an error when the version file cannot be read.
+pub async fn release_name_in(
+    dir: &Path,
+    version_file: Option<&Path>,
+) -> Result<(ReleaseName, String)> {
+    let (version, source) = match version_file {
         Some(file) => {
             let name = file
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            (read_version(&file)?, name)
+            (read_version(file)?, name)
         }
-        None => match latest_tag(&dir).await {
+        None => match latest_tag(dir).await {
             Some(tag) => (tag, "the latest git tag".to_string()),
             None => (
                 "0.0.0".to_string(),
@@ -32,9 +43,9 @@ pub async fn release_name(deployable: &Deployable) -> Result<(ReleaseName, Strin
             ),
         },
     };
-    let (git, dirty) = match git(&dir, &["rev-parse", "--short=7", "HEAD"]).await {
+    let (git, dirty) = match git(dir, &["rev-parse", "--short=7", "HEAD"]).await {
         Some(sha) => {
-            let status = git(&dir, &["status", "--porcelain", "--untracked-files=no"]).await;
+            let status = git(dir, &["status", "--porcelain", "--untracked-files=no"]).await;
             (sha, status.is_some_and(|s| !s.is_empty()))
         }
         None => ("nogit".to_string(), false),

@@ -418,6 +418,7 @@ async fn run_tui(root: PathBuf, args: LoginArgs) -> Result<ExitCode> {
         root,
         Discovery {
             deployables,
+            monorepos: Vec::new(),
             problems: Vec::new(),
         },
         login,

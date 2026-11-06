@@ -20,7 +20,7 @@ use crate::release::ReleaseName;
 pub struct Contents {
     pub(super) entries: Vec<Entry>,
     /// The file shipdeck writes for the service, if it writes one.
-    pub(super) own: Option<String>,
+    pub(super) own: Vec<String>,
     /// Project files a file from the deploy folder replaced.
     pub replaced: Vec<String>,
     /// Ecosystem files in the release PM2 never reads, because shipdeck
@@ -52,15 +52,24 @@ impl Contents {
     /// Fails when the service file cannot be rendered for the fingerprint.
     pub fn fingerprint(&self, deployable: &Deployable, start_path: Option<&str>) -> Result<String> {
         let own = service_file(deployable, &unnamed(), start_path)?;
-        Ok(self.fingerprint_with(own.as_ref(), &deployable.yaml))
+        Ok(match own.as_ref() {
+            Some(file) => self.fingerprint_with(std::slice::from_ref(&file), &deployable.yaml),
+            None => self.fingerprint_with(&[], &deployable.yaml),
+        })
+    }
+
+    /// Fingerprints a shared release using its app files and resolved config.
+    #[must_use]
+    pub fn fingerprint_apps(&self, files: &[&ServiceFile], config: &str) -> String {
+        self.fingerprint_with(files, config)
     }
 
     /// The fingerprint, with the service file already rendered.
-    pub(super) fn fingerprint_with(&self, own: Option<&ServiceFile>, yaml: &str) -> String {
+    pub(super) fn fingerprint_with(&self, own: &[&ServiceFile], yaml: &str) -> String {
         let mut entries: Vec<&Entry> = self
             .entries
             .iter()
-            .filter(|entry| Some(&entry.path) != self.own.as_ref())
+            .filter(|entry| !self.own.contains(&entry.path))
             .collect();
         entries.sort_by(|a, b| a.path.cmp(&b.path));
         // Paths cannot hold a NUL, so NUL-ended fields never run together.
@@ -84,7 +93,9 @@ impl Contents {
                 }
             }
         }
-        if let Some(own) = own {
+        let mut own = own.to_vec();
+        own.sort_by(|a, b| a.name.cmp(&b.name));
+        for own in own {
             field(&mut hash, b"s", own.name.as_bytes());
             hash.update(sha256(own.text.as_bytes()));
             hash.update(b"\0");

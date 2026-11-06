@@ -9,7 +9,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User={{user}}
-WorkingDirectory={{dir}}/current
+WorkingDirectory={{workdir}}
 ExecStart={{exec}}
 Environment=APP_RELEASE={{id}}
 {{env}}

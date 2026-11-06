@@ -21,7 +21,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User={{user}}
-WorkingDirectory={{dir}}/current
+WorkingDirectory={{workdir}}
 ExecStart={{exec}}
 Environment=APP_RELEASE={{id}}
 {{env}}
@@ -61,6 +61,7 @@ The unit only points at `current/...`, so a deploy or rollback moves `current` a
 | `{{version}}` | the version part of the id |
 | `{{git}}` | the short commit sha, or `nogit` |
 | `{{dir}}` | `service.dir` |
+| `{{workdir}}` | the live working folder |
 | `{{service}}` | `service.name` |
 | `{{user}}` | `service.run_as`, else the SSH user (after `~/.ssh/config`) |
 | `{{exec}}` | the full start command built from `service.start` (below) |
@@ -179,7 +180,7 @@ This example drops `ProtectHome`, which lets a runtime under a home folder (for 
 
 | Error | Cause |
 | --- | --- |
-| `unknown placeholder {{x}}; known: name, tag, id, version, git, dir, service, user, exec, binary, env` | a name not in the table above |
+| `unknown placeholder {{x}}; known: name, tag, id, version, git, dir, service, user, exec, binary, env, workdir` | a name not in the table above |
 | `{{binary}} has no value: this deployable has no pipeline.pack.binary; use {{exec}}` | `{{binary}}` without `pipeline.pack.binary` |
 | ``a `{{` is never closed`` | a missing `}}` |
 

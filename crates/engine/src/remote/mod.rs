@@ -5,6 +5,7 @@
 //! `shared/`.
 
 mod backup;
+mod backup_apps;
 mod control;
 mod delta;
 mod health;
@@ -14,6 +15,7 @@ mod preflight;
 mod releases;
 
 pub use backup::{Picked, ReleaseFile, pick};
+pub use backup_apps::pick_apps;
 pub use control::{Control, control_commands, log_command};
 pub use delta::Unpacked;
 pub use health::{HttpCheck, Probe};
@@ -62,6 +64,22 @@ impl Server {
         }
     }
 
+    /// Creates a server handle for a process inside a shared release.
+    ///
+    /// # Errors
+    /// Returns an error when the app name is unsafe.
+    pub fn for_app(session: Arc<Session>, service: &Service, app: &str) -> Result<Self> {
+        ensure_app_name(app)?;
+        let mut server = Self::new(session, service);
+        if service.pm2.ecosystem.is_some() {
+            server.pm2_file = format!("apps/{app}/{}", server.pm2_file);
+        }
+        if let Some(file) = &mut server.env.env_file {
+            *file = format!("apps/{app}/{file}");
+        }
+        Ok(server)
+    }
+
     #[must_use]
     pub fn session(&self) -> &Session {
         &self.session
@@ -70,6 +88,12 @@ impl Server {
     #[must_use]
     pub fn manager(&self) -> Manager {
         self.manager
+    }
+
+    /// The deployment folder shared by this process's releases.
+    #[must_use]
+    pub fn dir(&self) -> &str {
+        &self.dir
     }
 
     fn q_dir(&self) -> String {
@@ -331,6 +355,23 @@ echo {done}
                 "in current".to_string(),
                 env.env_file.clone(),
             ),
+            Place::AppRelease(id, app) => {
+                ensure_id(id)?;
+                ensure_app_name(app)?;
+                (
+                    format!("{}/releases/{id}/apps/{app}", self.dir),
+                    format!("in releases/{id}/apps/{app}"),
+                    env.env_file.clone(),
+                )
+            }
+            Place::AppCurrent(app) => {
+                ensure_app_name(app)?;
+                (
+                    format!("{}/current/apps/{app}", self.dir),
+                    format!("in current/apps/{app}"),
+                    env.env_file.clone(),
+                )
+            }
         };
         let mut script = env_prelude(&dir, env, env_file);
         // The command is shell by design: it comes from deploy.yaml, written
@@ -408,6 +449,18 @@ pub enum Place {
     Release(String),
     /// `current`, for health and done.
     Current,
+    /// An app's folder in a new release.
+    AppRelease(String, String),
+    /// An app's folder in the live release.
+    AppCurrent(String),
+}
+
+/// Checks an app name before using it in a server path.
+fn ensure_app_name(name: &str) -> Result<()> {
+    if name.starts_with('.') || !crate::config::is_unit_name(name) {
+        bail!("invalid app name {name:?}");
+    }
+    Ok(())
 }
 
 /// What a server command sees besides the deploy user's environment.

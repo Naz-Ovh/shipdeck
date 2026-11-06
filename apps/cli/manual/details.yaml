@@ -902,6 +902,7 @@ config.template:
       {{exec}}     the whole ExecStart= command: the program made absolute, then its arguments
       {{binary}}   the binary's file name; only with pipeline.pack.binary
       {{env}}      the EnvironmentFile= and Environment= lines from env_file and env; may be empty
+      {{workdir}}  the live working folder
     The template is rendered once at preflight to check it, so an unknown placeholder, an
     unclosed `{{`, or {{binary}} without pipeline.pack.binary stops the deploy there, before
     anything is built, naming the known placeholders.
@@ -1381,7 +1382,7 @@ systemd:
       [Service]
       Type=simple
       User={{user}}
-      WorkingDirectory={{dir}}/current
+      WorkingDirectory={{workdir}}
       ExecStart={{exec}}
       Environment=APP_RELEASE={{id}}
       {{env}}

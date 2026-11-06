@@ -114,7 +114,7 @@ impl Run<'_> {
         self.finish(Step::Switch, format!("current → {target}"));
 
         self.start(Step::Restart, &self.config().service.name);
-        if let Err(err) = server.restart(report).await {
+        if let Err(err) = super::restart_processes(&[&server], report).await {
             return self.recover(&server, Step::Restart, err).await;
         }
         self.finish(Step::Restart, "");

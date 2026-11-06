@@ -88,7 +88,7 @@ impl Run<'_> {
         report.log(LogKind::Warn, format!("rolling back to {previous}"));
         let restored = async {
             restore(server, &previous, report).await?;
-            server.restart(report).await?;
+            super::restart_processes(&[server], report).await?;
             tokio::time::sleep(Duration::from_secs(2)).await;
             let probe = server.probe(None).await?;
             if probe.state != "active" {

@@ -52,3 +52,18 @@ fn discovery_collects_every_problem_and_keeps_the_good_ones() {
     assert!(found.problems[0].source.is_some());
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn discovery_reads_a_monorepo_alongside_a_single_service() {
+    let root = scratch("discover-monorepo");
+    std::fs::create_dir_all(root.join("mono")).unwrap();
+    std::fs::create_dir_all(root.join("single")).unwrap();
+    std::fs::write(root.join("single/deploy.yaml"), SAMPLE).unwrap();
+    std::fs::write(root.join("mono/deploy.yaml"), "name: product\nssh: {host: example.com, user: deploy}\ndir: /opt/product\npipeline: {pack: {files: {include: {project: [dist]}}}}\napps: {api: {start: 'node server.js'}}\n").unwrap();
+    let found = discover(&root).unwrap();
+    assert!(found.problems.is_empty());
+    assert_eq!(found.deployables.len(), 1);
+    assert_eq!(found.monorepos.len(), 1);
+    assert_eq!(found.monorepos[0].slug, "mono");
+    std::fs::remove_dir_all(root).unwrap();
+}
