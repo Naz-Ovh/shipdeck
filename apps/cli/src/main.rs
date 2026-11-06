@@ -1,6 +1,6 @@
 //! shipdeck: build on this machine, deploy over SSH, roll back any release.
-//! The flags pick the terminal UI (`shipdeck-tui`) or a command run without
-//! it (`shipdeck-headless`); both drive `shipdeck-engine`.
+//! The flags pick the terminal UI (`shipdeck-tui`) or a console command
+//! (`console`); both drive `shipdeck-engine` as a child process.
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -15,10 +15,12 @@ use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use shipdeck_engine::config::{self, Discovery, Manager};
 use shipdeck_engine::init::Preset;
 use shipdeck_engine::ssh::{Login, PASSPHRASE_ENV, Pool, Question};
-use shipdeck_headless::{Choices, Headless};
 use shipdeck_protocol::message::Problem;
+
+use console::{Choices, Console};
 use shipdeck_protocol::message::common::{Login as ProtocolLogin, OnFailure};
 
+mod console;
 mod engine;
 mod init;
 mod man;
@@ -299,7 +301,7 @@ async fn main() -> Result<ExitCode> {
         _ => (OnFailure::Rollback, false),
     };
     let (connection, mut child) = engine.into_parts();
-    let mut headless = Headless::new(
+    let mut console = Console::new(
         connection,
         Choices {
             trust_new_host: ssh.trust_new_host,
@@ -308,17 +310,15 @@ async fn main() -> Result<ExitCode> {
         },
     );
     let code = match command {
-        ServerCommand::Deploy { names, .. } => {
-            headless.deploy(&workspace.deployables, &names).await
-        }
+        ServerCommand::Deploy { names, .. } => console.deploy(&workspace.deployables, &names).await,
         ServerCommand::Rollback { name, to, .. } => {
-            headless.rollback(&workspace.deployables, &name, to).await
+            console.rollback(&workspace.deployables, &name, to).await
         }
         ServerCommand::Releases { name, .. } => {
-            headless.releases(&workspace.deployables, &name).await
+            console.releases(&workspace.deployables, &name).await
         }
     };
-    headless.close().await;
+    console.close().await;
     let _ = child.wait().await;
     Ok(code)
 }

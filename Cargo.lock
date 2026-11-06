@@ -2735,13 +2735,13 @@ name = "shipdeck"
 version = "0.6.1"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "granit-parser",
  "inquire",
  "mimalloc",
  "serde_json",
  "shipdeck-engine",
- "shipdeck-headless",
  "shipdeck-protocol",
  "shipdeck-tui",
  "tokio",
@@ -2768,17 +2768,6 @@ dependencies = [
  "tokio",
  "toml",
  "zstd",
-]
-
-[[package]]
-name = "shipdeck-headless"
-version = "0.6.1"
-dependencies = [
- "chrono",
- "serde_json",
- "shipdeck-engine",
- "shipdeck-protocol",
- "tokio",
 ]
 
 [[package]]

@@ -1,16 +1,12 @@
 use std::process::ExitCode;
-use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, duplex};
 
 use shipdeck_protocol::connection::Connection;
-use shipdeck_protocol::message::{
-    DeployableInfo, Event, LogKind, OnFailure, OpLog, OpProgress, OpStep, Outcome, ReleaseInfo,
-    ReleaseKind, ReleaseName, ReleasesListResult, StepState, Unit,
-};
+use shipdeck_protocol::message::{DeployableInfo, OnFailure, Outcome};
 
-use super::{Choices, Headless, Lines, Paint, exit_code, find, summary, table};
+use super::{Choices, Console, exit_code, find};
 
 fn deployable(slug: &str, name: &str) -> DeployableInfo {
     DeployableInfo {
@@ -83,191 +79,6 @@ fn a_name_shared_by_two_needs_the_folder() {
     assert_eq!(find(&all, "api-staging").unwrap().slug, "api-staging");
 }
 
-#[test]
-fn steps_print_when_they_end() {
-    let start = Instant::now();
-    let steps = ["Build".to_string(), "Upload".to_string()];
-    let mut lines = Lines::new(&steps, Paint::plain(), start);
-    let step = |step, state, detail: Option<&str>| {
-        Event::Step(OpStep {
-            op: 1,
-            step,
-            state,
-            detail: detail.map(str::to_string),
-        })
-    };
-    assert_eq!(lines.line(step(0, StepState::Running, None), start), None);
-    assert_eq!(
-        lines.line(step(0, StepState::Done, Some("31.0 MiB")), start),
-        Some("✔ Build  31.0 MiB".into())
-    );
-    assert_eq!(
-        lines.line(step(1, StepState::Failed, Some("timed out")), start),
-        Some("✘ Upload".into())
-    );
-    // After a failure the rest are skipped; that is already clear.
-    assert_eq!(
-        lines.line(step(1, StepState::Skipped, Some("stopped")), start),
-        None
-    );
-}
-
-#[test]
-fn logs_keep_their_marker() {
-    let now = Instant::now();
-    let mut lines = Lines::new(&[], Paint::plain(), now);
-    let log = |kind, text: &str| {
-        Event::Log(OpLog {
-            op: 1,
-            kind,
-            text: text.into(),
-        })
-    };
-    assert_eq!(
-        lines.line(log(LogKind::Command, "cargo build --release"), now),
-        Some("› cargo build --release".into())
-    );
-    assert_eq!(
-        lines.line(log(LogKind::Out, "Compiling my-api"), now),
-        Some("  Compiling my-api".into())
-    );
-    assert_eq!(
-        lines.line(log(LogKind::Error, "http 502"), now),
-        Some("✘ http 502".into())
-    );
-}
-
-#[test]
-fn progress_prints_every_few_seconds() {
-    let start = Instant::now();
-    let steps = ["Upload".to_string()];
-    let mut lines = Lines::new(&steps, Paint::plain(), start);
-    let progress = |done| {
-        Event::Progress(OpProgress {
-            op: 1,
-            step: 0,
-            done,
-            total: 4 * 1024 * 1024,
-            unit: Unit::Bytes,
-            label: "uploading".into(),
-        })
-    };
-    assert_eq!(
-        lines.line(progress(1024), start + Duration::from_secs(1)),
-        None
-    );
-    assert_eq!(
-        lines.line(progress(1024 * 1024), start + Duration::from_secs(6)),
-        Some("… uploading 1.0 MiB / 4.0 MiB (25%)".into())
-    );
-    assert_eq!(
-        lines.line(progress(2 * 1024 * 1024), start + Duration::from_secs(8)),
-        None
-    );
-}
-
-#[test]
-fn the_summary_says_what_is_live() {
-    let took = Duration::from_secs(72);
-    let paint = Paint::plain();
-    assert_eq!(
-        summary(
-            paint,
-            "my-api",
-            &Outcome::Succeeded {
-                release: "v0.3.1".into()
-            },
-            took
-        ),
-        "✔ my-api: v0.3.1 is live (1m12s)"
-    );
-    assert_eq!(
-        summary(
-            paint,
-            "my-api",
-            &Outcome::RolledBack {
-                error: "http 502".into(),
-                to: "v0.3.0".into()
-            },
-            took
-        ),
-        "▲ my-api: the new release failed; v0.3.0 is live again"
-    );
-    assert_eq!(
-        summary(
-            paint,
-            "my-api",
-            &Outcome::Unchanged {
-                live: "v0.3.1".into()
-            },
-            took
-        ),
-        "▲ my-api: nothing changed since v0.3.1, so nothing was deployed; \
-         --allow-unchanged deploys it anyway"
-    );
-}
-
-#[test]
-fn the_release_table_lines_up() {
-    let ids = [
-        "v0.3.1-ab12cd3-20261014.153012",
-        "v0.3.0-9f8e7d6-20261012.091000",
-    ];
-    let mut entries: Vec<ReleaseInfo> = ids
-        .iter()
-        .enumerate()
-        .map(|(i, id)| ReleaseInfo {
-            id: id.to_string(),
-            name: Some(ReleaseName {
-                version: if i == 0 { "0.3.1" } else { "0.3.0" }.into(),
-                git: if i == 0 { "ab12cd3" } else { "9f8e7d6" }.into(),
-                dirty: false,
-                built_at: if i == 0 {
-                    "2026-10-14T15:30:12+00:00"
-                } else {
-                    "2026-10-12T09:10:00+00:00"
-                }
-                .into(),
-            }),
-            kind: if i == 0 {
-                ReleaseKind::Open
-            } else {
-                ReleaseKind::Compressed
-            },
-            current: i == 0,
-            size_bytes: Some(31 * 1024 * 1024),
-            backup: true,
-            manifest: None,
-        })
-        .collect();
-    entries.push(ReleaseInfo {
-        id: "old".into(),
-        name: None,
-        kind: ReleaseKind::Open,
-        current: false,
-        size_bytes: None,
-        backup: false,
-        manifest: None,
-    });
-    let text = table(&ReleasesListResult {
-        current: Some(ids[0].into()),
-        entries,
-    });
-    let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(lines.len(), 4);
-    assert!(lines[0].starts_with("RELEASE  "));
-    assert!(lines[1].contains("live"), "{text}");
-    assert!(lines[1].contains("2026-10-14 15:30"), "{text}");
-    assert!(lines[2].contains("compressed"), "{text}");
-    assert!(
-        lines[3].starts_with("old ") && lines[3].contains("not-ours"),
-        "{text}"
-    );
-    // Every column starts at the same place on every line.
-    let col = lines[0].find("VERSION").unwrap();
-    assert!(lines[1][col..].starts_with("0.3.1"), "{text}");
-}
-
 /// A stand-in for the engine: the app side of one pipe, reading what the
 /// command asks and writing what the engine would send.
 struct FakeEngine {
@@ -277,12 +88,12 @@ struct FakeEngine {
 
 impl FakeEngine {
     /// A command, and the engine it talks to.
-    fn pair(choices: Choices) -> (Headless, Self) {
+    fn pair(choices: Choices) -> (Console, Self) {
         let (engine_read, app_write) = duplex(64 * 1024);
         let (app_read, engine_write) = duplex(64 * 1024);
         let connection = Connection::start(app_read, app_write);
         (
-            Headless::new(connection, choices),
+            Console::new(connection, choices),
             Self {
                 lines: BufReader::new(engine_read),
                 out: engine_write,
@@ -318,7 +129,7 @@ impl FakeEngine {
 
 #[tokio::test]
 async fn a_deploy_says_how_it_ended() {
-    let (mut headless, mut engine) = FakeEngine::pair(choices());
+    let (mut console, mut engine) = FakeEngine::pair(choices());
     let script = tokio::spawn(async move {
         let asked = engine.next().await;
         assert_eq!(asked["method"], "deploy/start");
@@ -347,14 +158,14 @@ async fn a_deploy_says_how_it_ended() {
     });
 
     let projects = [deployable("api", "My API")];
-    let code = headless.deploy(&projects, &["api".into()]).await;
+    let code = console.deploy(&projects, &["api".into()]).await;
     script.await.unwrap();
     assert_eq!(code, ExitCode::SUCCESS);
 }
 
 #[tokio::test]
 async fn a_failed_deploy_keeps_its_exit_code() {
-    let (mut headless, mut engine) = FakeEngine::pair(choices());
+    let (mut console, mut engine) = FakeEngine::pair(choices());
     let script = tokio::spawn(async move {
         let asked = engine.next().await;
         engine
@@ -370,7 +181,7 @@ async fn a_failed_deploy_keeps_its_exit_code() {
     });
 
     let projects = [deployable("api", "My API")];
-    let code = headless.deploy(&projects, &["api".into()]).await;
+    let code = console.deploy(&projects, &["api".into()]).await;
     script.await.unwrap();
     assert_eq!(code, ExitCode::from(1));
 }
@@ -379,7 +190,7 @@ async fn a_failed_deploy_keeps_its_exit_code() {
 async fn an_unchanged_question_is_answered_from_the_flag() {
     let mut choices = choices();
     choices.allow_unchanged = true;
-    let (mut headless, mut engine) = FakeEngine::pair(choices);
+    let (mut console, mut engine) = FakeEngine::pair(choices);
     let script = tokio::spawn(async move {
         let asked = engine.next().await;
         engine
@@ -406,7 +217,7 @@ async fn an_unchanged_question_is_answered_from_the_flag() {
     });
 
     let projects = [deployable("api", "My API")];
-    let code = headless.deploy(&projects, &["api".into()]).await;
+    let code = console.deploy(&projects, &["api".into()]).await;
     script.await.unwrap();
     assert_eq!(code, ExitCode::SUCCESS);
 }
@@ -415,7 +226,7 @@ async fn an_unchanged_question_is_answered_from_the_flag() {
 async fn a_rollback_question_is_answered_from_the_flag() {
     let mut choices = choices();
     choices.on_failure = OnFailure::Keep;
-    let (mut headless, mut engine) = FakeEngine::pair(choices);
+    let (mut console, mut engine) = FakeEngine::pair(choices);
     let script = tokio::spawn(async move {
         let asked = engine.next().await;
         engine
@@ -449,14 +260,14 @@ async fn a_rollback_question_is_answered_from_the_flag() {
     });
 
     let projects = [deployable("api", "My API")];
-    let code = headless.deploy(&projects, &["api".into()]).await;
+    let code = console.deploy(&projects, &["api".into()]).await;
     script.await.unwrap();
     assert_eq!(code, ExitCode::from(4));
 }
 
 #[tokio::test]
 async fn a_secret_question_is_refused_with_a_hint() {
-    let (mut headless, mut engine) = FakeEngine::pair(choices());
+    let (mut console, mut engine) = FakeEngine::pair(choices());
     let script = tokio::spawn(async move {
         let asked = engine.next().await;
         engine
@@ -483,14 +294,14 @@ async fn a_secret_question_is_refused_with_a_hint() {
     });
 
     let projects = [deployable("api", "My API")];
-    let code = headless.deploy(&projects, &["api".into()]).await;
+    let code = console.deploy(&projects, &["api".into()]).await;
     script.await.unwrap();
     assert_eq!(code, ExitCode::from(1));
 }
 
 #[tokio::test]
 async fn the_release_list_comes_from_the_engine() {
-    let (mut headless, mut engine) = FakeEngine::pair(choices());
+    let (mut console, mut engine) = FakeEngine::pair(choices());
     let script = tokio::spawn(async move {
         let asked = engine.next().await;
         assert_eq!(asked["method"], "releases/list");
@@ -515,15 +326,15 @@ async fn the_release_list_comes_from_the_engine() {
     });
 
     let projects = [deployable("api", "My API")];
-    let code = headless.releases(&projects, "api").await;
+    let code = console.releases(&projects, "api").await;
     script.await.unwrap();
     assert_eq!(code, ExitCode::SUCCESS);
 }
 
 #[tokio::test]
 async fn a_name_that_is_not_there_stops_before_the_engine() {
-    let (mut headless, _engine) = FakeEngine::pair(choices());
+    let (mut console, _engine) = FakeEngine::pair(choices());
     let projects = [deployable("api", "My API")];
-    let code = headless.deploy(&projects, &["nope".into()]).await;
+    let code = console.deploy(&projects, &["nope".into()]).await;
     assert_eq!(code, ExitCode::FAILURE);
 }

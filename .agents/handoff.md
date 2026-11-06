@@ -10,8 +10,8 @@ Where the last session stopped (2026-11-06). Read [README.md](README.md) first; 
 - Done this session:
   - `p1c1`: `shipdeck engine`, the process apps talk to (`crates/engine/src/rpc`), with tests.
   - `p1d1`: `shipdeck deploy`, `rollback` and `releases` start that engine as a child and print what it
-    reports. `crates/headless` is now an app: `Headless` holds a `Connection`, sends the requests, answers
-    the questions from its flags, and maps the outcome to the exit code. `apps/cli/src/engine.rs` holds the
+    reports. `apps/cli/src/console` holds `Console`: it sends the requests, answers the questions
+    from the flags, and maps the outcome to the exit code. `apps/cli/src/engine.rs` holds the
     child: `serve()` is the process, `Engine::start` is the app side.
 - Earlier this week: `p1a2` (layout), the pedantic clippy rule, `p1b1`/`p1b2` (the protocol crate).
 
@@ -28,7 +28,7 @@ Where the last session stopped (2026-11-06). Read [README.md](README.md) first; 
   as line/column/message, which cannot draw the caret block the console has always printed.
 - The engine runs in its own process group, so the terminal's Ctrl-C stays with the app: the app decides, and
   its death closes the pipe, which ends the engine.
-- `crates/headless` still depends on `shipdeck-engine` for `human` (bytes and durations). The protocol is its
+- `apps/cli/src/console` still uses `shipdeck-engine` for `human` (bytes and durations). The protocol is its
   other shipdeck edge. If the isolation matters more than the shared formatter, `human` has to move; ask the
   owner first.
 
@@ -66,7 +66,7 @@ Where the last session stopped (2026-11-06). Read [README.md](README.md) first; 
 - Two schemas, two recipes: `just schema` (deploy.yaml) and `just protocol` (the messages). Both are checked
   by tests, so a doc comment on a config field or a message type means regenerating before the tests pass.
 - `tokio::io::duplex` drops the pipe as soon as both halves are dropped; keep the engine half alive in a test
-  while the call is in flight. `crates/headless/src/headless_test.rs` has a fake engine worth copying.
+  while the call is in flight. `apps/cli/src/console/run_test.rs` has a fake engine worth copying.
 - `/tmp` is not shared between two `bash` calls in this environment; use `.tmp/` under the repo for a manual
   run, and `std::env::temp_dir()` inside a test process.
 - Timing `{ printf ...; sleep 6; } | shipdeck engine` measures the pipeline, not the engine. Use

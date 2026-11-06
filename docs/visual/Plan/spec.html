@@ -805,18 +805,17 @@
       <article class="frame wide" id="layout" data-zoom data-n="#20" data-t="Where the code goes">
         <div class="fhead"><h3>Where the code goes</h3><span class="tag">a monorepo</span></div>
         <p class="when">Each top-level folder holds one kind of thing, so Rust and .NET never share a folder.</p>
-<pre class="code">apps/                          <span class="c">what people run</span>
+<pre class="code">apps/                          <span class="c">what people see and run</span>
 ├── cli/                       <span class="c">the shipdeck binary (was bin/shipdeck); the flags live here</span>
+├── tui/                       <span class="c">the terminal UI: a client of the engine</span>
 ├── desktop/                   <span class="c">the Avalonia solution</span>
 │   ├── Shipdeck.Protocol/     <span class="c">the C# types made from the schema, and the client</span>
 │   ├── Shipdeck.Desktop/      <span class="c">views, view models, starting the engine</span>
 │   └── Shipdeck.Desktop.Tests/
 └── agent/                     <span class="c">later: shipdeck-agent</span>
-crates/                        <span class="c">Rust libraries</span>
+crates/                        <span class="c">Rust libraries the frontends share</span>
 ├── engine/                    <span class="c">all the work</span>
-├── protocol/                  <span class="c">the messages, the schema, and a client for Rust apps</span>
-├── tui/                       <span class="c">the terminal UI: a client of the engine</span>
-└── headless/                  <span class="c">plain lines and exit codes: a client of the engine</span>
+└── protocol/                  <span class="c">the messages, the schema, and a client for Rust apps</span>
 docs/                          <span class="c">plan.md, project-progress.html, visual/Plan/spec.html, website/</span>
 ├── schema/                    <span class="c">deploy.schema.json, protocol.schema.json: published with each release</span>
 └── code/  feature/            <span class="c">how it works, and how each feature works</span>

@@ -3,7 +3,7 @@
 Where the code sits, and where new code goes. Shipdeck is one Cargo
 workspace: the engine does the work, the frontends show what it reports.
 
-## Crates
+## Crates and apps
 
 - `crates/engine/` (`shipdeck-engine`): `config` (deploy.yaml: types that
   are the JSON Schema, the line-aware YAML tree, the launch check, globs),
@@ -15,17 +15,17 @@ workspace: the engine does the work, the frontends show what it reports.
   `deploy` (the deploy and rollback flows, `report` for progress),
   `init` (the presets and the new deployable folder), `rpc` (the engine
   process: the loop, the methods, and what it reports).
-- `crates/tui/` (`shipdeck-tui`): the screens, dialogs and key handling.
-- `crates/headless/` (`shipdeck-headless`): the `deploy`, `rollback` and
-  `releases` commands for scripts and CI. It is an app like any other: it
-  starts the engine, prints what it reports as plain lines, answers the
-  questions from its flags, and turns the outcome into an exit code.
 - `crates/protocol/` (`shipdeck-protocol`): every message between the engine
   and an app, the JSON Schema made from those types, and the connection both
   ends use. No engine logic lives here. See [protocol.md](protocol.md).
+- `apps/tui/` (`shipdeck-tui`): the screens, dialogs and key handling. It is
+  a library, and `apps/cli` starts it.
 - `apps/cli/` (package `shipdeck`, the name the release files keep): the
-  flags (clap lives only here), the login, the config check, then hands over
-  to the TUI or headless. `init`'s questions live here too (`inquire`), and
+  flags (clap lives only here), the login, the config check, and then the
+  TUI or one of the console commands. `console/` is where `deploy`, `rollback`
+  and `releases` print what the engine reports, answer its questions from the
+  flags, and turn the outcome into an exit code; it is part of the CLI, not a
+  crate of its own. `init`'s questions live here too (`inquire`), and
   `man`, whose text is `apps/cli/manual/` (static data via
   `apps/cli/build.rs`). The TUI and headless only show what the engine
   reports; neither depends on the other.
