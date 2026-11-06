@@ -30,9 +30,30 @@ apps. It has no engine logic: no SSH, no files, no build.
 `wire::code` lists every code once. JSON-RPC's own codes are `-327xx`;
 shipdeck's start at `-32001` and go down. A code is never renumbered.
 
-## The client
+## The two ends
 
-`client::Client::start(read, write)` takes any async reader and writer, so a
-test can use an in-memory pipe and the app can use a child process's pipes.
-`request` waits for the answer, `recv` yields events and questions, and
-`answer` replies to a question. Dropping the client closes the stream.
+`connection::Connection::start(read, write)` takes any async reader and
+writer, so a test can use an in-memory pipe and the app can use a child
+process's pipes. `request` waits for the answer, `recv` yields events and
+questions, and `answer` replies to a question. Dropping it closes the
+stream.
+
+Both sides use the same type. `handle()` gives the cloneable sending half,
+so the tasks a worker starts can report while its own loop keeps reading:
+the engine's deploy sends `op/*` events and `ask/*` questions from tasks.
+`answer_error` answers with one of `wire::code`'s numbers.
+
+## The engine process
+
+`shipdeck engine` is `crates/engine/src/rpc`: it holds one connection's state,
+the open workspace, the running deploy, and the live logs. It writes nothing
+to stdout but messages.
+
+- One request, one task. Answers come back as they finish, so the app
+  matches ids. `initialize` and `workspace/open` are answered before the next
+  message is read, so everything after them sees what they set.
+- One deploy or rollback at a time. A second one is refused with `BUSY`.
+- `logs/follow` answers before its first line, and `deploy/start` before its
+  first `op/*` event: the app needs the view or the operation first.
+- `shutdown` answers, then closes the SSH connections and exits. A request
+  already running is still answered.

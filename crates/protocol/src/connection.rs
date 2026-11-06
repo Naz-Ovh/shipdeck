@@ -1,4 +1,8 @@
-//! Talking to the engine: requests out, events and questions in.
+//! One end of the pipe: requests out, events and questions in.
+//!
+//! Both sides use the same type. An app uses [`Connection`] to call the
+//! engine; the engine's own loop holds the connection and a [`Handle`] to
+//! answer, report and ask from the tasks it starts.
 
 use std::collections::HashMap;
 use std::fmt::{self, Display};
@@ -23,14 +27,14 @@ use crate::message::request::{
 };
 use crate::wire::{self, ErrorObject, Id, Notification, Request, Response};
 
-/// Why a call to the engine did not finish.
+/// Why a call to the other side did not finish.
 #[derive(Debug)]
 pub enum Error {
     /// The stream could not be read or written.
     Io(std::io::Error),
     /// A message was not valid JSON, or not the shape it should be.
     Json(serde_json::Error),
-    /// The engine answered with an error.
+    /// The other side answered with an error.
     Rpc(ErrorObject),
     /// The stream ended; nothing more will arrive.
     Closed,
@@ -41,8 +45,8 @@ impl Display for Error {
         match self {
             Self::Io(err) => write!(f, "the stream failed: {err}"),
             Self::Json(err) => write!(f, "a message was not what it should be: {err}"),
-            Self::Rpc(err) => write!(f, "the engine said no: {err}"),
-            Self::Closed => f.write_str("the engine closed the stream"),
+            Self::Rpc(err) => write!(f, "the other side said no: {err}"),
+            Self::Closed => f.write_str("the other side closed the stream"),
         }
     }
 }
@@ -61,15 +65,15 @@ impl From<serde_json::Error> for Error {
     }
 }
 
-/// What arrived from the engine, other than an answer to a request.
+/// What arrived, other than an answer to a request.
 #[derive(Debug)]
 pub enum Incoming {
-    /// Something the engine reports; nothing to answer.
+    /// Something the other side reports; nothing to answer.
     Event(Event),
     /// A question, with the id its answer must carry.
     Ask { id: Id, ask: Ask },
     /// A method this version does not know, or whose params do not fit.
-    /// An id means the engine waits for an answer.
+    /// An id means the other side waits for an answer.
     Other {
         id: Option<Id>,
         method: String,
@@ -79,28 +83,41 @@ pub enum Incoming {
     Malformed { id: Option<Id>, error: String },
 }
 
-/// The chat with one engine, over a stream that carries one message per line.
+/// The chat with one other side, over a stream that carries one message per
+/// line.
 ///
-/// Dropping it closes the client; the engine then takes no new work.
-pub struct Client {
-    out: mpsc::UnboundedSender<Outbound>,
-    shared: Arc<Shared>,
+/// Dropping it closes the stream; the other side then takes no new work.
+pub struct Connection {
+    handle: Handle,
     incoming: mpsc::UnboundedReceiver<Incoming>,
-    next: AtomicU64,
     task: JoinHandle<()>,
 }
 
-/// One line the client has to write.
-enum Outbound {
-    Line(String),
+/// The sending half of a [`Connection`]: requests, answers and reports.
+///
+/// Cheap to clone, so the tasks a worker starts can report while its own
+/// loop keeps reading.
+#[derive(Clone)]
+pub struct Handle {
+    out: mpsc::UnboundedSender<Outbound>,
+    shared: Arc<Shared>,
+    next: Arc<AtomicU64>,
 }
 
-/// What the reading task and the client share.
+/// One line this side has to write, or the end of what it writes.
+enum Outbound {
+    Line(String),
+    /// Everything queued before this is on the stream; tell the sender, and
+    /// keep the connection open.
+    Flushed(oneshot::Sender<()>),
+}
+
+/// What the reading task and the handle share.
 struct Shared {
     /// Requests waiting for their answer, by id.
     pending: Mutex<HashMap<Id, oneshot::Sender<Result<Value, Error>>>>,
-    /// The way events reach the app. Dropping it ends `recv`, so the reading
-    /// task takes it out when the stream ends.
+    /// The way what arrives reaches the connection. Dropping it ends `recv`,
+    /// so the reading task takes it out when the stream ends.
     incoming: Mutex<Option<mpsc::UnboundedSender<Incoming>>>,
 }
 
@@ -114,7 +131,7 @@ impl Shared {
     fn send(&self, incoming: Incoming) {
         let sender = self.incoming.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(sender) = sender.as_ref() {
-            // The app may be gone; then nothing is left to tell.
+            // The other side may be gone; then nothing is left to tell.
             let _ = sender.send(incoming);
         }
     }
@@ -128,7 +145,7 @@ impl Shared {
 
     /// Fails every waiting request, because the stream ended.
     fn close(&self) {
-        // No new event can arrive; `recv` ends once the buffered ones are read.
+        // No new message can arrive; `recv` ends once the buffered ones are read.
         let sender = self
             .incoming
             .lock()
@@ -142,9 +159,9 @@ impl Shared {
     }
 }
 
-impl Client {
-    /// Starts a client on the two halves of one stream: a child process's
-    /// pipes, a socket, or a test pipe.
+impl Connection {
+    /// Starts a connection on the two halves of one stream: a child
+    /// process's pipes, a socket, or a test pipe.
     #[must_use]
     pub fn start<R, W>(read: R, write: W) -> Self
     where
@@ -160,38 +177,33 @@ impl Client {
         let reader = Arc::clone(&shared);
         let task = tokio::spawn(run(read, write, outbox, reader));
         Self {
-            out,
-            shared,
+            handle: Handle {
+                out,
+                shared,
+                next: Arc::new(AtomicU64::new(1)),
+            },
             incoming,
-            next: AtomicU64::new(1),
             task,
         }
+    }
+
+    /// The sending half, for the tasks a worker starts.
+    #[must_use]
+    pub fn handle(&self) -> Handle {
+        self.handle.clone()
     }
 
     /// Sends one request and waits for its answer.
     ///
     /// # Errors
-    /// Returns an error when the stream closes, the engine answers with an
-    /// error, or the answer is not the expected shape.
+    /// Returns an error when the stream closes, the other side answers with
+    /// an error, or the answer is not the expected shape.
     pub async fn request<P, R>(&self, method: &str, params: &P) -> Result<R, Error>
     where
         P: Serialize,
         R: DeserializeOwned,
     {
-        let params = serde_json::to_value(params)?;
-        let id = Id::Number(self.next.fetch_add(1, Ordering::Relaxed));
-        let (reply, answer) = oneshot::channel();
-        self.shared.pending().insert(id.clone(), reply);
-        let line = wire::to_line(&Request::new(id.clone(), method, params))?;
-        if self.out.send(Outbound::Line(line)).is_err() {
-            self.shared.pending().remove(&id);
-            return Err(Error::Closed);
-        }
-        match answer.await {
-            Ok(Ok(value)) => Ok(serde_json::from_value(value)?),
-            Ok(Err(err)) => Err(err),
-            Err(_) => Err(Error::Closed),
-        }
+        self.handle.request(method, params).await
     }
 
     /// Sends one message with no answer expected.
@@ -199,28 +211,39 @@ impl Client {
     /// # Errors
     /// Returns an error when the stream is closed or the message cannot be written.
     pub fn notify<P: Serialize>(&self, method: &str, params: &P) -> Result<(), Error> {
-        let params = serde_json::to_value(params)?;
-        let line = wire::to_line(&Notification::new(method, params))?;
-        self.out
-            .send(Outbound::Line(line))
-            .map_err(|_| Error::Closed)
+        self.handle.notify(method, params)
     }
 
-    /// Answers a question from the engine.
+    /// Answers a request.
     ///
     /// # Errors
     /// Returns an error when the stream is closed or the answer cannot be written.
     pub fn answer<R: Serialize>(&self, id: Id, result: &R) -> Result<(), Error> {
-        let result = serde_json::to_value(result)?;
-        let line = wire::to_line(&Response::new(id, result))?;
-        self.out
-            .send(Outbound::Line(line))
-            .map_err(|_| Error::Closed)
+        self.handle.answer(id, result)
     }
 
-    /// The next thing the engine sent; `None` when the stream ended.
+    /// Answers a request that could not be carried out.
+    ///
+    /// # Errors
+    /// Returns an error when the stream is closed or the answer cannot be written.
+    pub fn answer_error(&self, id: Id, error: ErrorObject) -> Result<(), Error> {
+        self.handle.answer_error(id, error)
+    }
+
+    /// The next thing the other side sent; `None` when the stream ended.
     pub async fn recv(&mut self) -> Option<Incoming> {
         self.incoming.recv().await
+    }
+
+    /// Waits until everything queued is on the stream.
+    ///
+    /// A worker that answers and then returns must call this: the lines it
+    /// queued would otherwise be lost when the connection closes.
+    pub async fn flush(&self) {
+        let (flushed, done) = oneshot::channel();
+        if self.handle.out.send(Outbound::Flushed(flushed)).is_ok() {
+            let _ = done.await;
+        }
     }
 
     /// `initialize`: agree on the protocol version.
@@ -337,13 +360,79 @@ impl Client {
     }
 }
 
-impl Drop for Client {
+impl Handle {
+    /// Sends one request and waits for its answer.
+    ///
+    /// # Errors
+    /// Returns an error when the stream closes, the other side answers with
+    /// an error, or the answer is not the expected shape.
+    pub async fn request<P, R>(&self, method: &str, params: &P) -> Result<R, Error>
+    where
+        P: Serialize,
+        R: DeserializeOwned,
+    {
+        let params = serde_json::to_value(params)?;
+        let id = Id::Number(self.next.fetch_add(1, Ordering::Relaxed));
+        let (reply, answer) = oneshot::channel();
+        self.shared.pending().insert(id.clone(), reply);
+        let line = wire::to_line(&Request::new(id.clone(), method, params))?;
+        if self.out.send(Outbound::Line(line)).is_err() {
+            self.shared.pending().remove(&id);
+            return Err(Error::Closed);
+        }
+        match answer.await {
+            Ok(Ok(value)) => Ok(serde_json::from_value(value)?),
+            Ok(Err(err)) => Err(err),
+            Err(_) => Err(Error::Closed),
+        }
+    }
+
+    /// Sends one message with no answer expected.
+    ///
+    /// # Errors
+    /// Returns an error when the stream is closed or the message cannot be written.
+    pub fn notify<P: Serialize>(&self, method: &str, params: &P) -> Result<(), Error> {
+        let params = serde_json::to_value(params)?;
+        let line = wire::to_line(&Notification::new(method, params))?;
+        self.out
+            .send(Outbound::Line(line))
+            .map_err(|_| Error::Closed)
+    }
+
+    /// Answers a request.
+    ///
+    /// # Errors
+    /// Returns an error when the stream is closed or the answer cannot be written.
+    pub fn answer<R: Serialize>(&self, id: Id, result: &R) -> Result<(), Error> {
+        let result = serde_json::to_value(result)?;
+        let line = wire::to_line(&Response::new(id, result))?;
+        self.out
+            .send(Outbound::Line(line))
+            .map_err(|_| Error::Closed)
+    }
+
+    /// Answers a request that could not be carried out.
+    ///
+    /// # Errors
+    /// Returns an error when the stream is closed or the answer cannot be written.
+    pub fn answer_error(&self, id: Id, error: ErrorObject) -> Result<(), Error> {
+        let line = wire::to_line(&wire::ErrorResponse::new(id, error))?;
+        self.out
+            .send(Outbound::Line(line))
+            .map_err(|_| Error::Closed)
+    }
+}
+
+impl Drop for Connection {
     fn drop(&mut self) {
         self.task.abort();
     }
 }
 
-/// Reads lines, answers requests, writes what the client sends.
+/// Reads lines, answers requests, writes what this side sends.
+///
+/// Reading and writing end apart: the answers already queued still go out
+/// once nothing more can arrive.
 async fn run<R, W>(
     read: R,
     mut write: W,
@@ -354,12 +443,19 @@ async fn run<R, W>(
     W: AsyncWrite + Unpin,
 {
     let mut lines = BufReader::new(read).lines();
+    let mut reading = true;
     loop {
         tokio::select! {
-            line = lines.next_line() => match line {
-                Ok(Some(text)) => dispatch(&text, &shared),
-                Ok(None) | Err(_) => break,
-            },
+            line = lines.next_line(), if reading => {
+                if let Ok(Some(text)) = line {
+                    dispatch(&text, &shared);
+                } else {
+                    // Nothing more can arrive; `recv` ends, and the requests
+                    // still waiting fail.
+                    reading = false;
+                    shared.close();
+                }
+            }
             message = out.recv() => match message {
                 Some(Outbound::Line(line)) => {
                     if write.write_all(line.as_bytes()).await.is_err()
@@ -369,14 +465,18 @@ async fn run<R, W>(
                         break;
                     }
                 }
+                Some(Outbound::Flushed(flushed)) => {
+                    let _ = flushed.send(());
+                }
                 None => break,
             },
         }
     }
+    // A stream that broke ends the other side's reading with it.
     shared.close();
 }
 
-/// Reads one line from the engine into a request, a question, an event or
+/// Reads one line from the other side into a request, a question, an event or
 /// an answer.
 fn dispatch(text: &str, shared: &Shared) {
     match serde_json::from_str::<wire::Incoming>(text) {
@@ -422,5 +522,5 @@ fn dispatch(text: &str, shared: &Shared) {
 }
 
 #[cfg(test)]
-#[path = "client_test.rs"]
+#[path = "connection_test.rs"]
 mod tests;

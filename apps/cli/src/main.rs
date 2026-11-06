@@ -14,7 +14,7 @@ use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
 use shipdeck_engine::config::{self, Discovery, Manager};
 use shipdeck_engine::init::Preset;
-use shipdeck_engine::ssh::{Login, Pool, Question};
+use shipdeck_engine::ssh::{Login, PASSPHRASE_ENV, Pool, Question};
 use shipdeck_headless::{Headless, OnFailure};
 
 mod init;
@@ -28,8 +28,6 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 const PASSWORD_ENV: &str = "SHIPDECK_PASSWORD";
 /// A private key's text, such as a CI secret, kept out of `ps` and logs.
 const KEY_ENV: &str = "SHIPDECK_SSH_KEY";
-/// The passphrase of an encrypted key, so nothing is asked.
-const PASSPHRASE_ENV: &str = "SHIPDECK_KEY_PASSPHRASE";
 
 #[derive(Parser)]
 #[command(
@@ -90,6 +88,8 @@ struct LoginArgs {
 enum Command {
     /// Create a deployable folder with a deploy.yaml from a preset; asks for what the flags leave out
     Init(InitArgs),
+    /// Run as the engine: it answers the app on stdin and stdout, one message per line
+    Engine,
     #[command(flatten)]
     Server(ServerCommand),
     /// The manual, for people and coding agents: `man index` (topics), `man configs` (deploy.yaml), `man details <KEY>...`
@@ -245,6 +245,7 @@ async fn main() -> Result<ExitCode> {
     let command = match cli.command {
         Some(Command::Init(args)) => return run_init(args),
         Some(Command::Man(args)) => return Ok(man::run(args)),
+        Some(Command::Engine) => return run_engine().await,
         Some(Command::Server(command)) => command,
         None => {
             let root = cli
@@ -319,6 +320,19 @@ fn run_init(args: InitArgs) -> Result<ExitCode> {
         project: args.project,
     };
     init::run(given)
+}
+
+/// `shipdeck engine`: what an app starts to do the work, while it draws.
+async fn run_engine() -> Result<ExitCode> {
+    // Typed at a terminal it would read the keyboard and answer nowhere.
+    if std::io::stdin().is_terminal() {
+        bail!(
+            "`shipdeck engine` talks to an app over a pipe, one message per line; see \
+             `shipdeck man details cli`"
+        );
+    }
+    shipdeck_engine::rpc::run(tokio::io::stdin(), tokio::io::stdout()).await;
+    Ok(ExitCode::SUCCESS)
 }
 
 async fn run_tui(root: PathBuf, login: Login, shell_env: bool) -> Result<ExitCode> {

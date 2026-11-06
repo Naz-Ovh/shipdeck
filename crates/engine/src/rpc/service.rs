@@ -1,0 +1,54 @@
+//! `status/get`, `connection/close` and `service/control`: the service on
+//! one server, looked at or told what to do.
+
+use serde_json::Value;
+
+use shipdeck_protocol::message::request::{ConnectionClose, Done, ServiceControl, StatusGet};
+use shipdeck_protocol::wire::Id;
+
+use super::convert;
+use super::session::Session;
+
+/// Reads the service's state: its folder, the release `current` points to,
+/// and whether it is running.
+pub async fn status(session: &Session, id: Id, params: Value) {
+    let reply = async {
+        let asked: StatusGet = convert::params(params)?;
+        let deployable = session.deployable(&asked.deployable)?;
+        let server = session.server(&deployable).await?;
+        let state = server.status().await.map_err(|err| convert::failed(&err))?;
+        convert::value(&convert::status(&state))
+    }
+    .await;
+    session.reply(id, reply);
+}
+
+/// Drops this project's server connection. Every project on the same server
+/// shares it, so they are all dropped.
+pub async fn close(session: &Session, id: Id, params: Value) {
+    let reply = async {
+        let asked: ConnectionClose = convert::params(params)?;
+        let deployable = session.deployable(&asked.deployable)?;
+        let pool = session.pool()?;
+        pool.close(&deployable.endpoint).await;
+        convert::value(&Done {})
+    }
+    .await;
+    session.reply(id, reply);
+}
+
+/// Stops, starts or restarts the service.
+pub async fn control(session: &Session, id: Id, params: Value) {
+    let reply = async {
+        let asked: ServiceControl = convert::params(params)?;
+        let deployable = session.deployable(&asked.deployable)?;
+        let server = session.server(&deployable).await?;
+        server
+            .control(convert::control(asked.action))
+            .await
+            .map_err(|err| convert::failed(&err))?;
+        convert::value(&Done {})
+    }
+    .await;
+    session.reply(id, reply);
+}

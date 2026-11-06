@@ -241,7 +241,7 @@
         <li>Owner: look at the spec page, <a href="visual/Plan/spec.html">spec.html</a> (<a href="#p1a1">p1a1</a>), and say yes or what to change. All the older planning pages are merged into it.</li>
         <li>Owner: click through the desktop mockup, <a href="visual/prototype/desktop.html">desktop.html</a> (<a href="#p2a1">p2a1</a>), and say yes or what to change. This is the second take: everything starts from a server. The bar at the bottom of the page switches the theme and the network, shows the first run, picks how the next deploy ends, and opens each dialog.</li>
         <li>Owner: two questions about the settings backup (<a href="#p1c6">p1c6</a>). Should the file be locked with a password? Should it also hold each project's <code>deploy.yaml</code>? And one about servers that stay connected (<a href="#p1c7">p1c7</a>): how long until an unused one disconnects? Recommended: 10 minutes.</li>
-        <li>Then: <code>shipdeck engine</code> (<a href="#p1c1">p1c1</a>), the program the protocol crate was made for. After that, the TUI talks to it (<a href="#p1d2">p1d2</a>). The desktop app waits, as you asked.</li>
+        <li>Try the engine by hand: <code>printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol":1,"client":"me"}}' | shipdeck engine</code> prints its answer. It is <a href="#p1c1">p1c1</a>. After that, the TUI talks to it (<a href="#p1d2">p1d2</a>). The desktop app waits, as you asked.</li>
       </ol>
     </aside>
 
@@ -383,9 +383,9 @@ const PLAN = [
     "<a href=\"code/protocol.md\">docs/code/protocol.md</a>"],
   ]},
   { title: "The engine", items: [
-   ["p1c1", "shipdeck engine: the headless process", "planned", "",
-    "<p>A new command that reads requests on stdin and writes events on stdout. It does what the TUI starts today: status, logs, deploy, rollback and the list of releases. One engine works on one folder of projects.</p>",
-    ""],
+   ["p1c1", "shipdeck engine: the headless process", "built", "2026-11-06",
+    "<p><code>shipdeck engine</code> reads one request per line on stdin and answers it on stdout. It does what the TUI starts today: status, logs, deploy, rollback and the list of releases. One engine works on one folder of projects.</p><p>Nothing on screen changes yet. The TUI still does the work itself, and moves over in <a href=\"#p1d2\">p1d2</a>.</p>",
+    "<a href=\"code/protocol.md\">docs/code/protocol.md</a> · <code>crates/engine/src/rpc</code>"],
    ["p1c2", "Safe when its app closes", "planned", "",
     "<p>The engine is started by its app. When the app closes, the engine takes no new work. It finishes the step that is running, and it answers open questions with the safe choice: roll back, do not deploy a release that did not change, and do not trust a new host key.</p>",
     ""],

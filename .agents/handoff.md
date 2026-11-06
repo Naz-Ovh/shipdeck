@@ -10,38 +10,46 @@ Where the last session stopped (2026-11-06). Read [README.md](README.md) first; 
 - Desktop work stays deferred (owner, 2026-11-05). The CLI and the headless crate on the new architecture come
   first.
 - Done this session:
-  - `p1a2`: `bin/shipdeck` moved to `apps/cli` (git history kept), empty `bin/` removed. Every doc path,
-    the website install page and the tracker updated.
-  - The pedantic clippy rule now holds over the whole workspace. The old code was fixed by hand (no
-    `#[allow]`, no `#[expect]`); `lefthook.yml` runs `-D warnings -W clippy::pedantic -W clippy::perf` on
-    push, so new code follows it.
-  - `p1b1`, `p1b2`: `crates/protocol` holds every v1 message as a Rust type, `protocol.schema.json`, and a
-    client over any async read/write pair. `just protocol` regenerates the schema; a test fails when it is
-    stale.
-- `AGENTS.md` holds only the rules for every session; the detail is in `docs/code/`. `docs/` root holds only
-  `plan.md`, `project-progress.html`, `visual/`, `website/`, `code/` and `feature/`.
+  - `p1c1`: `shipdeck engine`, the process apps talk to. Code in `crates/engine/src/rpc/`: `run` (the loop),
+    `session` (workspace, the one running operation, live logs), `convert` (inner types onto the wire), `pump`
+    (op events and the four asks), and one file per method group. The subcommand is in `apps/cli`.
+  - `crates/protocol`: `Client` became `Connection`, because both ends are the same thing. `handle()` gives the
+    cloneable sending half (events, answers, asks), `answer_error` sends a `wire::code` number, and `flush`
+    waits until what was queued is on the stream.
+  - `crates/protocol`'s loop now ends reading and writing apart: answers already queued still go out after
+    the app closes its side. Before this, `printf ... | shipdeck engine` lost every answer.
+- Earlier this week: `p1a2` (layout), the pedantic clippy rule over the whole workspace, `p1b1`/`p1b2` (the
+  protocol crate).
 
 ## Decided this session
 
-- The protocol crate is the contract: JSON-RPC 2.0, one message per line, `snake_case`, variants as one flat
-  object with a `kind`. Names are only added, never renamed; `initialize` carries protocol `1` and
-  capabilities. Errors: `-327xx` are JSON-RPC's own, shipdeck's start at `-32001`.
-- Version 1 carries what the TUI does today: `workspace/open`, `status/get`, `connection/close`,
-  `service/control`, `releases/list`, `release/contents`, `release/read_file`, `logs/follow`, `logs/stop`,
-  `deploy/start`, `rollback/start`, the `op/*` and `logs/*` events, and the four `ask/*` questions.
-  `status/get` answers `dir_exists`, `current` and `state` only; the richer status line is `p1f1`.
-- The crate is transport-agnostic. `Client::start(read, write)` takes pipes in the app and an in-memory pipe
-  in tests; the engine's process plumbing lands with `p1c1`.
+- The engine is a library module in `crates/engine`, not a crate of its own: it reuses `config`, `deploy` and
+  `remote`, and a crate would add an edge for nothing. The process is `shipdeck engine`, in `apps/cli`.
+- No `server` anywhere: both ends of the pipe are `Connection`s, and the engine's half is a `Handle`.
+- One request, one task; the app matches ids. `initialize` and `workspace/open` are answered in the loop
+  itself, so every later message sees what they set; the rest run in parallel and answer as they finish.
+- `logs/follow` and `deploy/start` answer before their first event: the app needs the view or the operation
+  first.
+- `initialize` lists no capabilities: nothing is optional in version 1.
 
 ## Next
 
-1. `p1c1`: `shipdeck engine`, the process that reads requests and writes events. Open in the spec: whether
-   its message loop lives inside `crates/engine` or in a crate of its own. Decide it when building, with the
-   owner.
-2. Then `p1c2` (safe when its app closes), and `p1d1`/`p1d2` (the CLI and the TUI use the engine).
-3. Owner still to look at: the spec (`p1a1`) and the desktop mockup (`p2a1`). Both stay `built`.
-4. Still open: `p1c6` (settings backup), `p1c7` (idle disconnect), `p2d1`–`p2d4` (desktop), `p3d1`, `p3d2`
+1. `p1d2`: the TUI starts `shipdeck engine` as a child process and moves its screens onto the protocol. Its
+   shared part comes first: spawn, `initialize`, `workspace/open`, then route `Incoming`. Then one screen at a
+   time.
+2. `p1c2`: safe when the app closes. Today `shutdown` waits for the request tasks, closes the pool and exits;
+   a deploy that is running dies with the process.
+3. `p1d1` after that: the CLI and the headless crate use the engine.
+4. Owner still to look at: the spec (`p1a1`) and the desktop mockup (`p2a1`). Both stay `built`.
+5. Still open: `p1c6` (settings backup), `p1c7` (idle disconnect), `p2d1`–`p2d4` (desktop), `p3d1`, `p3d2`
    (agent).
+
+## Open threads
+
+- `--no-shell-env` has no field in `workspace/open`, so when the TUI moves over (`p1d2`) that flag must become
+  one, or the engine cannot obey it. Adding a field is compatible; do it with that step, not before.
+- The desktop app's server screen will want the richer status line (`p1f1`); `status/get` carries
+  `dir_exists`, `current` and `state` only.
 
 ## Gotchas
 
@@ -52,7 +60,12 @@ Where the last session stopped (2026-11-06). Read [README.md](README.md) first; 
   --virtual-time-budget=5000 --screenshot=<file> file:///<path>#<id>`; add `--force-dark-mode` for dark.
 - Two schemas, two recipes: `just schema` (deploy.yaml) and `just protocol` (the messages). Both are checked
   by tests, so a doc comment on a config field or a message type means regenerating before the tests pass.
-- The protocol client's reading task holds the event sender. `Shared::close` must drop it, or `recv` never
-  returns `None`. A test covers that (`the_stream_ending_is_visible`).
-- `tokio::io::duplex` drops the pipe as soon as both halves are dropped; keep the engine half alive in a
-  test while the call is in flight.
+- The connection's reading task holds the event sender. `Shared::close` must drop it, or `recv` never returns
+  `None`. A test covers that (`the_stream_ending_is_visible`).
+- `tokio::io::duplex` drops the pipe as soon as both halves are dropped; keep the engine half alive in a test
+  while the call is in flight.
+- `tokio::io::stdin()` closes only its own reading loop now. Anything queued for the app must be followed by
+  `Connection::flush` before the process returns, or it never reaches stdout. Both have tests in
+  `crates/protocol/src/connection_test.rs`.
+- `/tmp` is not shared between two `bash` calls in this environment; use `.tmp/` under the repo for a manual
+  engine run, and `std::env::temp_dir()` inside a test process.

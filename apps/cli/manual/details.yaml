@@ -212,6 +212,7 @@ cli:
       shipdeck deploy <ROOT> <NAME>... [--on-failure rollback|keep] [--allow-unchanged] [SSH]
       shipdeck rollback <ROOT> <NAME> --to <RELEASE> [SSH]
       shipdeck releases <ROOT> <NAME> [SSH]
+      shipdeck engine                                          the engine an app talks to
       shipdeck init <ROOT> [NAME] [--preset P] [--manager systemd|pm2] [--host H] [--user U]
                     [--project PATH]
       shipdeck --schema                                       the JSON Schema of deploy.yaml
@@ -251,6 +252,10 @@ cli:
       SHIPDECK_GITSHELL_PATH   Windows only: the same as --gitshell-path
       NO_COLOR                 any value turns colour off
     Empty values count as unset.
+
+    `shipdeck engine` is for apps, not for people: one JSON-RPC message per line on stdin and
+    stdout, as docs/code/protocol.md says. The TUI and the desktop app start it and draw what it
+    reports.
 
     Every command that takes ROOT reads every deploy.yaml under it first, not just the one named.
     Any problem in any file prints every problem and stops with exit code 1, before connecting

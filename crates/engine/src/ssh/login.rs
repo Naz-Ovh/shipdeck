@@ -19,6 +19,9 @@ const ATTEMPTS: usize = 3;
 /// The passphrase given up front, tried before asking.
 const GIVEN_PASSPHRASE: &str = "passphrase:given";
 
+/// The environment variable holding a key's passphrase, so nothing is asked.
+pub const PASSPHRASE_ENV: &str = "SHIPDECK_KEY_PASSPHRASE";
+
 /// How to log in, from the command-line flags.
 #[derive(Clone)]
 pub enum Login {

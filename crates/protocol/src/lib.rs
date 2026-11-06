@@ -3,10 +3,10 @@
 //! else of shipdeck, so the two sides cannot drift apart.
 //!
 //! The crate holds only the words: no engine logic, no SSH, no file access.
-//! [`schema`] writes the same words as JSON Schema, and [`client`] sends and
-//! receives them over any pair of streams.
+//! [`schema`] writes the same words as JSON Schema, and [`connection`] sends
+//! and receives them over any pair of streams.
 
-pub mod client;
+pub mod connection;
 pub mod message;
 pub mod schema;
 pub mod wire;

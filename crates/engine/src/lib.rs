@@ -1,6 +1,8 @@
 //! The deploy engine: reading `deploy.yaml`, building, packing, talking to
-//! the server over SSH, and the deploy and rollback flows. The TUI in
-//! `apps/cli` only shows what this crate reports.
+//! the server over SSH, and the deploy and rollback flows. The apps only
+//! start a deploy and show what it reports.
+//!
+//! [`rpc`] serves those reports to an app over the protocol's pipe.
 
 pub mod build;
 pub mod bundle;
@@ -10,5 +12,6 @@ pub mod human;
 pub mod init;
 pub mod release;
 pub mod remote;
+pub mod rpc;
 pub mod setup;
 pub mod ssh;

@@ -8,7 +8,7 @@ mod shell_env;
 pub mod ssh_config;
 
 pub use endpoint::Endpoint;
-pub use login::{Login, Question};
+pub use login::{Login, PASSPHRASE_ENV, Question};
 pub use shell_env::ShellEnv;
 
 use std::collections::HashMap;

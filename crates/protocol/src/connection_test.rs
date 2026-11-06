@@ -1,10 +1,11 @@
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, duplex};
 
-use super::{Client, Incoming};
+use super::{Connection, Incoming};
 use crate::message::ask::{Ask, SecretAnswer};
 use crate::message::event::Event;
 use crate::message::{Initialize, LogsFollow, LogsFollowResult};
+use crate::wire::{ErrorObject, Id};
 
 /// One end of a test pipe, pretending to be the engine.
 struct Engine {
@@ -14,10 +15,10 @@ struct Engine {
 
 impl Engine {
     /// A client and an engine, talking over two in-memory pipes.
-    fn pair() -> (Client, Self) {
+    fn pair() -> (Connection, Self) {
         let (client_read, engine_write) = duplex(64 * 1024);
         let (engine_read, client_write) = duplex(64 * 1024);
-        let client = Client::start(client_read, client_write);
+        let client = Connection::start(client_read, client_write);
         let engine = Self {
             read: BufReader::new(engine_read),
             write: engine_write,
@@ -199,6 +200,24 @@ async fn a_broken_line_is_reported_not_fatal() {
 }
 
 #[tokio::test]
+async fn a_line_is_still_written_after_the_stream_stopped_reading() {
+    // The app closed its side; what the engine queued must still come out.
+    let (app_read, enough) = duplex(64 * 1024);
+    let connection = Connection::start(tokio::io::empty(), enough);
+    connection
+        .notify(
+            crate::message::method::LOGS_LINE,
+            &json!({"view": 1, "line": "ready"}),
+        )
+        .unwrap();
+    connection.flush().await;
+
+    let mut lines = BufReader::new(app_read).lines();
+    let line = lines.next_line().await.unwrap().unwrap();
+    assert!(line.contains("logs/line"), "got {line}");
+}
+
+#[tokio::test]
 async fn the_stream_ending_is_visible() {
     let (mut client, engine) = Engine::pair();
     drop(engine);
@@ -220,4 +239,17 @@ async fn a_typed_answer_is_read() {
         .send(json!({"jsonrpc": "2.0", "id": asked["id"], "result": {"view": 4}}))
         .await;
     assert_eq!(call.await.unwrap().unwrap(), LogsFollowResult { view: 4 });
+}
+
+#[tokio::test]
+async fn an_error_answer_can_be_sent() {
+    let (connection, mut engine) = Engine::pair();
+    connection
+        .answer_error(Id::Number(3), ErrorObject::new(-32001, "no such project"))
+        .unwrap();
+
+    let line = engine.next().await.unwrap();
+    assert_eq!(line["id"], 3);
+    assert_eq!(line["error"]["code"], -32001);
+    assert_eq!(line["error"]["message"], "no such project");
 }
