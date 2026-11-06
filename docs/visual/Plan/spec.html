@@ -479,7 +479,7 @@
 
       <article class="frame" id="part-protocol" data-zoom data-n="#05" data-t="The protocol">
         <div class="fhead"><h3>The protocol</h3><span class="tag">a crate and a schema</span></div>
-        <div class="meta"><span>crates/protocol</span><span>protocol.schema.json</span></div>
+        <div class="meta"><span>crates/protocol</span><span>docs/schema/protocol.schema.json</span></div>
         <h4>Does</h4>
         <ul class="does">
           <li>Lists every message, and what is inside each one.</li>
@@ -712,7 +712,7 @@
           <li><b>Easy in every language.</b> Fields are snake_case. A value with variants is one flat object with a <code>kind</code> field.</li>
           <li><b>Errors.</b> JSON-RPC's own codes for broken messages. shipdeck's codes start at -32001 and go down, listed once, never renumbered.</li>
           <li><b>Secrets stay in the pipe.</b> A password or passphrase is never written to a log.</li>
-          <li><b>The types are the schema.</b> <code>just protocol</code> writes <code>protocol.schema.json</code>, and a test fails until it is current.</li>
+          <li><b>The types are the schema.</b> <code>just protocol</code> writes <code>docs/schema/protocol.schema.json</code>, and a test fails until it is current.</li>
           <li><b>Own wire types.</b> The engine maps its inner types onto the protocol's types. So a refactor never changes the wire by accident.</li>
         </ul>
       </article>
@@ -775,7 +775,7 @@
           <li><b>Avalonia</b> with its Fluent theme: light and dark, following the system.</li>
           <li><b>CommunityToolkit.Mvvm</b> for the view models.</li>
           <li><b>StreamJsonRpc</b> with its newline-delimited handler and the <code>SystemTextJsonFormatter</code>.</li>
-          <li><b>Typed on both sides.</b> The C# types are made from <code>protocol.schema.json</code> with NJsonSchema, and committed. <code>just protocol</code> makes them again.</li>
+          <li><b>Typed on both sides.</b> The C# types are made from <code>docs/schema/protocol.schema.json</code> with NJsonSchema, and committed. <code>just protocol</code> makes them again.</li>
           <li><b>A small, fast download.</b> Built ahead of time (Native AOT). StreamJsonRpc is only partly ready for that, so the first build proves it. If it fails, the fallback is a trimmed, self-contained build.</li>
           <li><b>The engine inside.</b> Each download carries the <code>shipdeck</code> binary of the same version, and the app starts that one. So the two always agree.</li>
           <li><b>Close guard.</b> While a deploy runs, closing asks “Wait, or quit anyway?”.</li>
@@ -818,7 +818,9 @@ crates/                        <span class="c">Rust libraries</span>
 ├── tui/                       <span class="c">the terminal UI: a client of the engine</span>
 └── headless/                  <span class="c">plain lines and exit codes: a client of the engine</span>
 docs/                          <span class="c">plan.md, project-progress.html, visual/Plan/spec.html, website/</span>
-deploy.schema.json  protocol.schema.json  server-setup.sh   <span class="c">public URLs: they stay at the root</span></pre>
+├── schema/                    <span class="c">deploy.schema.json, protocol.schema.json: published with each release</span>
+└── code/  feature/            <span class="c">how it works, and how each feature works</span>
+server-setup.sh                <span class="c">a public URL of its own: it stays at the root</span></pre>
         <ul class="plain" style="margin-top:10px">
           <li><b>Why <code>apps/cli</code>:</b> a top-level <code>bin/</code> would sit next to the <code>bin/</code> and <code>obj/</code> folders that every .NET build makes. The package keeps its name, <code>shipdeck</code>, because dist names the release files after it.</li>
           <li><b>The move comes first</b> (<a href="../../project-progress.html#p1a2">p1a2</a>). <code>apps/cli</code> is at the same depth as <code>bin/shipdeck</code>, so no test path changes.</li>

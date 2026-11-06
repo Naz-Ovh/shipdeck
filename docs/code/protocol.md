@@ -28,8 +28,9 @@ apps. It has no engine logic: no SSH, no files, no build.
 2. Add its name in `src/message/method.rs`.
 3. Read it in `Event::from_wire` or `Ask::from_wire` when the engine sends it.
 4. Add it to `messages()` in `src/schema.rs`.
-5. Run `just protocol`; a test fails until `protocol.schema.json` is current.
-6. Commit `protocol.schema.json` with the change. The desktop app rebuilds its
+5. Run `just protocol`; a test fails until `docs/schema/protocol.schema.json` is
+   current.
+6. Commit `docs/schema/protocol.schema.json` with the change. The desktop app rebuilds its
    C# types from it.
 
 ## Errors

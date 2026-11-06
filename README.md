@@ -197,7 +197,7 @@ mistake, it does not start, and prints every problem in every file at once
 ## deploy.yaml
 
 ```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.6.1/deploy.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.6.1/docs/schema/deploy.schema.json
 name: Web (prod)
 project: ../../../web                       # your source; local commands run here
 ssh:
@@ -516,19 +516,19 @@ On a terminal it is in colour. Unknown keys get a "did you mean", and values tha
 
 ### Editor completion
 
-[`deploy.schema.json`](deploy.schema.json) describes every field, with the
+[`docs/schema/deploy.schema.json`](docs/schema/deploy.schema.json) describes every field, with the
 same descriptions as above, for any editor using the YAML language server
 (VS Code with the YAML extension, Neovim, Zed, JetBrains). Either start each
 `deploy.yaml` with:
 
 ```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.6.1/deploy.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.6.1/docs/schema/deploy.schema.json
 ```
 
 or map it once for the whole repository in `.vscode/settings.json`:
 
 ```json
-{ "yaml.schemas": { "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.6.1/deploy.schema.json": "**/deploy.yaml" } }
+{ "yaml.schemas": { "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.6.1/docs/schema/deploy.schema.json": "**/deploy.yaml" } }
 ```
 
 The website serves the newest one at
@@ -761,7 +761,7 @@ There is no CI for these: [lefthook](https://lefthook.dev) runs them on your
 machine. Install it once (for example `go install
 github.com/evilmartians/lefthook/v2@latest`), then run `lefthook install` in
 each clone. Every commit checks that the README, the examples and
-`deploy.schema.json` name the version in `Cargo.toml`. Every push runs fmt,
+`docs/schema/` name the version in `Cargo.toml`. Every push runs fmt,
 check, clippy and test, and refuses a `v<version>` tag whose commit has
 another version in `Cargo.toml`. The scripts are in `scripts/lefthook/`.
 
@@ -776,9 +776,9 @@ just schema
 
 ### Releasing
 
-`server-setup.sh` is fetched, and editors fetch
-`deploy.schema.json`, at the tag `v<version>`, so every release needs its tag
-pushed. Bump `[workspace.package] version` in `Cargo.toml`, update the schema
+`server-setup.sh` is fetched from the root, and editors fetch
+`docs/schema/deploy.schema.json`, at the tag `v<version>`, so every release
+needs its tag pushed. Bump `[workspace.package] version` in `Cargo.toml`, update the schema
 line in `examples/` and this README, run `just schema`, and add the
 release's notes to `CHANGELOG.md`. Commit it all in one commit named
 `Release version v<version>`, so the tag carries its own notes, then tag

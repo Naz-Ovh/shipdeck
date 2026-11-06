@@ -1,14 +1,14 @@
 //! The JSON Schema for `deploy.yaml`, generated from the config types. It
-//! is published as `deploy.schema.json` at each release tag for editor
-//! completion, and shipdeck checks every deploy.yaml against it at launch.
+//! is published in `docs/schema/` at each release tag for editor completion,
+//! and shipdeck checks every deploy.yaml against it at launch.
 
 use schemars::generate::SchemaSettings;
 use serde_json::Value;
 
 use super::DeployConfig;
 
-/// The file at the root of the shipdeck repository.
-pub const FILE_NAME: &str = "deploy.schema.json";
+/// The file in the shipdeck repository, published with each release.
+pub const FILE_NAME: &str = "docs/schema/deploy.schema.json";
 /// The same file, served by the website at `/deploy.schema.json`.
 pub const WEBSITE_COPY: &str = "docs/website/public/deploy.schema.json";
 

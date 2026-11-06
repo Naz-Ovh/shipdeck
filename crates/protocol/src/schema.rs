@@ -15,8 +15,8 @@ use crate::message::{
     WorkspaceOpenResult,
 };
 
-/// The file at the root of the shipdeck repository.
-pub const FILE_NAME: &str = "protocol.schema.json";
+/// The file in the shipdeck repository, published with each release.
+pub const FILE_NAME: &str = "docs/schema/protocol.schema.json";
 
 /// Where the schema is published for this version.
 #[must_use]

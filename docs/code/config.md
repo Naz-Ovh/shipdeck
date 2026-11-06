@@ -8,7 +8,7 @@ in one usually touches all four.
 - The config types in `crates/engine/src/config` are the schema; there is no
   second definition to keep in step.
 - Every field needs a doc comment: editors show it in the JSON Schema.
-- After a change run `just schema`. It writes `deploy.schema.json` and the
+- After a change run `just schema`. It writes `docs/schema/deploy.schema.json` and the
   website's copy in `docs/website/public/`, and a test fails until you do.
 
 ## Errors
