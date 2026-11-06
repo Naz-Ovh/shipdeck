@@ -13,6 +13,10 @@ Where the last session stopped (2026-11-06). Read [README.md](README.md) first; 
     reports. `apps/cli/src/console` holds `Console`: it sends the requests, answers the questions
     from the flags, and maps the outcome to the exit code. `apps/cli/src/engine.rs` holds the
     child: `serve()` is the process, `Engine::start` is the app side.
+- The layout, settled with the owner just before stopping: `apps/` holds what people see and run —
+  `apps/cli` (the binary and its `console/`) and `apps/tui` — and `crates/` holds the libraries they share:
+  `crates/engine` and `crates/protocol`. The `shipdeck-headless` crate is gone: its code is
+  `apps/cli/src/console/`, because the console commands are the CLI.
 - Earlier this week: `p1a2` (layout), the pedantic clippy rule, `p1b1`/`p1b2` (the protocol crate).
 
 ## Decided this session
@@ -34,13 +38,17 @@ Where the last session stopped (2026-11-06). Read [README.md](README.md) first; 
 
 ## Next
 
-1. `p1d2`: the TUI starts the child (`apps/cli/src/engine.rs`) and moves its screens onto the protocol. The
+1. **First, a decision the owner raised while stopping:** "the CLI exists for two purposes: initializing a
+   project, and running in CI mode — a direct deploy via the CLI. We have to separate." He wants those two
+   apart. Do not guess the shape: ask him whether it means `init` and the deploy commands become separate
+   commands or separate crates, and whether the TUI stays under `apps/cli`.
+2. `p1d2`: the TUI starts the child (`apps/cli/src/engine.rs`) and moves its screens onto the protocol. The
    shared part comes first: spawn, `initialize`, `workspace/open`, route `Incoming`. Then one screen at a
    time. The TUI still calls the engine in-process, so both paths work during the move.
-2. `p1c2`: safe when the app closes. Today `shutdown` answers, waits for the requests it already took, closes
+3. `p1c2`: safe when the app closes. Today `shutdown` answers, waits for the requests it already took, closes
    the pool and exits; a deploy that is running dies with the process.
-3. Owner still to look at: the spec (`p1a1`) and the desktop mockup (`p2a1`). Both stay `built`.
-4. Still open: `p1c6` (settings backup), `p1c7` (idle disconnect), `p2d1`–`p2d4` (desktop), `p3d1`, `p3d2`
+4. Owner still to look at: the spec (`p1a1`) and the desktop mockup (`p2a1`). Both stay `built`.
+5. Still open: `p1c6` (settings backup), `p1c7` (idle disconnect), `p2d1`–`p2d4` (desktop), `p3d1`, `p3d2`
    (agent).
 
 ## Open threads
