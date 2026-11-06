@@ -31,7 +31,11 @@ struct Work {
 pub async fn deploy(session: &Arc<Session>, id: Id, params: Value) {
     let prepared = async {
         let asked: DeployStart = convert::params(params)?;
-        ready(session, &asked.deployable, deploy::deploy_steps)
+        let mut deployable = session.deployable(&asked.deployable)?;
+        if let Some(choice) = asked.on_failure {
+            deployable.config.pipeline.failed.rollback = convert::on_failure(choice);
+        }
+        ready(session, deployable, deploy::deploy_steps)
     }
     .await;
     let work = match prepared {
@@ -46,7 +50,8 @@ pub async fn deploy(session: &Arc<Session>, id: Id, params: Value) {
 pub async fn rollback(session: &Arc<Session>, id: Id, params: Value) {
     let prepared = async {
         let asked: RollbackStart = convert::params(params)?;
-        let work = ready(session, &asked.deployable, deploy::rollback_steps)?;
+        let deployable = session.deployable(&asked.deployable)?;
+        let work = ready(session, deployable, deploy::rollback_steps)?;
         Ok::<(Work, String), ErrorObject>((work, asked.release))
     }
     .await;
@@ -67,10 +72,9 @@ pub async fn rollback(session: &Arc<Session>, id: Id, params: Value) {
 /// start.
 fn ready(
     session: &Session,
-    slug: &str,
+    deployable: Deployable,
     plan: fn(&DeployConfig) -> Vec<Step>,
 ) -> Result<Work, ErrorObject> {
-    let deployable = session.deployable(slug)?;
     let steps = plan(&deployable.config);
     let pool = session.pool()?;
     let op = session.begin()?;

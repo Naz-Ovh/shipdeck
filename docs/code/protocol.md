@@ -13,6 +13,13 @@ apps. It has no engine logic: no SSH, no files, no build.
 - Names are a contract: add new methods and fields, never rename or remove
   one. A field marked `#[serde(default)]` is the optional one.
 - Secrets travel in the pipe. A password is never written to a log.
+- `workspace/open` answers each project with its slug, name, host, user,
+  port and service folder. Its `no_shell_env` hides the login shell's startup
+  files from server commands, over every file's `ssh.shell_env`.
+- `deploy/start` may carry `on_failure`, which overrides
+  `pipeline.failed.rollback`; without it the file decides.
+- The steps in `deploy/start`'s answer are the names a screen shows, in
+  order ("Preflight"). `op/step` carries a step's place in that list.
 
 ## Adding a message
 

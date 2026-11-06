@@ -273,6 +273,7 @@ async fn an_app_using_the_protocol_crate_talks_to_the_engine() {
         .workspace_open(&WorkspaceOpen {
             root: root.to_str().unwrap().to_string(),
             login: Login::Auto,
+            no_shell_env: false,
         })
         .await
         .unwrap();

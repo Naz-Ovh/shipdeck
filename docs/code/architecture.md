@@ -17,8 +17,9 @@ workspace: the engine does the work, the frontends show what it reports.
   process: the loop, the methods, and what it reports).
 - `crates/tui/` (`shipdeck-tui`): the screens, dialogs and key handling.
 - `crates/headless/` (`shipdeck-headless`): the `deploy`, `rollback` and
-  `releases` commands for scripts and CI: plain lines, no questions, exit
-  codes.
+  `releases` commands for scripts and CI. It is an app like any other: it
+  starts the engine, prints what it reports as plain lines, answers the
+  questions from its flags, and turns the outcome into an exit code.
 - `crates/protocol/` (`shipdeck-protocol`): every message between the engine
   and an app, the JSON Schema made from those types, and the connection both
   ends use. No engine logic lives here. See [protocol.md](protocol.md).
@@ -36,6 +37,8 @@ workspace: the engine does the work, the frontends show what it reports.
 - A new subject is a new folder module in its crate, named after the subject.
   It never becomes a `utils` box.
 - The move to `apps/` and `crates/` is done (`p1a2`), the protocol crate is
-  done (`p1b1`), and so is `shipdeck engine` (`p1c1`). Next the TUI becomes one
-  of its apps (`p1d2`); until then it still calls the engine in-process, and
-  both ways reach the same `deploy` and `remote` code.
+  done (`p1b1`), `shipdeck engine` is done (`p1c1`), and the commands for
+  scripts go through it (`p1d1`). Next the TUI becomes one of its apps
+  (`p1d2`); until then it still calls the engine in-process, and both ways
+  reach the same `deploy` and `remote` code. `apps/cli/src/engine.rs` holds
+  the child process: the app side of it.

@@ -2742,6 +2742,7 @@ dependencies = [
  "serde_json",
  "shipdeck-engine",
  "shipdeck-headless",
+ "shipdeck-protocol",
  "shipdeck-tui",
  "tokio",
 ]
@@ -2773,7 +2774,10 @@ dependencies = [
 name = "shipdeck-headless"
 version = "0.6.1"
 dependencies = [
+ "chrono",
+ "serde_json",
  "shipdeck-engine",
+ "shipdeck-protocol",
  "tokio",
 ]
 

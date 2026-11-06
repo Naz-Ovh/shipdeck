@@ -4,7 +4,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::common::{
-    Action, DeployableInfo, FileInfo, Login, Manifest, Problem, ReleaseInfo, ReleaseSource,
+    Action, DeployableInfo, FileInfo, Login, Manifest, OnFailure, Problem, ReleaseInfo,
+    ReleaseSource,
 };
 
 /// The answer to a request that has nothing to report.
@@ -37,6 +38,9 @@ pub struct WorkspaceOpen {
     /// The folder whose subfolders each hold a `deploy.yaml`.
     pub root: String,
     pub login: Login,
+    /// Server commands skip the login shell's startup files, on every server.
+    #[serde(default)]
+    pub no_shell_env: bool,
 }
 
 /// What `workspace/open` answers.
@@ -152,6 +156,9 @@ pub struct LogsStop {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DeployStart {
     pub deployable: String,
+    /// What a failure after the switch does; overrides `pipeline.failed`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_failure: Option<OnFailure>,
 }
 
 /// `rollback/start`: put one release back.
@@ -166,6 +173,6 @@ pub struct RollbackStart {
 pub struct OperationStarted {
     /// The id every `op/*` event of this work carries.
     pub op: u64,
-    /// The steps it will go through, by their keys.
+    /// The steps it will go through, by the names the engine shows.
     pub steps: Vec<String>,
 }

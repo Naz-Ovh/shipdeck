@@ -15,8 +15,11 @@ use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use shipdeck_engine::config::{self, Discovery, Manager};
 use shipdeck_engine::init::Preset;
 use shipdeck_engine::ssh::{Login, PASSPHRASE_ENV, Pool, Question};
-use shipdeck_headless::{Headless, OnFailure};
+use shipdeck_headless::{Choices, Headless};
+use shipdeck_protocol::message::Problem;
+use shipdeck_protocol::message::common::{Login as ProtocolLogin, OnFailure};
 
+mod engine;
 mod init;
 mod man;
 
@@ -245,7 +248,12 @@ async fn main() -> Result<ExitCode> {
     let command = match cli.command {
         Some(Command::Init(args)) => return run_init(args),
         Some(Command::Man(args)) => return Ok(man::run(args)),
-        Some(Command::Engine) => return run_engine().await,
+        Some(Command::Engine) => {
+            engine::serve().await?;
+            // The stdin reader is parked in a blocking read that a runtime
+            // shutdown would wait for; everything written is out by now.
+            std::process::exit(0);
+        }
         Some(Command::Server(command)) => command,
         None => {
             let root = cli
@@ -266,33 +274,92 @@ async fn main() -> Result<ExitCode> {
         | ServerCommand::Releases { root, ssh, .. } => (root.as_path(), ssh),
     };
     let shell_env = !ssh.login.no_shell_env;
+    let gitshell = gitshell(&ssh.login);
     #[cfg(windows)]
     if let Some(path) = &ssh.login.gitshell_path {
         shipdeck_engine::build::set_gitshell_path(path.clone());
     }
     let login = login(ssh.login.clone())?;
-    let Some(discovery) = discover(root)? else {
+    // The engine reports the same problems; checking here keeps the caret
+    // block, the colours and the exact output scripts have seen until now.
+    let Some(_) = discover(root)? else {
         return Ok(ExitCode::FAILURE);
     };
-    let (questions_tx, questions) = unbounded_channel();
-    let pool = Arc::new(pool(login, questions_tx, shell_env));
-    let mut headless = Headless::new(pool.clone(), questions, ssh.trust_new_host);
-    let code = match command {
+    let engine = engine::Engine::start(gitshell.as_deref()).await?;
+    let workspace = engine.open(root, &wire(&login), !shell_env).await?;
+    if !workspace.problems.is_empty() {
+        return Ok(problems(&workspace.problems));
+    }
+    let (on_failure, allow_unchanged) = match &command {
         ServerCommand::Deploy {
-            names,
             on_failure,
             allow_unchanged,
             ..
-        } => {
-            headless
-                .deploy(&discovery, &names, on_failure.into(), allow_unchanged)
-                .await
-        }
-        ServerCommand::Rollback { name, to, .. } => headless.rollback(&discovery, &name, to).await,
-        ServerCommand::Releases { name, .. } => headless.releases(&discovery, &name).await,
+        } => (OnFailure::from(*on_failure), *allow_unchanged),
+        _ => (OnFailure::Rollback, false),
     };
-    pool.close_all().await;
+    let (connection, mut child) = engine.into_parts();
+    let mut headless = Headless::new(
+        connection,
+        Choices {
+            trust_new_host: ssh.trust_new_host,
+            allow_unchanged,
+            on_failure,
+        },
+    );
+    let code = match command {
+        ServerCommand::Deploy { names, .. } => {
+            headless.deploy(&workspace.deployables, &names).await
+        }
+        ServerCommand::Rollback { name, to, .. } => {
+            headless.rollback(&workspace.deployables, &name, to).await
+        }
+        ServerCommand::Releases { name, .. } => {
+            headless.releases(&workspace.deployables, &name).await
+        }
+    };
+    headless.close().await;
+    let _ = child.wait().await;
     Ok(code)
+}
+
+/// The login as the protocol carries it: the same four ways in.
+fn wire(login: &Login) -> ProtocolLogin {
+    match login {
+        Login::Key(path) => ProtocolLogin::Key {
+            path: path.display().to_string(),
+        },
+        Login::KeyText(text) => ProtocolLogin::KeyText { text: text.clone() },
+        Login::Password(password) => ProtocolLogin::Password {
+            password: password.clone(),
+        },
+        Login::Auto => ProtocolLogin::Auto,
+    }
+}
+
+/// The shell the engine runs local commands in, when the flag names one.
+fn gitshell(args: &LoginArgs) -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        args.gitshell_path.clone()
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = args;
+        None
+    }
+}
+
+/// What the engine found in a file this program let through: say where, and
+/// stop. Every project in the folder is refused, as the check above does.
+fn problems(found: &[Problem]) -> ExitCode {
+    for problem in found {
+        eprintln!(
+            "{}:{}:{}: {}",
+            problem.file, problem.line, problem.column, problem.message
+        );
+    }
+    ExitCode::FAILURE
 }
 
 /// The flags. With no terminal to ask in, `init` needs on the command line
@@ -320,19 +387,6 @@ fn run_init(args: InitArgs) -> Result<ExitCode> {
         project: args.project,
     };
     init::run(given)
-}
-
-/// `shipdeck engine`: what an app starts to do the work, while it draws.
-async fn run_engine() -> Result<ExitCode> {
-    // Typed at a terminal it would read the keyboard and answer nowhere.
-    if std::io::stdin().is_terminal() {
-        bail!(
-            "`shipdeck engine` talks to an app over a pipe, one message per line; see \
-             `shipdeck man details cli`"
-        );
-    }
-    shipdeck_engine::rpc::run(tokio::io::stdin(), tokio::io::stdout()).await;
-    Ok(ExitCode::SUCCESS)
 }
 
 async fn run_tui(root: PathBuf, login: Login, shell_env: bool) -> Result<ExitCode> {

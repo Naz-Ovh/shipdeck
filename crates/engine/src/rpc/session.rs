@@ -101,10 +101,15 @@ impl Session {
             problems: found.problems.iter().flat_map(convert::problems).collect(),
         };
         let (questions, inbox) = unbounded_channel();
-        let pool = Arc::new(
-            Pool::new(convert::login(params.login.clone()), questions)
-                .with_passphrase(passphrase()),
-        );
+        let pool = Pool::new(convert::login(params.login.clone()), questions)
+            .with_passphrase(passphrase());
+        // The app's flag wins over each deploy.yaml's `ssh.shell_env`.
+        let pool = if params.no_shell_env {
+            pool.without_shell_env()
+        } else {
+            pool
+        };
+        let pool = Arc::new(pool);
         let mut deployables = BTreeMap::new();
         for deployable in found.deployables {
             deployables.insert(deployable.slug.clone(), deployable);

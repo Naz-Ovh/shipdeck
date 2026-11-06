@@ -18,6 +18,16 @@ pub enum Login {
     Password { password: String },
 }
 
+/// What to do when a release fails after it went live.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OnFailure {
+    /// Put the release that was live before back at once.
+    Rollback,
+    /// Keep the failed release, and ask before going back.
+    Keep,
+}
+
 /// What `service/control` should do to the service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -122,9 +132,21 @@ pub struct DeployableInfo {
     pub slug: String,
     /// The `name` from `deploy.yaml`.
     pub name: String,
+    /// `ssh.host` from `deploy.yaml`: an alias or an address.
     pub host: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
+    /// The port the server answers on.
+    #[serde(default = "port")]
+    pub port: u16,
+    /// `service.dir`: where the project lives on the server.
+    #[serde(default)]
+    pub dir: String,
+}
+
+/// SSH's own port, for a project that does not say.
+fn port() -> u16 {
+    22
 }
 
 /// One mistake in a `deploy.yaml`, at its line and column.
@@ -149,6 +171,9 @@ pub struct ReleaseName {
     pub version: String,
     pub git: String,
     pub dirty: bool,
+    /// When it was built, as RFC 3339 in UTC.
+    #[serde(default)]
+    pub built_at: String,
 }
 
 /// One release on the server.

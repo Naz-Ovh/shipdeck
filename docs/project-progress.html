@@ -241,7 +241,7 @@
         <li>Owner: look at the spec page, <a href="visual/Plan/spec.html">spec.html</a> (<a href="#p1a1">p1a1</a>), and say yes or what to change. All the older planning pages are merged into it.</li>
         <li>Owner: click through the desktop mockup, <a href="visual/prototype/desktop.html">desktop.html</a> (<a href="#p2a1">p2a1</a>), and say yes or what to change. This is the second take: everything starts from a server. The bar at the bottom of the page switches the theme and the network, shows the first run, picks how the next deploy ends, and opens each dialog.</li>
         <li>Owner: two questions about the settings backup (<a href="#p1c6">p1c6</a>). Should the file be locked with a password? Should it also hold each project's <code>deploy.yaml</code>? And one about servers that stay connected (<a href="#p1c7">p1c7</a>): how long until an unused one disconnects? Recommended: 10 minutes.</li>
-        <li>Try the engine by hand: <code>printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol":1,"client":"me"}}' | shipdeck engine</code> prints its answer. It is <a href="#p1c1">p1c1</a>. After that, the TUI talks to it (<a href="#p1d2">p1d2</a>). The desktop app waits, as you asked.</li>
+        <li>Now <code>deploy</code>, <code>rollback</code> and <code>releases</code> work through the engine (<a href="#p1d1">p1d1</a>), with the same lines and the same exit codes. Next the TUI moves over (<a href="#p1d2">p1d2</a>). The desktop app waits, as you asked.</li>
       </ol>
     </aside>
 
@@ -409,9 +409,9 @@ const PLAN = [
     "<a href=\"#p2b5\">p2b5</a>"],
   ]},
   { title: "The apps on top", items: [
-   ["p1d1", "The CLI and the script commands use the engine", "planned", "",
-    "<p><code>shipdeck deploy</code>, <code>rollback</code> and <code>releases</code> start the engine and print what it reports. Their output and their exit codes stay the same.</p>",
-    "<code>crates/headless</code>"],
+   ["p1d1", "The CLI and the script commands use the engine", "built", "2026-11-06",
+    "<p><code>shipdeck deploy</code>, <code>rollback</code> and <code>releases</code> start the engine as a child process and print what it reports. Their lines and their exit codes are the same as before.</p><p>The engine asks; the flags answer: <code>--trust-new-host</code>, <code>--allow-unchanged</code> and <code>--on-failure</code>. Nothing waits for a keyboard. One engine works for one command, and it ends with it, so nothing stays behind.</p>",
+    "<a href=\"code/protocol.md\">docs/code/protocol.md</a> · <code>apps/cli/src/engine.rs</code> · <code>crates/headless</code>"],
    ["p1d2", "The TUI uses the engine", "planned", "",
     "<p>The terminal UI starts the engine as a separate process and shows what it reports, the same way the desktop app will. The screens stay the same.</p>",
     "<code>crates/tui</code>"],

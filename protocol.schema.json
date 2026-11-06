@@ -137,6 +137,17 @@
       "properties": {
         "deployable": {
           "type": "string"
+        },
+        "on_failure": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/OnFailure"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What a failure after the switch does; overrides `pipeline.failed`."
         }
       },
       "required": [
@@ -148,12 +159,26 @@
     "DeployableInfo": {
       "description": "One project in the workspace, as `workspace/open` reports it.",
       "properties": {
+        "dir": {
+          "default": "",
+          "description": "`service.dir`: where the project lives on the server.",
+          "type": "string"
+        },
         "host": {
+          "description": "`ssh.host` from `deploy.yaml`: an alias or an address.",
           "type": "string"
         },
         "name": {
           "description": "The `name` from `deploy.yaml`.",
           "type": "string"
+        },
+        "port": {
+          "default": 22,
+          "description": "The port the server answers on.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
         },
         "slug": {
           "description": "The folder's name; what every other message calls the project.",
@@ -503,6 +528,21 @@
       "title": "Manifest",
       "type": "object"
     },
+    "OnFailure": {
+      "description": "What to do when a release fails after it went live.",
+      "oneOf": [
+        {
+          "const": "rollback",
+          "description": "Put the release that was live before back at once.",
+          "type": "string"
+        },
+        {
+          "const": "keep",
+          "description": "Keep the failed release, and ask before going back.",
+          "type": "string"
+        }
+      ]
+    },
     "OpFinished": {
       "description": "`op/finished`: the operation ended.",
       "properties": {
@@ -649,7 +689,7 @@
           "type": "integer"
         },
         "steps": {
-          "description": "The steps it will go through, by their keys.",
+          "description": "The steps it will go through, by the names the engine shows.",
           "items": {
             "type": "string"
           },
@@ -948,6 +988,11 @@
     "ReleaseName": {
       "description": "The parts of a release id, so a screen can sort and show them.",
       "properties": {
+        "built_at": {
+          "default": "",
+          "description": "When it was built, as RFC 3339 in UTC.",
+          "type": "string"
+        },
         "dirty": {
           "type": "boolean"
         },
@@ -1181,6 +1226,11 @@
       "properties": {
         "login": {
           "$ref": "#/definitions/Login"
+        },
+        "no_shell_env": {
+          "default": false,
+          "description": "Server commands skip the login shell's startup files, on every server.",
+          "type": "boolean"
         },
         "root": {
           "description": "The folder whose subfolders each hold a `deploy.yaml`.",

@@ -8,8 +8,8 @@ pub mod request;
 
 pub use ask::{Ask, AskRollback, AskSecret, AskTrustHost, AskUnchanged, SecretAnswer};
 pub use common::{
-    Action, DeployableInfo, FileInfo, FileKind, LogKind, Login, Manifest, Outcome, Problem,
-    ReleaseInfo, ReleaseKind, ReleaseName, ReleaseSource, StepState, Unit,
+    Action, DeployableInfo, FileInfo, FileKind, LogKind, Login, Manifest, OnFailure, Outcome,
+    Problem, ReleaseInfo, ReleaseKind, ReleaseName, ReleaseSource, StepState, Unit,
 };
 pub use event::{Event, LogsEnded, LogsLine, OpFinished, OpLog, OpProgress, OpRelease, OpStep};
 pub use request::{

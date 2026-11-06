@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 shipdeck-engine.workspace = true
 shipdeck-headless.workspace = true
+shipdeck-protocol.workspace = true
 shipdeck-tui.workspace = true
 anyhow.workspace = true
 clap.workspace = true

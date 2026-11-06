@@ -11,7 +11,7 @@ use shipdeck_protocol::message::common as wire;
 use shipdeck_protocol::message::request::{ReleasesListResult, StatusGetResult};
 use shipdeck_protocol::wire::{ErrorObject, code};
 
-use crate::config::{Deployable, FileProblems};
+use crate::config::{Deployable, FileProblems, Rollback};
 use crate::deploy::Step;
 use crate::deploy::report;
 use crate::release;
@@ -76,6 +76,17 @@ pub fn deployable_info(deployable: &Deployable) -> wire::DeployableInfo {
         name: deployable.config.name.clone(),
         host: deployable.endpoint.name.clone(),
         user: Some(deployable.endpoint.user.clone()),
+        port: deployable.endpoint.port,
+        dir: deployable.config.service.dir.clone(),
+    }
+}
+
+/// What a failure after the switch does: the app's choice wins over
+/// `pipeline.failed.rollback`.
+pub fn on_failure(choice: wire::OnFailure) -> Rollback {
+    match choice {
+        wire::OnFailure::Rollback => Rollback::Auto,
+        wire::OnFailure::Keep => Rollback::Ask,
     }
 }
 
@@ -134,6 +145,7 @@ fn release_name(name: &release::ReleaseName) -> wire::ReleaseName {
         version: name.version.clone(),
         git: name.git.clone(),
         dirty: name.dirty,
+        built_at: name.stamp.and_utc().to_rfc3339(),
     }
 }
 
@@ -252,9 +264,9 @@ pub fn outcome(outcome: &report::Outcome) -> wire::Outcome {
     }
 }
 
-/// The steps a run goes through, by the keys `deploy.yaml` knows.
+/// The steps a run goes through, by the names a screen shows.
 pub fn steps(steps: &[Step]) -> Vec<String> {
-    steps.iter().map(|step| step.key().to_string()).collect()
+    steps.iter().map(|step| step.name().to_string()).collect()
 }
 
 /// A place in a list, such as a step's or a line's: a plan is never long
@@ -262,3 +274,7 @@ pub fn steps(steps: &[Step]) -> Vec<String> {
 pub fn index(number: usize) -> u32 {
     u32::try_from(number).unwrap_or(u32::MAX)
 }
+
+#[cfg(test)]
+#[path = "convert_test.rs"]
+mod tests;

@@ -8,5 +8,11 @@ publish.workspace = true
 repository.workspace = true
 
 [dependencies]
+chrono.workspace = true
 shipdeck-engine.workspace = true
+shipdeck-protocol.workspace = true
 tokio.workspace = true
+
+# the fake engine in the tests speaks raw JSON
+[dev-dependencies]
+serde_json.workspace = true

@@ -748,9 +748,9 @@
 <pre class="code"><span class="to">→</span> {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol":1,"client":"shipdeck-desktop 0.7.0"}}
 <span class="from">←</span> {"jsonrpc":"2.0","id":1,"result":{"protocol":1,"shipdeck":"0.7.0"}}
 <span class="to">→</span> {"jsonrpc":"2.0","id":2,"method":"workspace/open","params":{"root":"./scripts/deploy","login":{"kind":"auto"}}}
-<span class="from">←</span> {"jsonrpc":"2.0","id":2,"result":{"deployables":[{"slug":"my-api","name":"My API (prod)","host":"203.0.113.10"}],"problems":[]}}
+<span class="from">←</span> {"jsonrpc":"2.0","id":2,"result":{"deployables":[{"slug":"my-api","name":"My API (prod)","host":"203.0.113.10","user":"deploy","port":22,"dir":"/opt/my-api"}],"problems":[]}}
 <span class="to">→</span> {"jsonrpc":"2.0","id":3,"method":"deploy/start","params":{"deployable":"my-api"}}
-<span class="from">←</span> {"jsonrpc":"2.0","id":3,"result":{"op":1,"steps":["preflight","build","pack","upload","unpack","setup","backup","switch","restart","health","done"]}}
+<span class="from">←</span> {"jsonrpc":"2.0","id":3,"result":{"op":1,"steps":["Preflight","Build","Pack","Upload","Unpack","Setup","Backup","Switch","Restart","Health","Done"]}}
 <span class="from">←</span> {"jsonrpc":"2.0","method":"op/step","params":{"op":1,"step":0,"state":"running"}}
 <span class="from">←</span> {"jsonrpc":"2.0","method":"op/log","params":{"op":1,"kind":"command","text":"cargo test"}}
 <span class="from">←</span> {"jsonrpc":"2.0","id":1,"method":"ask/rollback","params":{"op":1,"release":"v0.3.1-ab12cd3-20261014.153012","previous":"v0.3.0-9f8e7d6-20261012.091000","step":"Health","error":"…","seconds":30}}
