@@ -5,7 +5,7 @@ schema:
 
 # Writes the JSON Schema of the protocol messages, from their Rust types.
 protocol:
-    cargo run -q -p shipdeck-protocol --bin schema > docs/schema/protocol.schema.json
+    cargo run -q -p shipdeck-protocol --example schema > docs/schema/protocol.schema.json
 
 deploy-doc: schema
     cd ./docs/website/ && pnpm run deploy
