@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["apps/cli", "apps/tui", "crates/engine", "crates/protocol"]
+members = ["apps/cli", "crates/engine", "crates/protocol", "crates/tui"]
 
 [workspace.package]
 version = "0.6.1"
@@ -12,7 +12,7 @@ repository = "https://github.com/Naz-Ovh/shipdeck"
 [workspace.dependencies]
 shipdeck-engine = { path = "crates/engine" }
 shipdeck-protocol = { path = "crates/protocol" }
-shipdeck-tui = { path = "apps/tui" }
+shipdeck-tui = { path = "crates/tui" }
 anyhow = "1.0.104"
 base16ct = { version = "1.0.0", features = ["alloc"] }
 chrono = "0.4.45"

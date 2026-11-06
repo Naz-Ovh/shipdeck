@@ -19,7 +19,7 @@ live.
 | Name | `shipdeck` |
 | Repository | `Naz-Ovh/shipdeck`, public, so servers can fetch `server-setup.sh` from it; projects add it as a git submodule |
 | Language and libraries | Rust: `ratatui` + `crossterm` for the TUI, `russh` + `russh-sftp` for SSH, `tar` + `zstd` for bundles, `clap` for flags, `granit-parser` for YAML (events with line and column), `schemars` for the JSON Schema, `fast-glob` for file patterns |
-| Code layout | A Cargo workspace: `crates/engine` does the work over `crates/protocol`, `apps/tui` shows it, and `apps/cli` parses the flags, starts the engine, and prints the console commands |
+| Code layout | A Cargo workspace: `crates/engine` does the work over `crates/protocol`, `crates/tui` shows it, and `apps/cli` parses the flags, starts the engine, and prints the console commands |
 | SSH session | One session per deployable, opened once and reused for every command and upload |
 | SSH login | `--key <path>` or `--password <value>`; with neither flag, the alias's `IdentityFile` from `~/.ssh/config`, then a password asked in the TUI |
 | SSH host | `ssh.host` may be a `~/.ssh/config` alias (`host: prod`); its `HostName`, `Port`, `User` and `IdentityFile` apply, and `deploy.yaml` wins |
@@ -270,7 +270,7 @@ so the TUI recompiles on its own.
 ```
 apps/cli/src/
 └── main.rs        flags, login, the config check, then the TUI or a command
-apps/tui/src/    app state, the three screens, the log view, the `:` line, dialogs, theme
+crates/tui/src/    app state, the three screens, the log view, the `:` line, dialogs, theme
 apps/cli/src/
 └── console/       deploy, rollback and releases without the TUI: lines, answers, exit codes
 crates/engine/src/

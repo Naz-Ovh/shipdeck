@@ -739,7 +739,7 @@ command the server's sudo rule does not allow says so, with the
 
 ```
 apps/cli/          the flags, the engine child, and the console commands
-apps/tui/          the TUI: screens, dialogs, key handling
+crates/tui/          the TUI: screens, dialogs, key handling
 crates/protocol/   the messages between the engine and its apps, and their schema
 crates/engine/     everything else: config, build, bundle, ssh, remote, deploy flows
 docs/plan.md       the design and the decisions behind it
@@ -748,7 +748,7 @@ docs/plan.md       the design and the decisions behind it
 The engine knows nothing about the screen; it reports through
 `deploy::report::Reporter` over the protocol, and the TUI and the console in
 `apps/cli` each show those reports their own way. Changes to the TUI recompile
-only `apps/tui`.
+only `crates/tui`.
 
 ```sh
 cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings

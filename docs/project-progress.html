@@ -304,7 +304,7 @@ const PLAN = [
     "<code>pipeline.backup.files</code>"],
    ["p0b3", "See a release's details and files", "built", "2026-10-18",
     "<p>On the Releases screen, <kbd>D</kbd> shows a release's details and the list of its files.</p><p>It is in the code, but not in a release yet.</p>",
-    "<code>apps/tui</code>"],
+    "<code>crates/tui</code>"],
   ]},
   { title: "Config", items: [
    ["p0c1", "Every mistake in deploy.yaml, reported at once", "done", "2026-10-14",
@@ -337,7 +337,7 @@ const PLAN = [
   { title: "Screens and scripts", items: [
    ["p0e1", "The terminal UI", "done", "2026-10-14",
     "<p>A full-screen app in the terminal. It lists your projects with their live version and status, runs deploys step by step, and shows the releases. It connects to a server only when you ask.</p>",
-    "<code>apps/tui</code>"],
+    "<code>crates/tui</code>"],
    ["p0e2", "Vim-style commands: :logs, :restart, :stop, :start", "done", "2026-10-16",
     "<p>Type <kbd>:</kbd> on the Deployables screen, as in vim. <code>:logs</code> follows the project's log live. <code>:restart</code> and <code>:stop</code> ask first. <code>:start</code> starts the project.</p>",
     "<code>remote::control_commands</code>"],
@@ -414,7 +414,7 @@ const PLAN = [
     "<a href=\"code/protocol.md\">docs/code/protocol.md</a> · <code>apps/cli/src/engine.rs</code> · <code>apps/cli/src/console</code>"],
    ["p1d2", "The TUI uses the engine", "planned", "",
     "<p>The terminal UI starts the engine as a separate process and shows what it reports, the same way the desktop app will. The screens stay the same.</p>",
-    "<code>apps/tui</code>"],
+    "<code>crates/tui</code>"],
   ]},
   { title: "Decisions", items: [
    ["p1e1", "Decided: the offline copy lives in the engine", "done", "2026-10-31",
