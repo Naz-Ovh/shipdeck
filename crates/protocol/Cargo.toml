@@ -7,6 +7,10 @@ license.workspace = true
 publish.workspace = true
 repository.workspace = true
 
+[[example]]
+name = "bump-version"
+path = "../../scripts/bump-version.rs"
+
 [dependencies]
 schemars.workspace = true
 serde.workspace = true

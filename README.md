@@ -29,7 +29,7 @@ field is under [deploy.yaml](#deployyaml).
 ```sh
 # Linux and macOS: the latest release, or the one -V names
 curl -LsSf https://shipdeck.naz.ovh/install.sh | sh
-curl -LsSf https://shipdeck.naz.ovh/install.sh | sh -s -- -V=v0.6.1
+curl -LsSf https://shipdeck.naz.ovh/install.sh | sh -s -- -V=v0.7.1
 
 # with cargo-binstall: the same prebuilt binary, no compiling
 cargo binstall --git https://github.com/Naz-Ovh/shipdeck shipdeck
@@ -197,7 +197,7 @@ mistake, it does not start, and prints every problem in every file at once
 ## deploy.yaml
 
 ```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.6.1/docs/schema/deploy.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.7.1/docs/schema/deploy.schema.json
 name: Web (prod)
 project: ../../../web                       # your source; local commands run here
 ssh:
@@ -522,13 +522,13 @@ same descriptions as above, for any editor using the YAML language server
 `deploy.yaml` with:
 
 ```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.6.1/docs/schema/deploy.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.7.1/docs/schema/deploy.schema.json
 ```
 
 or map it once for the whole repository in `.vscode/settings.json`:
 
 ```json
-{ "yaml.schemas": { "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.6.1/docs/schema/deploy.schema.json": "**/deploy.yaml" } }
+{ "yaml.schemas": { "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.7.1/docs/schema/deploy.schema.json": "**/deploy.yaml" } }
 ```
 
 The website serves the newest one at
@@ -665,7 +665,7 @@ applies.
 root, with your values:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.6.1/server-setup.sh \
+curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.7.1/server-setup.sh \
   | bash -s -- --user deploy --dir /opt/my-api --service my-api \
       --key "$(cat ~/.ssh/id_ed25519.pub)"     # --manager pm2 for a PM2 app
 ```
@@ -777,14 +777,14 @@ just schema
 
 `server-setup.sh` is fetched from the root, and editors fetch
 `docs/schema/deploy.schema.json`, at the tag `v<version>`, so every release
-needs its tag pushed. Bump `[workspace.package] version` in `Cargo.toml`, update the schema
-line in `examples/` and this README, run `just schema`, and add the
-release's notes to `CHANGELOG.md`. Commit it all in one commit named
+needs its tag pushed. Run `just version NEW_VERSION` with the new version. It updates
+the workspace, lockfile, examples, README, and schemas. Add the release's
+notes to `CHANGELOG.md`. Commit it all in one commit named
 `Release version v<version>`, so the tag carries its own notes, then tag
 that commit and push:
 
 ```sh
-git tag v0.6.1 && git push origin main v0.6.1
+git tag v0.7.1 && git push origin main v0.7.1
 ```
 
 `setup_test.rs` fails if `server-setup.sh` and `remote::sudo_commands` or

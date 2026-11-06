@@ -1,3 +1,7 @@
+# Updates the workspace version and its generated files.
+version new:
+    cargo run -q -p shipdeck-protocol --example bump-version -- {{new}}
+
 # Writes the JSON Schema for deploy.yaml, and the website's copy of it.
 schema:
     cargo run -q -p shipdeck -- --schema > docs/schema/deploy.schema.json
