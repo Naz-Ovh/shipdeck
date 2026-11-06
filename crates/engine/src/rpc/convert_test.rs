@@ -36,6 +36,7 @@ fn a_project_carries_what_a_screen_shows() {
     assert_eq!(info.user.as_deref(), Some("deploy"));
     assert_eq!(info.port, 2222);
     assert_eq!(info.dir, "/opt/demo");
+    assert_eq!(info.folder, "/nonexistent/deploy/api");
 }
 
 #[test]

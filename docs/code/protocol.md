@@ -14,7 +14,7 @@ apps. It has no engine logic: no SSH, no files, no build.
   one. A field marked `#[serde(default)]` is the optional one.
 - Secrets travel in the pipe. A password is never written to a log.
 - `workspace/open` answers each project with its slug, name, host, user,
-  port and service folder. Its `no_shell_env` hides the login shell's startup
+  port, its folder on this PC and its service folder. Its `no_shell_env` hides the login shell's startup
   files from server commands, over every file's `ssh.shell_env`.
 - `deploy/start` may carry `on_failure`, which overrides
   `pipeline.failed.rollback`; without it the file decides.

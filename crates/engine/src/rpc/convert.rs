@@ -78,6 +78,7 @@ pub fn deployable_info(deployable: &Deployable) -> wire::DeployableInfo {
         user: Some(deployable.endpoint.user.clone()),
         port: deployable.endpoint.port,
         dir: deployable.config.service.dir.clone(),
+        folder: deployable.folder.display().to_string(),
     }
 }
 

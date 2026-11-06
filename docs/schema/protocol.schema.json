@@ -164,6 +164,11 @@
           "description": "`service.dir`: where the project lives on the server.",
           "type": "string"
         },
+        "folder": {
+          "default": "",
+          "description": "The project's folder on this PC, where its `deploy.yaml` is.",
+          "type": "string"
+        },
         "host": {
           "description": "`ssh.host` from `deploy.yaml`: an alias or an address.",
           "type": "string"

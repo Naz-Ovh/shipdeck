@@ -142,6 +142,9 @@ pub struct DeployableInfo {
     /// `service.dir`: where the project lives on the server.
     #[serde(default)]
     pub dir: String,
+    /// The project's folder on this PC, where its `deploy.yaml` is.
+    #[serde(default)]
+    pub folder: String,
 }
 
 /// SSH's own port, for a project that does not say.

@@ -20,6 +20,7 @@ fn deployable(slug: &str, name: &str) -> DeployableInfo {
         user: Some("deploy".into()),
         port: 22,
         dir: format!("/opt/{slug}"),
+        folder: format!("deploy/{slug}"),
     }
 }
 
