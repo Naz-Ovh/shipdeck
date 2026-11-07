@@ -6,13 +6,13 @@ use schemars::generate::SchemaSettings;
 use serde_json::{Map, Value, json};
 
 use crate::message::{
-    AskRollback, AskSecret, AskTrustHost, AskUnchanged, ConnectionClose, DeployStart,
-    DeployableInfo, Done, FileInfo, Initialize, InitializeResult, LogsEnded, LogsFollow,
-    LogsFollowResult, LogsLine, LogsStop, Manifest, OpFinished, OpLog, OpProgress, OpRelease,
-    OpStep, OperationStarted, Problem, ReleaseContents, ReleaseContentsResult, ReleaseInfo,
-    ReleaseName, ReleaseReadFile, ReleaseReadFileResult, ReleasesList, ReleasesListResult,
-    RollbackStart, SecretAnswer, ServiceControl, StatusGet, StatusGetResult, WorkspaceOpen,
-    WorkspaceOpenResult,
+    AgentHello, AgentHelloResult, AgentPing, AgentShutdown, AskRollback, AskSecret, AskTrustHost,
+    AskUnchanged, ConnectionClose, DeployStart, DeployableInfo, Done, FileInfo, Initialize,
+    InitializeResult, LogsEnded, LogsFollow, LogsFollowResult, LogsLine, LogsStop, Manifest,
+    OpFinished, OpLog, OpProgress, OpRelease, OpStep, OperationStarted, Problem, ReleaseContents,
+    ReleaseContentsResult, ReleaseInfo, ReleaseName, ReleaseReadFile, ReleaseReadFileResult,
+    ReleasesList, ReleasesListResult, RollbackStart, SecretAnswer, ServiceControl, StatusGet,
+    StatusGetResult, WorkspaceOpen, WorkspaceOpenResult,
 };
 
 /// The file in the shipdeck repository, published with each release.
@@ -64,6 +64,10 @@ pub fn generate() -> Value {
 /// Each message and its param or result type, by the name the schema uses.
 fn messages() -> Vec<(&'static str, Value)> {
     vec![
+        ("AgentHello", schema_for::<AgentHello>()),
+        ("AgentHelloResult", schema_for::<AgentHelloResult>()),
+        ("AgentPing", schema_for::<AgentPing>()),
+        ("AgentShutdown", schema_for::<AgentShutdown>()),
         ("Initialize", schema_for::<Initialize>()),
         ("InitializeResult", schema_for::<InitializeResult>()),
         ("Done", schema_for::<Done>()),

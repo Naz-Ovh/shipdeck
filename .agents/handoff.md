@@ -2,6 +2,9 @@
 
 Current checkpoint: 2026-11-07.
 
+Two efforts are merged on `main`: the server agent (`p3a1`, `p3a2`) and the
+completed monorepo deployment. The agent notes are under `## Agent` below.
+
 ## Current work
 
 The owner requested complete monorepo deployment, including RPC, CLI, TUI,
@@ -85,6 +88,64 @@ on PATH; the site was built through node_modules/.bin/next with that Node PATH.
 A stale .next cache referenced another checkout under /mnt/wsl. It was moved
 reversibly to .tmp/website-next-before-monorepo-check, and a fresh build passed.
 No project dependency was added. Curl was installed only in the test container.
+
+## Agent (this worktree)
+
+### What landed
+
+`p3a1` and `p3a2`, the first half of the server agent:
+
+- `crates/agent/`: package `shipdeck-agent`, its own binary and library.
+  `serve(read, write)` uses the protocol crate's `Connection`. It answers
+  `agent/hello`, `agent/ping` and `agent/shutdown`, then exits on shutdown or
+  end of input. `--version` is what the engine probes.
+- `crates/protocol/src/message/agent.rs`: the four agent message types and
+  `PROTOCOL = 1`. They are in `protocol.schema.json` too.
+- `crates/engine/src/agent/`: `binary.rs` picks gnu or musl and builds a fixed
+  install script. The **server** downloads the archive over HTTPS, checks its
+  `.sha256`, and unpacks it to `~/.shipdeck/bin/shipdeck-agent-<version>` with
+  mode `0700`. `mod.rs` probes `--version`, falls back to
+  `${TMPDIR:-/tmp}/.shipdeck-<uid>` on a `noexec` or unwritable home, starts it
+  over an SSH channel, and says hello. Nothing is uploaded through SSH.
+- `ssh::Session` holds the agent and starts it after login. A failure prints to
+  the engine's stderr and never blocks the SSH deploy path.
+- No new dependency. The server needs `curl` or `wget`, `sha256sum`, `awk`,
+  `tar`, `find`, and outbound HTTPS.
+
+### Decided
+
+- The gnu build is first. Servers on glibc 2.31 (Ubuntu 20.04) or newer get it;
+  Alpine, musl and older glibc get the static musl build. The agent package
+  sets `min-glibc-version = 2.31`.
+- The agent is installed and started on every connection, not lazily, as p3a1
+  says. Plain deploys keep using the SSH shell path (p3d2, recommended).
+- The launch command runs with no login-shell prelude: a startup file that
+  prints would corrupt the pipe. Agent stderr goes to `agent.log` beside the
+  binary.
+- The remote binary's name carries the version, so an old one is never reused.
+
+### Next for the agent
+
+1. `p3a3`: move file work (unpack, verify, link, delete) into the agent.
+2. The release carrying this code must include the four `shipdeck-agent-*`
+   archives. v0.7.1 does not, so a download of the current tag 404s. Point
+   `SHIPDECK_AGENT_BASE_URL` at a folder with the archive and its `.sha256`
+   until then.
+3. `dist generate` was not run: cargo-dist is not installed here. Run it before
+   the release, or let the release workflow's check report the diff.
+4. Still open: p3a4, p3b1, p3c1, p3c2, p3d1.
+
+### Agent gotchas
+
+- `~/.shipdeck/bin` may be `noexec`; the tmp fallback is deliberate.
+- The agent speaks on stdout only. Diagnostics go to stderr.
+- The install script is the only place that runs a shell for the agent. It takes
+  no user text: the URL, target and path come from fixed code and the home
+  folder, all quoted.
+- `cargo run -p shipdeck` does not build the agent. Build it with `cargo build
+  -p shipdeck-agent` and serve the archive from `SHIPDECK_AGENT_BASE_URL`.
+- The agent's `main` calls `std::process::exit(0)` after `serve`, for the same
+  stdin-thread reason the engine does.
 
 ## Earlier context
 

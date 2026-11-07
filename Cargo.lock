@@ -2748,6 +2748,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "shipdeck-agent"
+version = "0.7.1"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "shipdeck-protocol",
+ "tokio",
+]
+
+[[package]]
 name = "shipdeck-engine"
 version = "0.7.1"
 dependencies = [
