@@ -236,3 +236,20 @@ tree.txt, metadata.json, maintenance-crates.json, and maintenance-repos.json.
 Parser 0.24.0 has 16 default transitive packages. The parser and Rowan are active;
 countme is archived; text-size migrated into Rust Analyzer; memoffset is quiet.
 This was a maintenance review, not a vulnerability audit. No library was adopted.
+
+## Server-agent review — 2026-11-07
+
+Nginx planning and research committed as a1ea865. Reviewed the other agent's
+implementation from 3a045b7, merged by ecb1d3f. Full findings and verification:
+docs/code/agent-review.md. No agent source changed.
+
+Two P1 findings: unsafe existing temporary installation directory handling
+(root fallback can trust another user's directory), and unbounded optional
+agent download/startup blocking the normal SSH connection path. One P2 finding:
+recognised ask/* requests are silently skipped instead of returning an RPC
+method error. Local shell/process reproducers confirmed the specific behaviors;
+no cross-user exploit or new Podman SSH suite was run.
+
+Formatting, 319 workspace tests, strict Clippy, and the agent executable build
+passed. Review evidence: /tmp/vscode-agent-codex-sandbox-H2LGk7/agent-review/.
+The implementation is not approved as ready until these findings are addressed.
