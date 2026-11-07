@@ -39,3 +39,33 @@ fn check_reports_stderr_first() {
     let err = out.check("unpacking").unwrap_err().to_string();
     assert_eq!(err, "unpacking failed (exit 2): tar: broken");
 }
+
+#[test]
+fn the_timeout_wrapper_names_the_limit_and_grace() {
+    let command = remote_timeout_script("echo hi", std::time::Duration::from_secs(15));
+    assert!(command.starts_with("timeout -k 3 15 sh -c "));
+    assert!(command.contains("'echo hi'"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_cancelled_command_does_not_finish_later() {
+    let dir = std::env::temp_dir().join(format!("shipdeck-timeout-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch folder");
+    let marker = dir.join("done");
+    let script = format!(
+        "sleep 2; printf done > {}",
+        sh_quote(&marker.to_string_lossy())
+    );
+    let command = remote_timeout_script(&script, std::time::Duration::from_secs(1));
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(&command)
+        .status()
+        .expect("sh runs");
+    assert!(!status.success());
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    assert!(!marker.exists(), "the cancelled command finished later");
+    std::fs::remove_dir_all(&dir).expect("cleanup");
+}

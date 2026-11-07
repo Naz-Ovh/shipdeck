@@ -104,13 +104,13 @@ No project dependency was added. Curl was installed only in the test container.
 - `crates/engine/src/agent/`: `binary.rs` picks gnu or musl and builds a fixed
   install script. The **server** downloads the archive over HTTPS, checks its
   `.sha256`, and unpacks it to `~/.shipdeck/bin/shipdeck-agent-<version>` with
-  mode `0700`. `mod.rs` probes `--version`, falls back to
-  `${TMPDIR:-/tmp}/.shipdeck-<uid>` on a `noexec` or unwritable home, starts it
-  over an SSH channel, and says hello. Nothing is uploaded through SSH.
+  mode `0700`. `mod.rs` probes `--version`, falls back to a fresh `mktemp -d`
+  folder in tmp on a `noexec` or unwritable home, starts it over an SSH channel,
+  and says hello. Nothing is uploaded through SSH.
 - `ssh::Session` holds the agent and starts it after login. A failure prints to
   the engine's stderr and never blocks the SSH deploy path.
 - No new dependency. The server needs `curl` or `wget`, `sha256sum`, `awk`,
-  `tar`, `find`, and outbound HTTPS.
+  `tar`, `find`, `timeout`, and outbound HTTPS.
 
 ### Decided
 
@@ -134,6 +134,32 @@ No project dependency was added. Curl was installed only in the test container.
 3. `dist generate` was not run: cargo-dist is not installed here. Run it before
    the release, or let the release workflow's check report the diff.
 4. Still open: p3a4, p3b1, p3c1, p3c2, p3d1.
+
+### Review fixes (2026-11-07)
+
+`docs/review/server-agent-review.md` raised two P1s, two P2s and a layout rule
+over two rounds. The review now starts with `(done)`. Fixed:
+
+- The tmp fallback is a fresh `mktemp -d` folder, checked for a symlink, this
+  user's ownership, and mode `0700`. Concurrent connects get different folders.
+- Timeouts now cover the optional startup: 15 s per raw command, 45 s for the
+  install (curl/wget also bounded), 15 s to open and hello, 90 s overall.
+- The second review found that a channel close alone does not stop a non-PTY
+  process. Limited commands now run under `timeout -k 3 <limit>` on the server,
+  which signals the command's process group; the channel close is the backstop.
+  The engine maps exit 124 or 143 to a timeout.
+- Every unsupported request with an id, including a recognised `ask/*`, gets
+  `METHOD_NOT_FOUND`. A process-level test runs the real binary.
+- `crates/agent/src/lib.rs` and `crates/engine/src/agent/mod.rs` are now
+  declarations and re-exports only. The code is in `serve.rs`, `session.rs`
+  and `install.rs`.
+
+Verified on the test container: forcing the home install to fail made the
+secure tmp fallback run; a stalled download returned after 90 s with the
+release list intact and no `curl` left behind. A real SSH check ran
+`timeout -k 3 1 sh -c "sleep 3; printf done > marker"`: it returned 124 and
+the marker was absent 4 s later. The agent install still completed through the
+wrapper.
 
 ### Agent gotchas
 
@@ -241,7 +267,8 @@ This was a maintenance review, not a vulnerability audit. No library was adopted
 
 Nginx planning and research committed as a1ea865. Reviewed the other agent's
 implementation from 3a045b7, merged by ecb1d3f. Full findings and verification:
-docs/code/agent-review.md. No agent source changed.
+docs/review/server-agent-review.md. The review is marked `(done)`; the fixes
+are in the working tree.
 
 Two P1 findings: unsafe existing temporary installation directory handling
 (root fallback can trust another user's directory), and unbounded optional
@@ -251,5 +278,26 @@ method error. Local shell/process reproducers confirmed the specific behaviors;
 no cross-user exploit or new Podman SSH suite was run.
 
 Formatting, 319 workspace tests, strict Clippy, and the agent executable build
-passed. Review evidence: /tmp/vscode-agent-codex-sandbox-H2LGk7/agent-review/.
-The implementation is not approved as ready until these findings are addressed.
+passed at review time. Review evidence:
+/tmp/vscode-agent-codex-sandbox-H2LGk7/agent-review/. The original findings
+were fixed; the second review below reopened one cleanup finding.
+
+## Independent agent re-review — 2026-11-07
+
+Reviewed the current uncommitted corrections. Formatting, all 329 workspace
+tests, and strict pedantic/performance Clippy passed. The secure temporary
+folder and unsupported Ask RPC fixes address the original findings. Startup
+is now bounded for the caller and the SSH session remains usable.
+
+The re-review reopened docs/review/server-agent-review.md with one P2 cleanup
+finding. A real Session::exec_raw_within call over SSH in the existing Podman
+container returned after about 344 ms for a 300 ms limit, but its remote command
+still created a marker eight seconds later. Channel closure does not establish
+remote process termination. The test removed its marker and closed the session.
+Reproducer: /tmp/vscode-agent-codex-sandbox-H2LGk7/agent-recheck/src/main.rs.
+
+The cleanup finding is fixed: limited commands run under
+`timeout -k 3 <limit>` on the server, which signals the command's process group;
+the channel close is only the backstop. A real SSH check returned 124 and left
+no marker 4 s later. The review is `(done)` again. The fixes are in the working
+tree and remain uncommitted.

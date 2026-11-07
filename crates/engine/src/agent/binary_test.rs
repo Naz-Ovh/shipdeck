@@ -1,5 +1,6 @@
 use super::{
-    Arch, Libc, arch, asset_name, asset_url_with, install_script_with, parse_glibc_version, target,
+    Arch, Libc, arch, asset_name, asset_url_with, field, install_script_with, libc_from,
+    parse_glibc_version, target,
 };
 
 #[test]
@@ -69,6 +70,27 @@ fn names_the_cpu_it_cannot_serve() {
 }
 
 #[test]
+fn reads_the_facts_lines() {
+    let facts = "os=Linux\nmachine=x86_64\nlibc=glibc 2.31\nldd=ldd (Ubuntu GLIBC 2.31) 2.31\n";
+    assert_eq!(field(facts, "os"), Some("Linux"));
+    assert_eq!(field(facts, "machine"), Some("x86_64"));
+    assert_eq!(field(facts, "missing"), None);
+    assert_eq!(libc_from(facts).unwrap(), Libc::Glibc(2, 31));
+}
+
+#[test]
+fn musl_is_what_libc_leaves() {
+    let facts = "os=Linux\nmachine=aarch64\nlibc=\nldd=musl libc (x86_64)\n";
+    assert_eq!(libc_from(facts).unwrap(), Libc::Musl);
+}
+
+#[test]
+fn an_unknown_libc_is_an_error() {
+    let facts = "os=Linux\nmachine=x86_64\nlibc=\nldd=\n";
+    assert!(libc_from(facts).is_err());
+}
+
+#[test]
 fn builds_the_release_names() {
     assert_eq!(
         asset_name("x86_64-unknown-linux-gnu"),
@@ -97,8 +119,8 @@ fn the_install_script_downloads_verifies_and_unpacks() {
         "https://example.test/shipdeck-agent-x86_64-unknown-linux-gnu.tar.gz",
         "/home/deploy/.shipdeck/bin/shipdeck-agent-0.7.1",
     );
-    assert!(script.contains("curl -fsSL"));
-    assert!(script.contains("wget -qO"));
+    assert!(script.contains("curl -fsSL --connect-timeout 10 --max-time 45"));
+    assert!(script.contains("wget -q --timeout=15 --tries=2"));
     assert!(script.contains("sha256sum"));
     assert!(script.contains("tar -xzf"));
     assert!(script.contains("trap cleanup EXIT"));

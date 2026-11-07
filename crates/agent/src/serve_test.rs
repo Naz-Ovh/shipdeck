@@ -93,6 +93,27 @@ async fn an_unknown_method_says_so() {
 }
 
 #[tokio::test]
+async fn an_unsupported_ask_gets_an_error() {
+    let (client, server) = pair();
+    let err = client
+        .request::<_, Value>(
+            "ask/secret",
+            &serde_json::json!({"title": "test", "prompt": "test"}),
+        )
+        .await
+        .expect_err("an unsupported ask");
+    match err {
+        Error::Rpc(object) => assert_eq!(object.code, code::METHOD_NOT_FOUND),
+        other => panic!("expected a method error, got {other}"),
+    }
+    client
+        .request::<_, AgentShutdown>(SHUTDOWN, &AgentShutdown {})
+        .await
+        .expect("shutdown");
+    let _ = server.await;
+}
+
+#[tokio::test]
 async fn bad_params_are_refused_but_the_agent_stays() {
     let (client, server) = pair();
     let err = client

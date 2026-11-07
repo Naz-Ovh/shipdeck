@@ -26,6 +26,11 @@ version must match the engine's; both use `[workspace.package].version`.
 its `Ask` or `Event` enums, so they arrive as `Incoming::Other` and the agent
 matches the method name.
 
+Every unsupported request that carries an id gets `METHOD_NOT_FOUND`. That
+includes a recognised `ask/*` request, which the shared connection classifies
+as `Incoming::Ask`. Leaving it silent would block the caller until the
+connection closes.
+
 ## Building it
 
 The agent is its own package, `crates/agent`, so it never pulls the engine in.
@@ -68,10 +73,10 @@ The bytes never cross SSH. The engine sends a fixed install script, and the
 3. It checks the hash, unpacks, moves the binary in place, and sets mode
    `0700`.
 
-The server needs `curl` or `wget`, `sha256sum`, `awk`, `tar` and `find`, plus
-outbound HTTPS. When one is missing, the engine says so and the SSH deploy path
-keeps working. `SHIPDECK_AGENT_BASE_URL` names another download folder, for a
-mirror or a local test.
+The server needs `curl` or `wget`, `sha256sum`, `awk`, `tar`, `find` and
+`timeout`, plus outbound HTTPS. When one is missing, the engine says so and the
+SSH deploy path keeps working. `SHIPDECK_AGENT_BASE_URL` names another download
+folder, for a mirror or a local test.
 
 Only the current version is kept. Older `shipdeck-agent-*` files in the home
 folder are removed after a successful start.
@@ -90,9 +95,37 @@ It does not use the login shell's startup files, and the process replaces
 The engine runs `<path> --version` and compares it with its own before starting.
 
 If the home folder does not allow running programs (`noexec`) or cannot be
-written, the same download repeats under `${TMPDIR:-/tmp}/.shipdeck-<uid>/`,
-mode `0700`. When neither place works, the engine says so and the SSH deploy
-path keeps working.
+written, the download repeats under a fresh folder made by
+`mktemp -d "${TMPDIR:-/tmp}/.shipdeck.XXXXXXXXXX"`. Its name is random, so
+another user cannot pre-create it. Before use, the engine checks that it is
+not a symlink, is owned by this user, and is mode `0700`. A concurrent connect
+gets a different folder, and the next connect makes a new one; the tmp folder
+is not reused.
+
+When neither place works, the engine says so and the SSH deploy path keeps
+working.
+
+## Limits
+
+The agent is optional, so no step may hold a connection for ever:
+
+| Step | Limit |
+| --- | --- |
+| One raw command (`uname`, `home`, probe) | 15 s |
+| The install script, download included | 45 s |
+| Opening the agent's channel | 15 s |
+| `agent/hello` | 15 s |
+| The whole startup | 90 s |
+
+Each limited command runs as `timeout -k 3 <limit> sh -c '<script>'` on the
+server. `timeout` sends TERM to the command's process group, then KILL after
+3 s, so the command and its children stop. Closing the SSH channel is only the
+backstop: a channel close does not stop a non-PTY process. The server needs
+`timeout` for this.
+
+The install script also bounds its own transfers: `curl --connect-timeout 10
+--max-time 45`, and `wget --timeout=15 --tries=2`. After the deadline the engine
+logs why, stores "no agent", and returns the session.
 
 ## Lifecycle
 
@@ -105,8 +138,15 @@ path keeps working.
 
 ## Tests
 
-- `crates/agent/src/lib_test.rs`: hello, ping, shutdown, an unknown method, bad
-  params, and a foreign protocol, all over in-memory pipes.
+- `crates/agent/src/serve_test.rs`: hello, ping, shutdown, an unknown method,
+  an unsupported `ask/*`, bad params, and a foreign protocol, all over
+  in-memory pipes.
+- `crates/agent/tests/process.rs`: the real binary, for `agent/hello` and the
+  unanswered-request regression.
 - `crates/engine/src/agent/binary_test.rs`: glibc parsing, numeric comparison,
   gnu/musl choice, CPU names, release names, and the install script's download,
-  checksum and quoting steps.
+  checksum, timeout and quoting steps.
+- `crates/engine/src/agent/install_test.rs`: a private folder passes; a symlink
+  and a world-open folder are refused; two temp folders differ and are `0700`.
+- `crates/engine/src/ssh/ssh_test.rs`: the timeout wrapper's shape, and a
+  cancelled command that must not write its delayed side effect.

@@ -74,48 +74,44 @@ pub fn parse_glibc_version(text: &str) -> Option<(u32, u32)> {
 /// Fails when the server is not Linux, its CPU has no build, or its C library
 /// cannot be identified.
 pub async fn target_for(session: &Session) -> Result<&'static str> {
-    let os = session
-        .exec_raw("uname -s")
+    let facts = session
+        .exec_raw(
+            "printf '%s\\n' \"os=$(uname -s)\" \"machine=$(uname -m)\" \
+             \"libc=$(getconf GNU_LIBC_VERSION 2>/dev/null || true)\" \
+             \"ldd=$(ldd --version 2>&1 | head -n 1 || true)\"",
+        )
         .await
-        .context("asking the server for its operating system")?;
-    if os.stdout.trim() != "Linux" {
-        bail!(
-            "{} is not Linux, and the agent runs on Linux only",
-            os.stdout.trim()
-        );
+        .context("asking the server about itself")?;
+    let os = field(&facts.stdout, "os").unwrap_or("").trim();
+    if os.is_empty() {
+        bail!("the server did not say which operating system it runs");
     }
-    let machine = session
-        .exec_raw("uname -m")
-        .await
-        .context("asking the server for its CPU")?
-        .stdout;
-    let arch = arch(&machine)?;
-    Ok(target(arch, libc(session).await?))
+    if os != "Linux" {
+        bail!("{os} is not Linux, and the agent runs on Linux only");
+    }
+    let machine = field(&facts.stdout, "machine").unwrap_or("");
+    Ok(target(arch(machine)?, libc_from(&facts.stdout)?))
 }
 
-/// Asks for the C library. glibc names itself; musl is what is left.
-async fn libc(session: &Session) -> Result<Libc> {
-    let asked = session
-        .exec_raw("getconf GNU_LIBC_VERSION 2>/dev/null || true")
-        .await
-        .context("asking the server for its C library")?;
-    if let Some(version) = parse_glibc_version(&asked.stdout) {
+/// The value after `key=` on its own line.
+fn field<'a>(text: &'a str, key: &str) -> Option<&'a str> {
+    let prefix = format!("{key}=");
+    text.lines().find_map(|line| line.strip_prefix(&prefix))
+}
+
+/// glibc names itself; musl is what is left.
+fn libc_from(text: &str) -> Result<Libc> {
+    if let Some(version) = field(text, "libc").and_then(parse_glibc_version) {
         return Ok(Libc::Glibc(version.0, version.1));
     }
-    let ldd = session
-        .exec_raw("ldd --version 2>&1 | head -n 1")
-        .await
-        .context("asking ldd for the C library")?;
-    if ldd.stdout.to_ascii_lowercase().contains("musl") {
+    let ldd = field(text, "ldd").unwrap_or("");
+    if ldd.to_ascii_lowercase().contains("musl") {
         return Ok(Libc::Musl);
     }
-    if let Some(version) = parse_glibc_version(&ldd.stdout) {
+    if let Some(version) = parse_glibc_version(ldd) {
         return Ok(Libc::Glibc(version.0, version.1));
     }
-    bail!(
-        "shipdeck could not tell which C library {} uses",
-        session.label
-    )
+    bail!("shipdeck could not tell which C library the server uses")
 }
 
 /// The release archive's name for `target`.
@@ -166,11 +162,11 @@ unpack="$dir/.shipdeck-agent.$$.unpack"
 cleanup() {{ rm -f "$tmp" "$sum"; rm -rf "$unpack"; }}
 trap cleanup EXIT
 if command -v curl >/dev/null 2>&1; then
-  curl -fsSL "$url" -o "$tmp"
-  curl -fsSL "$url.sha256" -o "$sum"
+  curl -fsSL --connect-timeout 10 --max-time 45 "$url" -o "$tmp"
+  curl -fsSL --connect-timeout 10 --max-time 45 "$url.sha256" -o "$sum"
 elif command -v wget >/dev/null 2>&1; then
-  wget -qO "$tmp" "$url"
-  wget -qO "$sum" "$url.sha256"
+  wget -q --timeout=15 --tries=2 -O "$tmp" "$url"
+  wget -q --timeout=15 --tries=2 -O "$sum" "$url.sha256"
 else
   echo 'neither curl nor wget is installed' >&2
   exit 1

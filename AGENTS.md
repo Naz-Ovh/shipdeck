@@ -28,8 +28,15 @@ Rules to give AI agent strict bounds over models defautl. This should prevent AI
 - Keep README files descriptive. Agent rules belong in `AGENTS.md`.
 - When a tracker step changes state, update its row in the `PLAN` data, the "Up next" box, and `UPDATED` in `docs/project-progress.html`.
 - Keep `docs/visual/Plan/spec.html` consistent with agreed design changes.
-- Keep visual pages in `docs/visual/`, feature plans in `docs/feature/`, and code guides in `docs/code/`.
+- Keep visual pages in `docs/visual/`, feature plans in `docs/feature/`, code guides in `docs/code/`, and reviews in `docs/review/`.
 - Keep session details, test logs, and open work in `.agents/handoff.md`. Update the handoff at the end of a session.
+
+## Reviews
+
+- A review lives in `docs/review/<issue>-review.md`. Name it after the issue, not the agent or person who raised it.
+- The page stands on its own: scope, evidence, findings, and limits. It is not a chat log and carries no agent signature.
+- When every finding is fixed, start the page with `(done)`: `# (done) <Issue> review`.
+- Keep the findings as history. Add a `Resolution` section with what changed and how it was verified. A page with an open finding stays without `(done)`.
 
 ## Read when the task needs it
 

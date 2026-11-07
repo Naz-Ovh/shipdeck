@@ -27,6 +27,49 @@ use handler::Client;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const UPLOAD_CHUNK: usize = 256 * 1024;
+/// A raw command, such as an agent probe, gets this long.
+const RAW_TIMEOUT: Duration = Duration::from_secs(15);
+/// Starting the agent's two-way channel gets this long.
+const OPEN_TIMEOUT: Duration = Duration::from_secs(15);
+/// The whole optional agent startup. After it, the SSH path carries on.
+const AGENT_START_TIMEOUT: Duration = Duration::from_secs(90);
+/// How long a timed-out remote command gets between TERM and KILL.
+const TIMEOUT_GRACE: Duration = Duration::from_secs(3);
+
+/// Closes its channel when dropped. This is only a backstop: a channel close
+/// does not stop a non-PTY process, so limited commands also carry a remote
+/// `timeout` that kills the command and its children.
+struct CloseOnDrop(Option<russh::Channel<russh::client::Msg>>);
+
+impl CloseOnDrop {
+    fn new(channel: russh::Channel<russh::client::Msg>) -> Self {
+        Self(Some(channel))
+    }
+
+    fn get(&mut self) -> &mut russh::Channel<russh::client::Msg> {
+        match self.0.as_mut() {
+            Some(channel) => channel,
+            None => unreachable!("the guard is disarmed only after its last use"),
+        }
+    }
+
+    fn disarm(&mut self) -> Option<russh::Channel<russh::client::Msg>> {
+        self.0.take()
+    }
+}
+
+impl Drop for CloseOnDrop {
+    fn drop(&mut self) {
+        let Some(channel) = self.0.take() else {
+            return;
+        };
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                let _ = channel.close().await;
+            });
+        }
+    }
+}
 
 /// Which output stream a line came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,8 +148,31 @@ impl Session {
     /// it is killed by a signal, or the connection closes before an exit
     /// status arrives.
     pub async fn exec_raw(&self, script: &str) -> Result<Output> {
-        self.run(&format!("sh -c {}", sh_quote(script)), |_, _| {})
-            .await
+        self.exec_raw_within(script, RAW_TIMEOUT).await
+    }
+
+    /// Runs a POSIX `sh` script without the login shell's environment. On
+    /// the server, `timeout` stops the script and its children at `limit`;
+    /// the channel close is only the backstop after the grace period.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the channel cannot be opened, the command cannot start, it
+    /// is killed, it runs past `limit`, or the connection closes. A missing
+    /// `timeout` command is reported through the command's own stderr.
+    pub async fn exec_raw_within(&self, script: &str, limit: Duration) -> Result<Output> {
+        let command = remote_timeout_script(script, limit);
+        let output = self
+            .run_within(
+                &command,
+                Some(limit + TIMEOUT_GRACE + Duration::from_secs(2)),
+                |_, _| {},
+            )
+            .await?;
+        if output.code == 124 || output.code == 143 {
+            bail!("the remote command took more than {}s", limit.as_secs());
+        }
+        Ok(output)
     }
 
     /// Starts `command` and returns its channel as one two-way stream. The
@@ -125,10 +191,24 @@ impl Session {
             .channel_open_session()
             .await
             .with_context(|| format!("opening a channel to {}", self.label))?;
-        channel
-            .exec(true, command)
-            .await
-            .context("starting the remote command")?;
+        let mut guard = CloseOnDrop::new(channel);
+        match tokio::time::timeout(OPEN_TIMEOUT, guard.get().exec(true, command)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                let _ = guard.get().close().await;
+                return Err(err).context("starting the remote command");
+            }
+            Err(_) => {
+                let _ = guard.get().close().await;
+                bail!(
+                    "starting the remote command took more than {}s",
+                    OPEN_TIMEOUT.as_secs()
+                );
+            }
+        }
+        let Some(channel) = guard.disarm() else {
+            bail!("the agent channel disappeared");
+        };
         Ok(channel.into_stream())
     }
 
@@ -173,34 +253,70 @@ impl Session {
         }
     }
 
-    async fn run(&self, command: &str, mut on_line: impl FnMut(Stream, &str)) -> Result<Output> {
-        let mut channel = self
+    async fn run(&self, command: &str, on_line: impl FnMut(Stream, &str)) -> Result<Output> {
+        self.run_within(command, None, on_line).await
+    }
+
+    /// Runs one command, optionally stopping at `limit`. The channel closes
+    /// on the way out, so a timed-out command leaves nothing running.
+    async fn run_within(
+        &self,
+        command: &str,
+        limit: Option<Duration>,
+        mut on_line: impl FnMut(Stream, &str),
+    ) -> Result<Output> {
+        let channel = self
             .handle
             .channel_open_session()
             .await
             .with_context(|| format!("opening a channel to {}", self.label))?;
-        channel
-            .exec(true, command)
-            .await
-            .context("starting the remote command")?;
+        let mut guard = CloseOnDrop::new(channel);
+        let deadline = limit.map(|limit| tokio::time::Instant::now() + limit);
 
-        let mut out = Lines::default();
-        let mut err = Lines::default();
-        let mut code = None;
-        while let Some(msg) = channel.wait().await {
-            match msg {
-                ChannelMsg::Data { data } => out.feed(&data, |l| on_line(Stream::Out, l)),
-                ChannelMsg::ExtendedData { data, ext: 1 } => {
-                    err.feed(&data, |l| on_line(Stream::Err, l));
+        let (mut out, mut err, code) = {
+            let channel = guard.get();
+            channel
+                .exec(true, command)
+                .await
+                .context("starting the remote command")?;
+
+            let mut out = Lines::default();
+            let mut err = Lines::default();
+            let mut code = None;
+            loop {
+                let message = match deadline {
+                    Some(deadline) => {
+                        if let Ok(message) = tokio::time::timeout_at(deadline, channel.wait()).await
+                        {
+                            message
+                        } else {
+                            let _ = channel.close().await;
+                            bail!(
+                                "the remote command took more than {}s",
+                                limit.map_or(0, |limit| limit.as_secs())
+                            );
+                        }
+                    }
+                    None => channel.wait().await,
+                };
+                let Some(msg) = message else { break };
+                match msg {
+                    ChannelMsg::Data { data } => out.feed(&data, |l| on_line(Stream::Out, l)),
+                    ChannelMsg::ExtendedData { data, ext: 1 } => {
+                        err.feed(&data, |l| on_line(Stream::Err, l));
+                    }
+                    ChannelMsg::ExitStatus { exit_status } => code = Some(exit_status),
+                    ChannelMsg::ExitSignal { signal_name, .. } => {
+                        bail!("remote command was killed by {signal_name:?}");
+                    }
+                    ChannelMsg::Close => break,
+                    _ => {}
                 }
-                ChannelMsg::ExitStatus { exit_status } => code = Some(exit_status),
-                ChannelMsg::ExitSignal { signal_name, .. } => {
-                    bail!("remote command was killed by {signal_name:?}")
-                }
-                ChannelMsg::Close => break,
-                _ => {}
             }
-        }
+            (out, err, code)
+        };
+
+        let _ = guard.disarm();
         out.flush(|l| on_line(Stream::Out, l));
         err.flush(|l| on_line(Stream::Err, l));
         Ok(Output {
@@ -349,10 +465,19 @@ impl Session {
         }
     }
 
-    /// Uploads and starts the agent for this server, or records why it could
-    /// not start. A missing agent never blocks the SSH path.
+    /// Installs and starts the agent for this server, or records why it could
+    /// not start. A missing agent never blocks the SSH path, and the whole
+    /// optional startup has a hard deadline.
     pub async fn start_agent(&self) {
-        let started = crate::agent::Agent::start(self).await;
+        let started =
+            match tokio::time::timeout(AGENT_START_TIMEOUT, crate::agent::Agent::start(self)).await
+            {
+                Ok(result) => result,
+                Err(_) => Err(anyhow!(
+                    "the agent did not start within {}s",
+                    AGENT_START_TIMEOUT.as_secs()
+                )),
+            };
         let value = match started {
             Ok(agent) => Some(Arc::new(agent)),
             Err(err) => {
@@ -601,6 +726,18 @@ impl Lines {
 #[must_use]
 pub fn sh_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', r"'\''"))
+}
+
+/// Runs `script` under the server's `timeout`, which sends TERM to the
+/// command's process group at `limit`, then KILL after [`TIMEOUT_GRACE`].
+/// Unlike closing the channel, this stops the command and its children.
+fn remote_timeout_script(script: &str, limit: Duration) -> String {
+    format!(
+        "timeout -k {} {} sh -c {}",
+        TIMEOUT_GRACE.as_secs(),
+        limit.as_secs().max(1),
+        sh_quote(script)
+    )
 }
 
 #[cfg(test)]
