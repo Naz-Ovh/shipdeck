@@ -154,3 +154,85 @@ The owner withdrew a request for separate single-app and monorepo engine
 folders; the new modules are divided by responsibility within the existing
 engine. Automatic shutdown safety and broader Windows behavior remain separate
 from this monorepo scope. The earlier agreed plan was recorded by commit 4073085.
+
+## Nginx research — 2026-11-07
+
+The owner said the server-agent plan is being implemented by another LLM and
+requested research into programmatic Nginx control. Findings and source links
+are in docs/feature/nginx-control-research.md. This is research only; no agent
+code, dependencies, server settings, agreed schema, or tracker state changed.
+
+Verified from official sources: Open Source 1.31.5 introduced the Control API;
+it requires --with-control-api and explicit -l startup configuration. It reads
+loaded configuration and workers and requests full reloads, but does not write
+site files. A restricted Unix socket is recommended. Command-line validation
+and reload remain the proposed compatibility path for other installations.
+
+The note proposes managed configuration generations, full validation, reload
+verification, routing recovery tied to saved app settings, and a narrow root
+boundary. p3d1 remains undecided. It compares the official Nginx ACME module
+with Certbot webroot/DNS options; no certificate tool was selected. No runtime
+Nginx tests were performed. The research note and this handoff are uncommitted.
+
+## Isolated Pingora experiment — 2026-11-07
+
+The owner asked whether Pingora has a large dependency tree and requested a
+hands-on developer-experience test in an isolated folder. The experiment is
+complete at /tmp/vscode-agent-codex-sandbox-H2LGk7/pingora-lab/.
+Read its README.md for the report, src/main.rs for the prototype, and
+measurements.json for machine-readable measurements. It has its own workspace,
+Cargo.toml, Cargo.lock, feature variants, logs, and test harness. No Shipdeck
+application code, dependency, or lockfile was changed.
+
+Published Pingora 0.9.1 was tested with Rust 1.99.1 on Linux x86_64. Unique Linux
+normal/build dependency package-version counts, excluding the experiment root:
+142 for core, 167 for HTTP proxy, 176 for proxy plus OpenSSL, and 179 for load
+balancing plus OpenSSL. The tested TLS graph has 167 distinct crate names and
+12 Pingora crates. The cross-platform lockfile has 203 dependency packages.
+The proxy includes pingora-cache without explicitly enabling the facade's cache
+feature. The selected OpenSSL feature vendors OpenSSL; native zlib-ng needs CMake.
+
+The initial debug build failed after 75.03 seconds because CMake was absent.
+CMake 4.4.4 was installed only into the experiment's .tools Python environment.
+The resumed debug build succeeded in 26.77 seconds. The fresh release build took
+177.08 seconds. A small source-edit debug rebuild took 1.674 seconds; a no-change
+build took 0.125 seconds. The stripped release binary is 14,237,648 bytes
+(13.58 MiB). A post-test release process RSS sample was 14,908 KiB (14.56 MiB).
+Combined debug/release/test/check artifacts occupy about 1.8 GiB. These are
+machine-specific development measurements, not throughput or capacity claims.
+
+The 164-line prototype uses ProxyHttp callbacks, loopback HTTP backends, HTTP
+and TLS listeners, and a custom stdin control channel. Complete route snapshots
+are parsed first and replaced under one short-held lock. No lock spans an await.
+Functional checks passed in debug and release: two-host routing, case handling,
+query forwarding, verified self-signed TLS, a 1,125,000-byte POST body checked by
+hash, rejection of invalid updates without changing live routes, updates without
+restarting the process, in-flight requests completing on their original backend,
+route removal, and recovery after an unavailable backend returns 502.
+Three route unit tests, formatting, and strict pedantic/performance Clippy passed.
+
+Assessment: the dependency tree is substantial, but the basic Rust proxy API is
+approachable and incremental rebuilds are quick after setup. A complete gateway
+still needs certificate issuance/renewal, per-domain certificate selection,
+static-file behavior, durable configuration, and a real management API. Those
+were not implemented or tested. No Nginx/Caddy performance comparison was run.
+The owner has not selected Pingora or authorized integration into Shipdeck.
+
+## Agreed Nginx configuration plan — 2026-11-07
+
+The owner chose an owned Rust parser and writer rather than adopting
+nginx-lint-parser, Rowan, or Crossplane. Final plan:
+docs/feature/nginx-config-management.md. The visual spec records this decision.
+No implementation or tracker status changed. No application dependency changed.
+
+The plan covers lossless source, structural editing, system configuration,
+include graphs, unknown directives, native validation, and recoverable agent
+transactions. Follow actual Nginx grammar and test against real Nginx. Do not
+claim generic syntax support provides every module's semantics.
+
+Dependency review evidence is in
+/tmp/vscode-agent-codex-sandbox-H2LGk7/nginx-parser-deps/:
+tree.txt, metadata.json, maintenance-crates.json, and maintenance-repos.json.
+Parser 0.24.0 has 16 default transitive packages. The parser and Rowan are active;
+countme is archived; text-size migrated into Rust Analyzer; memoffset is quiet.
+This was a maintenance review, not a vulnerability audit. No library was adopted.

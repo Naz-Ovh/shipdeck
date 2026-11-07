@@ -1244,6 +1244,7 @@ server-setup.sh                <span class="c">a public URL of its own: it stays
             <tr><td>Code layout</td><td>A monorepo: <code>apps/</code> and <code>crates/</code>. <code>bin/shipdeck</code> moves to <code>apps/cli</code>.</td></tr>
             <tr><td>The order</td><td>Engine, desktop app, agent, domains, databases, ready-made apps, mail.</td></tr>
             <tr><td>Domains</td><td>nginx, not Caddy.</td></tr>
+            <tr><td>Nginx configuration</td><td>Own Rust parser and writer, with no new parser dependencies. Preserve source formatting and included files. Validate complete changes with Nginx before activation. <a href="../../feature/nginx-config-management.md">Configuration plan</a>.</td></tr>
             <tr><td>The server side</td><td>The on-demand agent now. keepup later, as its own optional program over a unix socket.</td></tr>
             <tr><td>Memory on the server</td><td><code>state.db</code>, with a number for every event, so the engine can catch up.</td></tr>
             <tr><td>Offline copy</td><td>In the engine, so the TUI gets it too (<a href="../../project-progress.html#p1e1">p1e1</a>).</td></tr>
