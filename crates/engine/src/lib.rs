@@ -4,6 +4,7 @@
 //!
 //! [`rpc`] serves those reports to an app over the protocol's pipe.
 
+pub mod agent;
 pub mod build;
 pub mod bundle;
 pub mod config;

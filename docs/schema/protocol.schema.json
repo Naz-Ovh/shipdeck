@@ -11,6 +11,68 @@
       ],
       "type": "string"
     },
+    "AgentHello": {
+      "description": "`agent/hello`: what the engine says about itself.",
+      "properties": {
+        "protocol": {
+          "description": "The agent protocol the engine speaks.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "version": {
+          "description": "The engine's version, such as `0.7.1`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocol",
+        "version"
+      ],
+      "title": "AgentHello",
+      "type": "object"
+    },
+    "AgentHelloResult": {
+      "description": "What `agent/hello` answers.",
+      "properties": {
+        "arch": {
+          "description": "The server's CPU, such as `x86_64`.",
+          "type": "string"
+        },
+        "os": {
+          "description": "The server's operating system, such as `linux`.",
+          "type": "string"
+        },
+        "protocol": {
+          "description": "The agent protocol the agent speaks.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "version": {
+          "description": "The agent's version, which must equal the engine's.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocol",
+        "version",
+        "os",
+        "arch"
+      ],
+      "title": "AgentHelloResult",
+      "type": "object"
+    },
+    "AgentPing": {
+      "description": "`agent/ping`: nothing to say.",
+      "title": "AgentPing",
+      "type": "object"
+    },
+    "AgentShutdown": {
+      "description": "`agent/shutdown`: nothing to say; the request itself is the message.",
+      "title": "AgentShutdown",
+      "type": "object"
+    },
     "AskRollback": {
       "description": "`ask/rollback`: the new release failed. Roll back?",
       "properties": {

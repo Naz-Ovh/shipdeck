@@ -1,7 +1,8 @@
 # Release check, called by release.yml after the binaries are built and before
-# the GitHub Release is made. The install script hands the gnu build to any
-# machine with glibc at or above min-glibc-version in dist-workspace.toml; this
-# fails the release if a gnu binary actually needs a newer glibc than that.
+# the GitHub Release is made. The install script and the agent's gnu/musl choice
+# rely on these floors: shipdeck's from dist-workspace.toml, the agent's from
+# crates/agent/Cargo.toml. This fails the release if a gnu binary actually needs
+# a newer glibc than its floor.
 name: glibc floor
 
 on:
@@ -36,8 +37,13 @@ jobs:
       - name: Check each binary
         run: |
           floor=$(python3 -c 'import tomllib; print(tomllib.load(open("dist-workspace.toml", "rb"))["dist"]["min-glibc-version"]["*"])')
+          agent_floor=$(python3 -c 'import tomllib; print(tomllib.load(open("crates/agent/Cargo.toml", "rb"))["package"]["metadata"]["dist"]["min-glibc-version"]["*"])')
           mkdir unpacked
           for archive in artifacts/*-unknown-linux-gnu.tar.xz; do
             tar -xJf "$archive" -C unpacked
           done
+          for archive in artifacts/*-unknown-linux-gnu.tar.gz; do
+            tar -xzf "$archive" -C unpacked
+          done
           cargo run --locked -q -p shipdeck-engine --example glibc_floor -- "$floor" unpacked/*/shipdeck
+          cargo run --locked -q -p shipdeck-engine --example glibc_floor -- "$agent_floor" unpacked/*/shipdeck-agent

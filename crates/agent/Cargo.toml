@@ -1,0 +1,39 @@
+[package]
+name = "shipdeck-agent"
+description = "The helper the engine starts on a server over SSH: JSON-RPC on stdin and stdout."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lib]
+name = "shipdeck_agent"
+path = "src/lib.rs"
+
+[[bin]]
+name = "shipdeck-agent"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+shipdeck-protocol.workspace = true
+tokio.workspace = true
+
+[package.metadata.dist]
+dist = true
+# The agent is an archive only: people never install it by hand.
+installers = []
+auto-includes = false
+targets = [
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu",
+  "x86_64-unknown-linux-musl",
+  "aarch64-unknown-linux-musl",
+]
+unix-archive = ".tar.gz"
+
+[package.metadata.dist.min-glibc-version]
+"*" = "2.31"

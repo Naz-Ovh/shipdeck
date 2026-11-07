@@ -302,7 +302,7 @@
         <li><span>All the work happens in one program: <b>the engine</b>.</span></li>
         <li><span>Every app you see (the TUI, the CLI, the desktop app, and later a web dashboard) is only a window on the engine. They talk with JSON messages, over stdin and stdout.</span></li>
         <li><span>The engine talks to your servers over SSH: one connection per server.</span></li>
-        <li><span>On each server, a small helper, <b>the agent</b>, does the work. It is uploaded when you connect, and it exits when you leave.</span></li>
+        <li><span>On each server, a small helper, <b>the agent</b>, does the work. It is installed when you connect, and it exits when you leave.</span></li>
         <li><span>Work that must finish, like a deploy, is handed to systemd. So it keeps going if your laptop closes.</span></li>
         <li><span>Nothing new listens on the internet. SSH stays the only way in.</span></li>
         <li><span>It is built step by step: engine, desktop app, agent, domains, databases, ready-made apps, mail.</span></li>
@@ -376,7 +376,7 @@
             <text class="s" x="584" y="105">starts</text>
             <rect class="n orange" x="456" y="118" width="240" height="54" rx="10"/>
             <text class="m b" x="576" y="141">shipdeck-agent</text>
-            <text class="m s" x="576" y="160">uploaded on connect · runs as you</text>
+            <text class="m s" x="576" y="160">installed on connect · runs as you</text>
             <path class="l" d="M530,174 V204" marker-end="url(#mk-a)"/>
             <text class="s" x="538" y="193">jobs, sudo</text>
             <path class="l" d="M656,174 V204" marker-end="url(#mk-a)"/>
@@ -504,7 +504,7 @@
           <li>Reads every <code>deploy.yaml</code> and finds every mistake, with the line and a hint.</li>
           <li>Builds, packs, finds the files that changed, and uploads them.</li>
           <li>Holds the SSH connections, logins and host keys: one connection per server.</li>
-          <li>Uploads the agent and starts it, at its own version.</li>
+          <li>Installs the agent and starts it, at its own version.</li>
           <li>Starts deploys and reports every step to the apps.</li>
           <li>Keeps the offline copy on your PC, and fetches what is new from each server.</li>
           <li>Later: opens an SSH tunnel to show database tables.</li>
@@ -650,7 +650,7 @@
             </ul>
           </div>
         </div>
-        <div class="note"><b>When you come back</b><p>The engine connects, starts the agent (and uploads it if needed), asks for the events it missed, and shows how the deploy ended.</p></div>
+        <div class="note"><b>When you come back</b><p>The engine connects, starts the agent (and installs it if needed), asks for the events it missed, and shows how the deploy ended.</p></div>
       </article>
 
       <article class="frame" id="catchup" data-zoom data-n="#13" data-t="Catching up">
@@ -872,7 +872,7 @@ server-setup.sh                <span class="c">a public URL of its own: it stays
           <div class="way pick">
             <h4>On-demand agent <small>chosen</small></h4>
             <figure class="art">
-              <svg viewBox="0 0 320 200" role="img" aria-label="The engine uploads the agent and talks to it with JSON messages over SSH; the agent runs as you and exits after; systemd runs the project and jobs.">
+              <svg viewBox="0 0 320 200" role="img" aria-label="The engine installs the agent and talks to it with JSON messages over SSH; the agent runs as you and exits after; systemd runs the project and jobs.">
                 <defs><marker id="mk-w2" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ah" d="M0,0 L8,4 L0,8 z"/></marker></defs>
                 <rect class="n green" x="8" y="70" width="96" height="40" rx="10"/><text class="m b" x="56" y="95">engine</text>
                 <text class="m xs" x="56" y="126">your PC</text>
@@ -885,7 +885,7 @@ server-setup.sh                <span class="c">a public URL of its own: it stays
                 <rect class="n" x="182" y="122" width="118" height="56" rx="8"/><text class="m sm b" x="241" y="144">systemd</text><text class="m xs" x="241" y="162">project · jobs · timers</text>
               </svg>
             </figure>
-            <p>The engine uploads a small shipdeck program and starts it over SSH, the way VS Code starts its server. Best when you want a real program on the server, with nothing running there after you leave.</p>
+            <p>The engine installs a small shipdeck program on the server and starts it over SSH, the way VS Code starts its server. Best when you want a real program on the server, with nothing running there after you leave.</p>
           </div>
           <div class="way">
             <h4>Always-on agent <small style="color:var(--muted)">only if needed</small></h4>
@@ -917,7 +917,7 @@ server-setup.sh                <span class="c">a public URL of its own: it stays
           <thead><tr><th></th><th>No agent</th><th>On-demand agent</th><th>Always-on agent</th></tr></thead>
           <tbody>
             <tr class="grp"><td colspan="4">On the server</td></tr>
-            <tr><td>Setup</td><td><span class="ok">✓</span>Nothing to install.</td><td><span class="ok">✓</span>Nothing by hand. It uploads itself, a few MB once per version.</td><td><span class="no">✕</span>Install once as root, on every server.</td></tr>
+            <tr><td>Setup</td><td><span class="ok">✓</span>Nothing to install.</td><td><span class="ok">✓</span>Nothing by hand. The server downloads it, a few MB once per version.</td><td><span class="no">✕</span>Install once as root, on every server.</td></tr>
             <tr><td>While you are away</td><td><span class="ok">✓</span>Nothing of ours runs.</td><td><span class="ok">✓</span>Nothing of ours, except jobs you started.</td><td><span class="mid">~</span>A root process, all the time.</td></tr>
             <tr><td>What can be attacked</td><td><span class="ok">✓</span>SSH only.</td><td><span class="ok">✓</span>SSH only.</td><td><span class="no">✕</span>SSH, plus a root program, plus a port if reached without SSH.</td></tr>
             <tr><td>Root</td><td><span class="mid">~</span>sudo: a fixed list of commands.</td><td><span class="mid">~</span>sudo when a task needs it.</td><td><span class="mid">~</span>Always root. So is any bug in it.</td></tr>

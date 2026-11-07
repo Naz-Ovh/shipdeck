@@ -236,6 +236,7 @@
     <aside class="next">
       <h2>Up next</h2>
       <ol>
+        <li>The agent now starts on the server (<a href="#p3a1">p3a1</a>, <a href="#p3a2">p3a2</a>). When shipdeck connects, the server downloads the matching build and the engine asks it to say hello. The agent does no work yet. Moving file steps into it is next (<a href="#p3a3">p3a3</a>).</li>
         <li>Owner: answer the open decisions marked <b>waiting</b>: four for the desktop app (<a href="#p2d1">p2d1</a> to <a href="#p2d4">p2d4</a>) and two for the agent (<a href="#p3d1">p3d1</a>, <a href="#p3d2">p3d2</a>). None of them blocks the engine work. To see only them, pick “Next, and waiting for you” in the filter.</li>
         <li>Owner: five changes since version 0.6.1 are built but not released. They are Windows support (<a href="#p0f2">p0f2</a>), release details with <kbd>D</kbd> (<a href="#p0b3">p0b3</a>), wrapped log lines (<a href="#p0e3">p0e3</a>), the check for Windows line endings (<a href="#p0c4">p0c4</a>), and the end of support for pre-0.6 releases (<a href="#p0c5">p0c5</a>). Try them, then say when to make a release.</li>
         <li>Owner: look at the spec page, <a href="visual/Plan/spec.html">spec.html</a> (<a href="#p1a1">p1a1</a>), and say yes or what to change. All the older planning pages are merged into it.</li>
@@ -491,12 +492,12 @@ const PLAN = [
  ]},
 
  { n: 3, title: "Server agent", short: "Agent", c: "orange",
-   blurb: "A small helper program, <code>shipdeck-agent</code>. The engine uploads it to the server when it connects, the way VS Code does. It runs only while you are connected, as your SSH user, and uses sudo when it needs root. It works with files and services directly, instead of through shell scripts.", subs: [
+   blurb: "A small helper program, <code>shipdeck-agent</code>. The engine installs it on the server when it connects, the way VS Code does; the server downloads it over HTTPS. It runs only while you are connected, as your SSH user, and uses sudo when it needs root. It works with files and services directly, instead of through shell scripts.", subs: [
   { title: "The agent", items: [
-   ["p3a1", "Uploaded and updated on connect", "planned", "",
-    "<p>The engine copies the agent to <code>~/.shipdeck/bin</code> on the server, at the same version as itself, so the two always match. The agent starts over SSH and exits when you leave. Nothing listens on a public port.</p><p>Two cases to handle: a home folder that does not allow running programs (noexec), and 32-bit ARM servers, which need their own build.</p>",
+   ["p3a1", "Installed and updated on connect", "built", "2026-11-06",
+    "<p>The server downloads the agent into <code>~/.shipdeck/bin</code> at the same version as the engine, so the two always match. Nothing crosses SSH but control messages. The agent starts over SSH and exits when you leave. Nothing listens on a public port.</p><p>Two cases to handle: a home folder that does not allow running programs (noexec), and 32-bit ARM servers, which need their own build.</p>",
     ""],
-   ["p3a2", "The same messages as the engine", "planned", "",
+   ["p3a2", "The same messages as the engine", "built", "2026-11-06",
     "<p>The engine and the agent speak the same JSON-RPC, over the SSH connection. That means clear requests and live events, instead of shell scripts and reading their output.</p>",
     "<a href=\"#p1b1\">p1b1</a>"],
    ["p3a3", "Files, natively", "planned", "",

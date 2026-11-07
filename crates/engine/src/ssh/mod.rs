@@ -20,7 +20,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use russh::client::{self, Handle};
 use russh::{ChannelMsg, Disconnect};
 use russh_sftp::client::SftpSession;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc::UnboundedSender;
 
 use handler::Client;
@@ -74,6 +74,8 @@ pub struct Session {
     pub shell_env: ShellEnv,
     /// The login shell's exported variables, run before every script.
     prelude: String,
+    /// The agent for this server, or `None` when it could not start.
+    agent: Mutex<Option<Arc<crate::agent::Agent>>>,
 }
 
 impl Session {
@@ -91,6 +93,43 @@ impl Session {
     /// status arrives.
     pub async fn exec(&self, script: &str) -> Result<Output> {
         self.exec_with(script, |_, _| {}).await
+    }
+
+    /// Runs a POSIX `sh` script without the login shell's environment.
+    /// Output that must stay clean, such as the agent's protocol channel,
+    /// uses this: a startup file that prints would corrupt it.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the channel cannot be opened, the command cannot start,
+    /// it is killed by a signal, or the connection closes before an exit
+    /// status arrives.
+    pub async fn exec_raw(&self, script: &str) -> Result<Output> {
+        self.run(&format!("sh -c {}", sh_quote(script)), |_, _| {})
+            .await
+    }
+
+    /// Starts `command` and returns its channel as one two-way stream. The
+    /// agent reads requests and writes answers on it. No terminal is asked
+    /// for, and nothing but the command's own bytes cross it.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the channel cannot be opened or the command cannot start.
+    pub async fn open_stream(
+        &self,
+        command: &str,
+    ) -> Result<impl AsyncRead + AsyncWrite + Unpin + Send + 'static> {
+        let channel = self
+            .handle
+            .channel_open_session()
+            .await
+            .with_context(|| format!("opening a channel to {}", self.label))?;
+        channel
+            .exec(true, command)
+            .await
+            .context("starting the remote command")?;
+        Ok(channel.into_stream())
     }
 
     /// Runs a POSIX `sh` script, handing each output line to `on_line` as it
@@ -310,7 +349,44 @@ impl Session {
         }
     }
 
+    /// Uploads and starts the agent for this server, or records why it could
+    /// not start. A missing agent never blocks the SSH path.
+    pub async fn start_agent(&self) {
+        let started = crate::agent::Agent::start(self).await;
+        let value = match started {
+            Ok(agent) => Some(Arc::new(agent)),
+            Err(err) => {
+                eprintln!(
+                    "shipdeck: {}: the agent is unavailable: {err:#}",
+                    self.label
+                );
+                None
+            }
+        };
+        *self
+            .agent
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = value;
+    }
+
+    /// The running agent, once [`Self::start_agent`] has finished.
+    #[must_use]
+    pub fn agent(&self) -> Option<Arc<crate::agent::Agent>> {
+        self.agent
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
     pub async fn close(&self) {
+        let agent = self
+            .agent
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(agent) = agent {
+            agent.shutdown().await;
+        }
         let _ = self
             .handle
             .disconnect(Disconnect::ByApplication, "bye", "en")
@@ -426,10 +502,12 @@ impl Pool {
             user: target.user.clone(),
             shell_env: ShellEnv::Off,
             prelude: String::new(),
+            agent: Mutex::new(None),
         };
         if self.shell_env && target.shell_env {
             session.load_shell_env().await;
         }
+        session.start_agent().await;
         Ok(session)
     }
 
