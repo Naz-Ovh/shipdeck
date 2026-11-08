@@ -25,6 +25,6 @@ of these and a deploy fails on someone's server, or opens a hole.
   must change with it (`setup_test.rs` checks they match).
 - Preflight requires all of `sudo_commands`, so a command a deploy can do
   without goes in `control_commands`, and older servers keep deploying.
-- `server-setup.sh` at the repository root is public and runs as root through
+- `scripts/server-setup.sh` is public and runs as root through
   `curl | bash`, pinned to a release tag. It validates every argument before
   doing anything; keep it that way, and tag every release (`v<version>`).

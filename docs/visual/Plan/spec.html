@@ -820,7 +820,7 @@ crates/                        <span class="c">the code the shipdeck command is 
 docs/                          <span class="c">plan.md, project-progress.html, visual/Plan/spec.html, website/</span>
 ├── schema/                    <span class="c">deploy.schema.json, protocol.schema.json: published with each release</span>
 └── code/  feature/            <span class="c">how it works, and how each feature works</span>
-server-setup.sh                <span class="c">a public URL of its own: it stays at the root</span></pre>
+scripts/server-setup.sh        <span class="c">a public URL pinned to each release tag</span></pre>
         <ul class="plain" style="margin-top:10px">
           <li><b>Why <code>apps/cli</code>:</b> a top-level <code>bin/</code> would sit next to the <code>bin/</code> and <code>obj/</code> folders that every .NET build makes. The package keeps its name, <code>shipdeck</code>, because dist names the release files after it.</li>
           <li><b>The move comes first</b> (<a href="../../project-progress.html#p1a2">p1a2</a>). <code>apps/cli</code> is at the same depth as <code>bin/shipdeck</code>, so no test path changes.</li>
@@ -1130,7 +1130,7 @@ server-setup.sh                <span class="c">a public URL of its own: it stays
           <li>The npm name <code>shipdeck</code> belongs to someone else, so it ships as <code>@nhrs/shipdeck</code>. The command is still <code>shipdeck</code>.</li>
           <li>Each registry uses trusted publishing where it exists, so no token is stored. crates.io and npm need one token for the very first publish.</li>
           <li>Homebrew, .deb, .rpm, AUR and AppImage: not now. Maybe later, if people ask.</li>
-          <li>The license is MIT OR Apache-2.0.</li>
+          <li>The license is MIT.</li>
         </ul>
       </article>
 
@@ -1254,7 +1254,7 @@ server-setup.sh                <span class="c">a public URL of its own: it stays
             <tr><td>keepup and root</td><td>Only if the server's owner chooses it; not root by default (<a href="../../project-progress.html#p8a2">p8a2</a>).</td></tr>
             <tr><td>The website</td><td>Moves to TanStack Start, keeps Fumadocs, and stays in <code>docs/website</code>.</td></tr>
             <tr><td>Linux builds</td><td>gnu for glibc 2.28 or newer, static musl for everything else.</td></tr>
-            <tr><td>License</td><td>MIT OR Apache-2.0.</td></tr>
+            <tr><td>License</td><td>MIT.</td></tr>
           </tbody>
         </table>
       </article>

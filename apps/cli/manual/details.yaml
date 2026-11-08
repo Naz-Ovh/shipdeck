@@ -1624,7 +1624,7 @@ server-setup:
   text: |
     server-setup.sh sets up one app's deploy user on a server. It is optional: `shipdeck setup`
     does the same guided work from the app, and shipdeck also works as root.
-      curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v<version>/server-setup.sh \
+      curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v<version>/scripts/server-setup.sh \
         | bash -s -- --user deploy --dir /opt/my-api --service my-api \
             --key "$(cat ~/.ssh/id_ed25519.pub)"         # --manager pm2 for a PM2 app
     Use the tag of your shipdeck version (`shipdeck --version`, with a v), so what runs as root

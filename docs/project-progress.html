@@ -335,7 +335,7 @@ const PLAN = [
     "<code>ssh::shell_env</code>"],
    ["p0d3", "server-setup.sh: an optional deploy user", "done", "2026-10-15",
     "<p>No server setup is needed: shipdeck deploys as whatever user you choose. If you want a separate user with only the rights one project needs, you run <code>server-setup.sh</code> by hand, as root.</p>",
-    "<code>server-setup.sh</code> · <code>crates/engine/src/setup</code>"],
+    "<code>scripts/server-setup.sh</code> · <code>crates/engine/src/setup</code>"],
   ]},
   { title: "Screens and scripts", items: [
    ["p0e1", "The terminal UI", "done", "2026-10-14",
@@ -356,7 +356,7 @@ const PLAN = [
   ]},
   { title: "Install and platforms", items: [
    ["p0f1", "Install with one command", "done", "2026-10-14",
-    "<p>Every release has ready-made binaries and an install script. On Linux, a machine with glibc 2.28 or newer gets the faster gnu build; any other gets a static musl build. The license is MIT OR Apache-2.0.</p><p>Installing with <code>cargo binstall</code> is in the code too, but not in a release yet.</p>",
+    "<p>Every release has ready-made binaries and an install script. On Linux, a machine with glibc 2.28 or newer gets the faster gnu build; any other gets a static musl build. The license is MIT.</p><p>Installing with <code>cargo binstall</code> is in the code too, but not in a release yet.</p>",
     "<code>dist-workspace.toml</code> · <a href=\"visual/Plan/spec.html#release\">spec: How a release is made</a>"],
    ["p0f2", "Build and deploy from Windows", "built", "2026-10-18",
     "<p>shipdeck now runs on Windows too: it builds there and deploys to a Linux server.</p><p>It is in the code, but not in a release yet. Releases have no Windows binary yet, so on Windows you build shipdeck from source.</p>",

@@ -23,7 +23,7 @@ const SETUP_TIMEOUT: Duration = Duration::from_secs(600);
 /// changes with a new release.
 #[must_use]
 pub fn script_url() -> String {
-    raw_url(SCRIPT_NAME)
+    raw_url(&format!("scripts/{SCRIPT_NAME}"))
 }
 
 /// The setup command for one systemd app, without `--key`: for a server
@@ -36,7 +36,7 @@ pub fn command(user: &str, dir: &str, service: &str) -> String {
     )
 }
 
-/// A file at the root of the shipdeck repository, at this version's tag.
+/// A file in the shipdeck repository, at this version's tag.
 #[must_use]
 pub fn raw_url(file: &str) -> String {
     let repository = env!("CARGO_PKG_REPOSITORY").trim_end_matches('/');

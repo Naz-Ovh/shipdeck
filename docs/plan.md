@@ -248,7 +248,7 @@ crates/engine/src/
 │                  check), shared links, server commands, switch, unit, health,
 │                  backups (picking the files, packing, unpacking), rotate, the
 │                  service by hand (stop, start, restart, the live log)
-├── setup.rs       the server setup command (the script is server-setup.sh at the root)
+├── setup.rs       the server setup command (the script is scripts/server-setup.sh)
 └── deploy/        the deploy and rollback flows, and the progress reports
 ```
 

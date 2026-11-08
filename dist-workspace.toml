@@ -28,6 +28,10 @@ post-announce-jobs = ["./docs"]
 [dist.min-glibc-version]
 "*" = "2.28"
 
+# dist 0.33 defaults to macos-14, which GitHub retired on November 2, 2026.
+[dist.github-custom-runners.aarch64-apple-darwin]
+runner = "macos-15"
+
 # gnu builds run in an old-glibc container: the container's glibc is the floor.
 # dist itself runs there as its static musl build.
 [dist.github-custom-runners.x86_64-unknown-linux-gnu]

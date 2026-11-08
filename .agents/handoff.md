@@ -1,5 +1,42 @@
 # Handoff
 
+## v0.8.1 release restart prepared — 2026-11-08
+
+The owner authorized committing the runner fix, the Apache license removal,
+and the server setup script move, then restarting the release. The old
+v0.8.1 run (42494366128) is cancelled and no v0.8.1 GitHub release exists.
+Remote main and the tag both pointed to b6ff59f before this update.
+
+The workspace license and design/progress docs now say MIT. The setup script
+lives at `scripts/server-setup.sh`; engine download URLs, test paths, the
+manual, script example, and layout docs use its new location. Its executable
+behavior is unchanged. The workspace version remains 0.8.1.
+
+Fresh checks passed: formatting, workspace check with all targets, strict
+pedantic/performance Clippy, all 395 Rust tests, six artifact gate tests,
+Bash syntax, `dist generate --check`, and `git diff --check`. The release plan
+selects native `macos-15` for Apple Silicon. The restart must use a new tag
+push on the fixed commit, because a rerun keeps the old commit.
+
+## Release CI macOS runner — 2026-11-08
+
+The CI error `The configuration 'macos-14-arm64-us-default' is not supported`
+comes from cargo-dist 0.33.0 selecting `macos-14` for `aarch64-apple-darwin`.
+GitHub retired macOS 14 runners on November 2, 2026:
+https://github.com/actions/runner-images/issues/13518.
+
+Added an explicit `macos-15` runner in `dist-workspace.toml`. The generated
+workflow reads its matrix from the plan, so no workflow edit is needed.
+
+Verified with the pinned dist 0.33.0: `dist plan` before and after, and
+`dist generate --check`. A comparison of both plans confirms that only the
+Apple Silicon runner changes; hosts, targets, Linux containers, and other
+runners stay unchanged. All six release artifact tests and `git diff --check`
+passed. No Rust source changed, so Rust checks were not run. A hosted macOS
+build was not run. No commit, tag, push, or release action was performed.
+An existing failed release must use a commit containing this fix; rerunning
+the old tag will still use the old configuration.
+
 ## Privileged agent install and version policy — 2026-11-08
 
 Implemented the agreed policy in `docs/feature/agent-version-policy.md`. No

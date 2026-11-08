@@ -4,11 +4,11 @@ use std::process::Command;
 use super::*;
 use crate::remote::{control_commands, sudo_commands};
 
-/// The script as committed at the repository root.
-const SCRIPT: &str = include_str!("../../../server-setup.sh");
+/// The script as committed in the scripts directory.
+const SCRIPT: &str = include_str!("../../../scripts/server-setup.sh");
 
 fn script_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../server-setup.sh")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/server-setup.sh")
 }
 
 #[test]
@@ -16,7 +16,7 @@ fn url_is_pinned_to_this_release() {
     assert_eq!(
         script_url(),
         format!(
-            "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v{}/server-setup.sh",
+            "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v{}/scripts/server-setup.sh",
             env!("CARGO_PKG_VERSION")
         )
     );

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shipdeck server setup: run once as root on a server shipdeck will deploy to.
 #
-#   curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/<tag>/server-setup.sh \
+#   curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/<tag>/scripts/server-setup.sh \
 #     | bash -s -- --user deploy --dir /opt/my-api --service my-api --key 'ssh-ed25519 AAAA... me@pc'
 #
 # Fill in your own values: the SSH user, service.dir and service.name from
