@@ -83,7 +83,7 @@ There is no prebuilt Windows binary yet. Install from source with cargo, using R
 cargo install --git https://github.com/Naz-Ovh/shipdeck shipdeck
 ```
 
-[Git for Windows](https://gitforwindows.org) is required. Local commands (`run.local` and the build) run in its `sh.exe`, so one `deploy.yaml` works on every PC. shipdeck takes the first `sh.exe` of:
+[Git for Windows](https://gitforwindows.org) is required. Local commands (`run.local` and the build) run in its `sh.exe`, so one `shipdeck.yaml` works on every PC. shipdeck takes the first `sh.exe` of:
 
 1. the one `--gitshell-path <PATH>` or the `SHIPDECK_GITSHELL_PATH` variable names;
 2. the one `git var GIT_SHELL_PATH` names;
@@ -95,8 +95,8 @@ A link to `sh.exe` works too, for example in `%LOCALAPPDATA%\Microsoft\WindowsAp
 A few things differ from Linux and macOS:
 
 - **File modes.** Windows has no Unix modes, so every shipped file gets `0644`. `.env` files still get `0600` and `pipeline.pack.binary` `0755`, as on Linux. A script that must run on the server needs a `chmod +x` in `pipeline.setup.run.server`.
-- **Line endings.** `deploy.yaml` must use LF. A carriage return anywhere is refused with `deploy.yaml has Windows line endings (CRLF); shipdeck reads LF only`. Save the file with LF; in Git, `*.yaml text eol=lf` in `.gitattributes` keeps it that way on Windows checkouts.
-- **Paths.** Paths inside `deploy.yaml` always use `/`.
+- **Line endings.** `shipdeck.yaml` must use LF. A carriage return anywhere is refused with `shipdeck.yaml has Windows line endings (CRLF); shipdeck reads LF only`. Save the file with LF; in Git, `*.yaml text eol=lf` in `.gitattributes` keeps it that way on Windows checkouts.
+- **Paths.** Paths inside `shipdeck.yaml` always use `/`.
 - **Links.** A symbolic link in the project has its `\` turned into `/`. A link to a drive or a root (`C:\app`, `\app`) is refused: it means nothing on the server.
 - **`~/.ssh/config`.** `%u` in `IdentityFile` expands to `USERNAME` (`USER` elsewhere).
 
@@ -180,20 +180,20 @@ shipdeck 0.3.1
 
 ## Editor completion
 
-shipdeck generates a JSON Schema for `deploy.yaml` and publishes it with every release tag. Put this line at the top of a `deploy.yaml`, and any editor that uses the YAML language server (the VS Code YAML extension, Neovim, Zed, JetBrains IDEs) gives you completion, descriptions and errors as you type:
+shipdeck generates a JSON Schema for `shipdeck.yaml` and publishes it with every release tag. Put this line at the top of a `shipdeck.yaml`, and any editor that uses the YAML language server (the VS Code YAML extension, Neovim, Zed, JetBrains IDEs) gives you completion, descriptions and errors as you type:
 
-```yaml title="deploy.yaml"
+```yaml title="shipdeck.yaml"
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.7.1/deploy.schema.json
 ```
 
 The URL contains the version, so update it when you upgrade shipdeck. shipdeck itself ignores comments; the line is only for your editor.
 
-To map the schema for every `deploy.yaml` in a repository at once, add this to `.vscode/settings.json` instead:
+To map the schema for every `shipdeck.yaml` in a repository at once, add this to `.vscode/settings.json` instead:
 
 ```json title=".vscode/settings.json"
 {
   "yaml.schemas": {
-    "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.7.1/deploy.schema.json": "**/deploy.yaml"
+    "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.7.1/deploy.schema.json": "**/shipdeck.yaml"
   }
 }
 ```
@@ -207,6 +207,6 @@ shipdeck --schema > deploy.schema.json
 ## Next
 
 <Cards>
-  <Card title="Quickstart" href="/docs/getting-started/quickstart" description="Write a deploy.yaml and run your first deploy." />
+  <Card title="Quickstart" href="/docs/getting-started/quickstart" description="Write a shipdeck.yaml and run your first deploy." />
   <Card title="Command line" href="/docs/reference/cli" description="Every flag, the login options and exit codes." />
 </Cards>

@@ -1,4 +1,4 @@
-//! `deploy.yaml`: what one deployable is, where it runs, and the pipeline
+//! `shipdeck.yaml`: what one deployable is, where it runs, and the pipeline
 //! that ships it.
 //!
 //! Reading one goes in three passes, so every problem in a file is reported
@@ -9,6 +9,7 @@
 mod check;
 mod deployment;
 mod discover;
+mod file;
 #[cfg(test)]
 mod fixtures;
 pub mod glob;
@@ -21,11 +22,13 @@ mod yaml;
 
 pub use deployment::{Deployment, MonorepoDeployment};
 pub use discover::{Discovery, discover};
+use file::DeployConfigFile;
+pub use file::StaticSite;
 pub use problem::{FileProblems, Problem, Span, render};
 pub use service::{Manager, Pm2, Service};
 
 use std::borrow::Cow;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
@@ -33,31 +36,28 @@ use serde::{Deserialize, Serialize};
 use crate::ssh::Endpoint;
 
 /// The files that mark a folder as a deployable; a folder may have one of them.
-pub const FILE_NAMES: [&str; 2] = ["deploy.yaml", "deploy.yml"];
-/// Optional file next to `deploy.yaml` that replaces the built-in systemd unit.
+pub const FILE_NAMES: [&str; 2] = ["shipdeck.yaml", "shipdeck.yml"];
+/// Optional file next to `shipdeck.yaml` that replaces the built-in systemd unit.
 pub const UNIT_TEMPLATE: &str = "service.template";
 
 /// One deployable: what it is, where it runs, and the pipeline that ships it.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone)]
 pub struct DeployConfig {
     /// The name shipdeck shows, such as `My API (prod)`. Also the systemd
     /// unit's description.
     pub name: String,
-    /// Your source folder, relative to this deploy.yaml. Local commands run
+    /// Your source folder, relative to this shipdeck.yaml. Local commands run
     /// here, and `pipeline.pack` takes project files from here. Default: the
-    /// folder of this deploy.yaml.
-    #[serde(default = "default_project")]
+    /// folder of this shipdeck.yaml.
     pub project: String,
     /// How to log in to the server.
     pub ssh: SshTarget,
-    /// The service on the server (a systemd unit or a PM2 app), and where
-    /// its releases live.
+    /// The service on the server (a systemd unit or a PM2 app), or a static
+    /// site. Static settings are kept here too, with `manager: static`.
     pub service: Service,
     /// The steps of a deploy, in order: preflight, build, pack, setup,
     /// backup, health, done, and failed when a step fails. upload, unpack,
     /// switch and restart are done by shipdeck and take no settings.
-    #[serde(default)]
     pub pipeline: Pipeline,
 }
 
@@ -109,7 +109,7 @@ impl Default for Keep {
 #[serde(deny_unknown_fields)]
 pub struct Pipeline {
     /// Step 1. shipdeck checks your PC and the server, then runs
-    /// `run.server` in `service.dir`, then `run.local` in `project`. A failure
+    /// `run.server` in `dir`, then `run.local` in `project`. A failure
     /// stops the deploy before anything is built.
     #[serde(default)]
     pub preflight: Preflight,
@@ -154,7 +154,7 @@ pub struct Preflight {
     /// stops if one is missing.
     #[serde(default)]
     pub requires: Vec<String>,
-    /// `server` runs first, in `service.dir`; then `local`, in `project`.
+    /// `server` runs first, in `dir`; then `local`, in `project`.
     #[serde(default)]
     pub run: LocalAndServer,
 }
@@ -209,7 +209,7 @@ pub struct Sources {
     /// is the whole project.
     #[serde(default)]
     pub project: Vec<String>,
-    /// Relative to this deploy.yaml's folder, for files that belong to this
+    /// Relative to this shipdeck.yaml's folder, for files that belong to this
     /// deployment, such as `.env`. A file here replaces a project file at the
     /// same path.
     #[serde(default)]
@@ -413,7 +413,7 @@ impl JsonSchema for Commands {
 fn default_true() -> bool {
     true
 }
-fn default_project() -> String {
+pub(super) fn default_project() -> String {
     ".".into()
 }
 fn default_open() -> usize {
@@ -430,7 +430,7 @@ fn default_timeout() -> u64 {
 /// order when `pipeline.build.version_from` is not set.
 pub const VERSION_FILES: [&str; 4] = ["Cargo.toml", "package.json", "pyproject.toml", "VERSION"];
 
-/// Reads the text of a `deploy.yaml`, or says everything wrong with it.
+/// Reads the text of a `shipdeck.yaml`, or says everything wrong with it.
 ///
 /// # Errors
 /// Returns every problem in the text, each with its line when it has one.
@@ -445,16 +445,18 @@ fn parse_tree(text: &str) -> Result<(DeployConfig, yaml::Node), Vec<Problem>> {
     let checked = check::structure(&root);
     let mut problems = checked.problems;
     // What fits is still read, so value problems show up in the same run.
-    match serde_json::from_value::<DeployConfig>(checked.value) {
-        Ok(config) => {
-            problems.extend(rules::check(&config, &root));
-            if problems.is_empty() {
+    match serde_json::from_value::<DeployConfigFile>(checked.value) {
+        Ok(file) => {
+            problems.extend(rules::check(&file, &root));
+            if problems.is_empty()
+                && let Some(config) = file.into_config()
+            {
                 return Ok((config, root));
             }
         }
         Err(err) if problems.is_empty() => {
             problems.push(Problem::new(format!(
-                "deploy.yaml could not be read: {err}"
+                "shipdeck.yaml could not be read: {err}"
             )));
         }
         Err(_) => {}
@@ -483,14 +485,14 @@ pub enum Program {
     InRelease(String),
 }
 
-/// One folder under the deploy root, with its parsed `deploy.yaml`.
+/// One folder under the deploy root, with its parsed `shipdeck.yaml`.
 #[derive(Debug, Clone)]
 pub struct Deployable {
     pub folder: PathBuf,
     /// The folder name, used as a short handle in the UI.
     pub slug: String,
     pub config: DeployConfig,
-    /// `deploy.yaml` as it was read; a release's content fingerprint
+    /// `shipdeck.yaml` as it was read; a release's content fingerprint
     /// covers it, so a changed setting is a changed release.
     pub yaml: String,
     /// `config.ssh` with `~/.ssh/config` applied.
@@ -514,7 +516,12 @@ impl Deployable {
             [] => {
                 return Err(FileProblems::without_source(
                     folder.join(FILE_NAMES[0]),
-                    Problem::new(format!("{} has no {}", folder.display(), FILE_NAMES[0])),
+                    Problem::new(format!(
+                        "{} has no {} or {}",
+                        folder.display(),
+                        FILE_NAMES[0],
+                        FILE_NAMES[1]
+                    )),
                 ));
             }
             _ => {
@@ -620,16 +627,35 @@ impl Deployable {
     }
 
     /// The program the service starts, and the rest of `service.start`.
+    /// Empty for a static site, which runs nothing.
     #[must_use]
     pub fn start(&self) -> (Program, String) {
+        if self.config.service.is_static() {
+            return (Program::Tool(String::new()), String::new());
+        }
         self.config.service.command(self.binary_name().as_deref())
+    }
+
+    /// The live folder a web server reads, for a static site.
+    #[must_use]
+    pub fn served_path(&self) -> Option<String> {
+        self.config.service.served_path("")
     }
 
     /// Programs preflight must find on the server: the start program when
     /// it lives outside the release, `pm2` with PM2, then
-    /// `preflight.requires`.
+    /// `preflight.requires`. A static site needs only the last.
     #[must_use]
     pub fn required_tools(&self) -> Vec<String> {
+        if self.config.service.is_static() {
+            let mut tools: Vec<String> = Vec::new();
+            for tool in &self.config.pipeline.preflight.requires {
+                if !tools.contains(tool) {
+                    tools.push(tool.clone());
+                }
+            }
+            return tools;
+        }
         let service = &self.config.service;
         let mut tools = Vec::new();
         if service.pm2.ecosystem.is_none()
@@ -661,6 +687,36 @@ pub fn release_path(entry: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("/")
+}
+
+/// A relative path inside a base folder. `./dist` and `dist` are the same
+/// path. Absolute paths, `..` and an empty result are refused.
+///
+/// # Errors
+/// Returns why the path cannot stay inside its base folder.
+pub fn inside_path(entry: &str) -> std::result::Result<String, &'static str> {
+    if entry.contains(['\\', '\n', '\r']) {
+        return Err("must not contain backslashes or newlines");
+    }
+    let path = Path::new(entry);
+    if path.is_absolute() {
+        return Err("must be relative, not start with `/`");
+    }
+    let mut parts = Vec::new();
+    for part in path.components() {
+        match part {
+            Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
+            Component::CurDir => {}
+            Component::ParentDir => return Err("must not climb out with `..`"),
+            Component::RootDir | Component::Prefix(_) => {
+                return Err("must be a relative path");
+            }
+        }
+    }
+    if parts.is_empty() {
+        return Err("must name a folder inside it, not the folder itself");
+    }
+    Ok(parts.join("/"))
 }
 
 fn file_name(path: &str) -> String {

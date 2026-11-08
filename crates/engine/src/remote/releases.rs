@@ -209,8 +209,31 @@ impl Server {
     /// # Errors
     /// Returns an error when the status commands cannot run.
     pub async fn status(&self) -> Result<Status> {
+        if self.is_static() {
+            let script = format!(
+                "if [ -d {dir} ]; then echo dir=yes; else echo dir=no; fi
+echo \"current=$(readlink {dir}/current 2>/dev/null)\"",
+                dir = self.q_dir(),
+            );
+            let out = self.session.exec(&script).await?;
+            let values = super::pairs(&out.stdout);
+            let get = |key: &str| {
+                values
+                    .iter()
+                    .find(|(k, _)| *k == key)
+                    .map(|(_, v)| v.trim().to_string())
+                    .unwrap_or_default()
+            };
+            let current = get("current");
+            return Ok(Status {
+                dir_exists: get("dir") == "yes",
+                current: (!current.is_empty())
+                    .then(|| current.rsplit('/').next().unwrap_or(&current).to_string()),
+                active: "static".into(),
+            });
+        }
         if let Some(agent) = self.session.agent() {
-            let status = agent.service_status(&self.agent_service()).await?;
+            let status = agent.service_status(&self.agent_service()?).await?;
             return Ok(Status {
                 dir_exists: status.dir_exists,
                 current: status.current,
@@ -237,6 +260,7 @@ echo \"active=$(systemctl is-active {svc} 2>&1 | head -n1)\"",
         let active = match self.manager {
             Manager::Systemd => get("active"),
             Manager::Pm2 => self.pm2_state().await?.0,
+            Manager::Static => "static".into(),
         };
         Ok(Status {
             dir_exists: get("dir") == "yes",

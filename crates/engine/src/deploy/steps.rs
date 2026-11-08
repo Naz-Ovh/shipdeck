@@ -40,7 +40,7 @@ impl Step {
         }
     }
 
-    /// As deploy.yaml and `SHIPDECK_STEP` spell it.
+    /// As shipdeck.yaml and `SHIPDECK_STEP` spell it.
     #[must_use]
     pub fn key(self) -> &'static str {
         match self {

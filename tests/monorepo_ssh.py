@@ -114,7 +114,7 @@ apps:
 {app_options}      build: {{run: {{local: 'echo {other} >> ../order.log'}}}}
       health: {{url: 'http://127.0.0.1:{port}'}}
 """
-        (self.project / "deploy.yaml").write_text(self.config)
+        (self.project / "shipdeck.yaml").write_text(self.config)
 
     def run(self):
         self.cli("deploy")
@@ -160,14 +160,14 @@ apps:
         # A missing unit after setup fails halfway through activation.
         self.write_config()
         (self.project / "VERSION").write_text("4.0.0\n")
-        (self.project / "deploy.yaml").write_text(self.config.replace(
+        (self.project / "shipdeck.yaml").write_text(self.config.replace(
             "echo global > hooks.log", f"echo global > hooks.log && rm {self.name}-api.service"))
         self.cli("deploy", expected=3)
         assert self.current() == first
         # Done-hook errors keep a healthy release and return a warning.
         self.write_config()
         (self.project / "VERSION").write_text("5.0.0\n")
-        (self.project / "deploy.yaml").write_text(self.config.replace(
+        (self.project / "shipdeck.yaml").write_text(self.config.replace(
             "  failed:", "  done: {run: {server: 'false'}}\n  failed:"))
         self.cli("deploy")
         healthy = self.current()

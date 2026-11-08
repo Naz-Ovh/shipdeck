@@ -28,8 +28,9 @@ fn deployable(folder: &Path, service: &str, pack: &str) -> Deployable {
         "
 name: Demo
 project: ../app
+dir: /opt/demo
 ssh: {{ host: example.com, user: deploy }}
-service: {{ name: demo, dir: /opt/demo, {service} }}
+service: {{ name: demo, {service} }}
 pipeline:
   pack:
 {pack}
@@ -44,7 +45,7 @@ pipeline:
     let deploy = folder.join("deploy");
     std::fs::create_dir_all(&deploy).unwrap();
     std::fs::create_dir_all(folder.join("app")).unwrap();
-    std::fs::write(deploy.join("deploy.yaml"), &yaml).unwrap();
+    std::fs::write(deploy.join("shipdeck.yaml"), &yaml).unwrap();
     Deployable {
         folder: deploy,
         slug: "demo".into(),
@@ -138,8 +139,8 @@ fn packs_binary_files_manifest_and_unit_with_modes() {
     assert_eq!(files["demo.service"].1, b"[Unit]\n");
     let written: Manifest = serde_json::from_slice(&files["release.json"].1).unwrap();
     assert_eq!(written, manifest);
-    // deploy.yaml never ships, even next to .env.
-    assert!(!files.contains_key("deploy.yaml"));
+    // shipdeck.yaml never ships, even next to .env.
+    assert!(!files.contains_key("shipdeck.yaml"));
 
     assert_eq!(bundle.files, 5);
     assert_eq!(last.0, last.1);
@@ -745,7 +746,7 @@ fn the_fingerprint_follows_content_and_settings_not_the_release_name() {
 
     let mut edited = deployable.clone();
     edited.yaml.push_str("# a comment\n");
-    assert_ne!(print(&edited, &release()), first, "deploy.yaml");
+    assert_ne!(print(&edited, &release()), first, "shipdeck.yaml");
 
     // The same text, but the unit runs with another variable.
     let mut env = deployable.clone();
@@ -758,5 +759,68 @@ fn the_fingerprint_follows_content_and_settings_not_the_release_name() {
     std::fs::remove_file(dir.join("app/lib/link.js")).unwrap();
     std::os::unix::fs::symlink("same.txt", dir.join("app/lib/link.js")).unwrap();
     assert_ne!(print(&deployable, &release()), first, "a link's target");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A static deployable whose project is `folder/app`.
+fn static_deployable(folder: &Path, root: &str) -> Deployable {
+    let yaml = format!(
+        "
+name: Admin
+project: ../app
+dir: /var/www/admin
+ssh: {{ host: example.com, user: deploy }}
+static: {{ root: {root} }}
+pipeline:
+  pack:
+    files:
+      include:
+        project: [dist]
+"
+    );
+    let config = crate::config::parse(&yaml).unwrap();
+    let endpoint = crate::ssh::Endpoint::from_config(
+        &config.ssh,
+        crate::ssh::ssh_config::HostConfig::default(),
+    )
+    .unwrap();
+    let deploy = folder.join("deploy");
+    std::fs::create_dir_all(&deploy).unwrap();
+    std::fs::create_dir_all(folder.join("app")).unwrap();
+    std::fs::write(deploy.join("shipdeck.yaml"), &yaml).unwrap();
+    Deployable {
+        folder: deploy,
+        slug: "admin".into(),
+        config,
+        yaml,
+        endpoint,
+    }
+}
+
+#[test]
+fn a_static_release_has_no_unit_file_and_keeps_its_root() {
+    let dir = scratch("static-bundle");
+    write(dir.join("app/dist/index.html"), "<h1>hi</h1>");
+    write(dir.join("app/dist/app.js"), "1");
+    let deployable = static_deployable(&dir, "./dist");
+    let contents = gather(&deployable, None, |_, _| {}).unwrap();
+    let paths: Vec<&str> = contents.entries.iter().map(|e| e.path.as_str()).collect();
+    assert!(paths.contains(&"dist/index.html"), "{paths:?}");
+    assert!(paths.contains(&"dist/app.js"), "{paths:?}");
+    assert!(
+        !paths.iter().any(|path| path.ends_with(".service")),
+        "{paths:?}"
+    );
+    assert!(contents.fingerprint(&deployable, None).is_ok());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn a_static_release_without_its_root_is_refused() {
+    let dir = scratch("static-root");
+    write(dir.join("app/dist/index.html"), "<h1>hi</h1>");
+    let deployable = static_deployable(&dir, "public");
+    let err = gather(&deployable, None, |_, _| {}).unwrap_err();
+    assert!(format!("{err:#}").contains("static.root"), "{err:#}");
     std::fs::remove_dir_all(dir).unwrap();
 }

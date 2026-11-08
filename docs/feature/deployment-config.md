@@ -27,7 +27,7 @@ The whole manual is built into the binary, for you or a coding agent:
 
 ```sh
 shipdeck man index                                   # every topic as `key: brief`
-shipdeck man configs                                 # every deploy.yaml property, as a YAML tree
+shipdeck man configs                                 # every shipdeck.yaml property, as a YAML tree
 shipdeck man details agents step.health service.env  # topics and properties in full
 ```
 
@@ -37,7 +37,7 @@ own `<topic key="...">` or `<config key="...">` block, in the order asked.
 ### Start a deployable
 
 `shipdeck init` creates a deployable's folder under the deploy root with a
-`deploy.yaml` from a preset, an empty `.env` and a `.gitignore` that keeps
+`shipdeck.yaml` from a preset, an empty `.env` and a `.gitignore` that keeps
 `.env` out of git. In a terminal it asks for whatever the flags leave out;
 with no terminal (a script, CI) it asks nothing, and NAME, `--preset` and
 `--host` are required.
@@ -56,8 +56,8 @@ shipdeck init ./scripts/deploy my-api --preset rust --manager systemd --host pro
 | `--user` | asked, offering the alias's `User`; else the alias's `User` |
 | `--project` | asked, else the current folder; written relative to the new folder |
 
-`service.dir` is `/opt/<NAME>`. What `init` writes passes the same checks as
-a launch, and it never replaces an existing `deploy.yaml`. Each preset is a
+`dir` is `/opt/<NAME>`. What `init` writes passes the same checks as
+a launch, and it never replaces an existing `shipdeck.yaml`. Each preset is a
 start; check its build command and paths against your project:
 
 | Preset | Build here | Ships | Server needs |
@@ -87,7 +87,7 @@ shipdeck setup       ./scripts/deploy my-api     # guided one-time server setup
 
 A deployable is named by its folder or its `name`. `deploy` takes several and
 runs them one after another; the first that does not succeed stops the rest.
-Every `deploy.yaml` under the root is still checked first.
+Every `shipdeck.yaml` under the root is still checked first.
 
 In CI, keep the key in a secret:
 
@@ -120,7 +120,7 @@ The exit code says how it ended:
 
 `ssh.host` may be an alias from `~/.ssh/config`, so `host: prod` works like
 `ssh prod`: `HostName`, `Port`, `User` and `IdentityFile` come from the
-alias, and anything set in `deploy.yaml` wins. `Include` files are read,
+alias, and anything set in `shipdeck.yaml` wins. `Include` files are read,
 `Match` blocks are not, and an alias that needs `ProxyJump` or `ProxyCommand`
 is refused with a clear error.
 
@@ -129,36 +129,36 @@ before saving it to `~/.ssh/known_hosts`. A changed key is refused.
 
 ## Deploy root
 
-Every subfolder of the deploy root that holds a `deploy.yaml` (or
-`deploy.yml`) is one deployable. Commit `deploy.yaml` and extra files; keep
+Every subfolder of the deploy root that holds a `shipdeck.yaml` (or
+`shipdeck.yml`) is one deployable. Commit `shipdeck.yaml` and extra files; keep
 `.env` out of git.
 
 ```
 scripts/deploy/
 ├── api-prod/
-│   ├── deploy.yaml          committed
+│   ├── shipdeck.yaml          committed
 │   ├── service.template     optional: replaces the built-in systemd unit
 │   ├── config.yaml          optional: shipped with pipeline.pack.files.include.deploy
 │   └── .env                 gitignored
 └── web-prod/
 ```
 
-shipdeck reads every `deploy.yaml` before it starts. If any of them has a
+shipdeck reads every `shipdeck.yaml` before it starts. If any of them has a
 mistake, it does not start, and prints every problem in every file at once
 (see [Mistakes](#mistakes-are-caught-before-anything-runs)).
 
-## deploy.yaml
+## shipdeck.yaml
 
 ```yaml
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.7.1/docs/schema/deploy.schema.json
 name: Web (prod)
 project: ../../../web                       # your source; local commands run here
+dir: /opt/web                               # current/ releases/ backups/ shared/
 ssh:
   host: prod                                # address or ~/.ssh/config alias
   user: deploy
 service:
   name: web                                 # web.service
-  dir: /opt/web                             # current/ releases/ backups/ shared/
   start: node dist/main.js                  # default: ./<binary>
   env_file: .env                            # also loaded for server commands
   env: { NODE_ENV: production }
@@ -177,7 +177,7 @@ pipeline:
     files:
       include:
         project: [dist, package.json, package-lock.json]
-        deploy: [.env]                      # next to this deploy.yaml
+        deploy: [.env]                      # next to this shipdeck.yaml
       exclude:
         project: ["**/*.map"]
   # upload, unpack                          shipdeck
@@ -209,9 +209,9 @@ pipeline:
       local: ./notify.sh "failed at $SHIPDECK_STEP"
 ```
 
-[`examples/`](../../examples) has complete files for [Rust](../../examples/rust/deploy.yaml),
-[Go](../../examples/go/deploy.yaml), [Node.js](../../examples/node/deploy.yaml) and
-[Python](../../examples/python/deploy.yaml), plus a [monorepo](../../examples/monorepo)
+[`examples/`](../../examples) has complete files for [Rust](../../examples/rust/shipdeck.yaml),
+[Go](../../examples/go/shipdeck.yaml), [Node.js](../../examples/node/shipdeck.yaml) and
+[Python](../../examples/python/shipdeck.yaml), plus a [monorepo](../../examples/monorepo)
 with systemd and PM2 apps in one release; a test keeps them valid.
 See the [monorepo guide](docs/feature/monorepo-deploy.md) for shared releases,
 app commands, backups and rollback.
@@ -239,7 +239,7 @@ commands only where it can run them:
 
 | Step | local | server | Server commands run in | Settings | If it fails |
 | --- | --- | --- | --- | --- | --- |
-| preflight | `run` | `run` | `service.dir` | `requires` | stops; nothing touched |
+| preflight | `run` | `run` | `dir` | `requires` | stops; nothing touched |
 | build | `run` | ✘ | — | `version_from` | stops |
 | pack | ✘ | ✘ | — | `binary`, `files` | stops |
 | upload, unpack | ✘ | ✘ | — | — | the release is removed |
@@ -276,7 +276,7 @@ carriage return or a backslash.
 
 Each release's `release.json` also holds a fingerprint of what it is: its
 files, modes and links, its service file (without the release's name) and
-`deploy.yaml`. When the new release's fingerprint equals the live one's,
+`shipdeck.yaml`. When the new release's fingerprint equals the live one's,
 nothing changed, and shipdeck asks before making a duplicate:
 
 ```
@@ -293,20 +293,20 @@ nothing changed, and shipdeck asks before making a duplicate:
 
 `n`, Enter or Esc stop before anything on the server changes. Without the
 TUI the answer is no, unless `--allow-unchanged`. An edited comment in
-`deploy.yaml` counts as a change.
+`shipdeck.yaml` counts as a change.
 
 ### Fields
 
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `name` | | Shown in the TUI and in the unit's `Description=` |
-| `project` | this folder | Your source folder, relative to this `deploy.yaml` |
+| `project` | this folder | Your source folder, relative to this `shipdeck.yaml` |
 | `ssh.host` | | An address or a `~/.ssh/config` alias |
 | `ssh.user` | alias `User` | Who to log in and deploy as. Required if the alias has no `User`. |
 | `ssh.port` | alias `Port`, else `22` | |
 | `ssh.shell_env` | `true` | Server commands get the environment a terminal has: shipdeck starts the login shell once per connection, so its startup files (`~/.profile` and the `~/.bashrc` it sources, `~/.zshrc`, `config.fish`) set up `PATH` (nvm and the like). `false` skips them. See [Tools on the server](#tools-on-the-server). |
 | `service.name` | | The systemd unit, without `.service`; with PM2, also the app's name |
-| `service.dir` | | The app's folder on the server, such as `/opt/my-app` |
+| `dir` | | The app's folder on the server, such as `/opt/my-app` |
 | `service.manager` | `systemd` | What keeps the app running: `systemd` (a unit, installed with sudo) or `pm2` (run as `ssh.user`, no sudo). See [PM2](#pm2). |
 | `service.pm2.app` | `service.name` | The app's name in PM2 |
 | `service.pm2.ecosystem` | none | Your own PM2 file in the release, such as `ecosystem.config.js`, instead of the one shipdeck writes. `service.start` and `pm2.options` are then not used. |
@@ -337,7 +337,7 @@ pack:
   files:
     include:
       project: [dist, package.json]   # paths or globs, from project:
-      deploy: [.env, config.yaml]     # paths or globs, next to deploy.yaml
+      deploy: [.env, config.yaml]     # paths or globs, next to shipdeck.yaml
     exclude:
       project: ["**/*.map", "dist/**/*.test.js"]
 ```
@@ -359,7 +359,7 @@ fast-glob and Tailwind:
 | `\*` | a literal `*` |
 
 - Names starting with a dot match like any other; `.git` is never shipped.
-- In `deploy`, `deploy.yaml` and `service.template` are never shipped.
+- In `deploy`, `shipdeck.yaml` and `service.template` are never shipped.
 - A file from `deploy` replaces a project file at the same path (the log says so).
 - Quote a pattern that starts with `!` or `*`: YAML reads those as a tag or an alias.
 - Every `include` pattern must find something after the build, or the deploy stops at Build (Preflight for `deploy`).
@@ -401,7 +401,7 @@ Every command sees these, besides its own environment:
 | `SHIPDECK_RELEASE`, `SHIPDECK_VERSION` | the release going live, from build on (`v1.4.0-ab12cd3-…`, `1.4.0`) |
 | `SHIPDECK_PREVIOUS` | the release that was live before, if any |
 | `SHIPDECK_NAME`, `SHIPDECK_SERVICE`, `SHIPDECK_HOST` | `name`, `service.name`, `ssh.host` |
-| `SHIPDECK_APP_DIR`, `SHIPDECK_SHARED_DIR` | `service.dir` and its `shared/` |
+| `SHIPDECK_APP_DIR`, `SHIPDECK_SHARED_DIR` | `dir` and its `shared/` |
 | `SHIPDECK_FOLDER`, `SHIPDECK_PROJECT` | local commands only: this deploy folder and `project`, absolute |
 
 Server commands also get `service.env`, then `service.env_file` read the way
@@ -437,11 +437,11 @@ kept only as a backup is unpacked and set up first.
 ### Mistakes are caught before anything runs
 
 ```
-✘ shipdeck did not start: 2 deploy.yaml files have 3 problems
+✘ shipdeck did not start: 2 shipdeck.yaml files have 3 problems
 
-web-prod/deploy.yaml
+web-prod/shipdeck.yaml
   error: unpack does not take commands
-    ┌─ scripts/deploy/web-prod/deploy.yaml:36:3
+    ┌─ scripts/deploy/web-prod/shipdeck.yaml:36:3
     │
  36 │   unpack:
     │   ^^^^^^ unpack is done by shipdeck
@@ -449,7 +449,7 @@ web-prod/deploy.yaml
     = help: commands for the unpacked release go in pipeline.setup.run.server
 
   error: build cannot run commands on the server
-    ┌─ scripts/deploy/web-prod/deploy.yaml:26:7
+    ┌─ scripts/deploy/web-prod/shipdeck.yaml:26:7
     │
  25 │     run:
  26 │       server: npm run build
@@ -457,9 +457,9 @@ web-prod/deploy.yaml
     │
     = help: the server sets up the release in pipeline.setup.run.server
 
-api-prod/deploy.yaml
+api-prod/shipdeck.yaml
   error: unknown key pipeline.pack.files.include.src
-    ┌─ scripts/deploy/api-prod/deploy.yaml:21:9
+    ┌─ scripts/deploy/api-prod/shipdeck.yaml:21:9
     │
  21 │         src: [dist]
     │         ^^^ not a source
@@ -468,14 +468,14 @@ api-prod/deploy.yaml
 ```
 
 On a terminal it is in colour. Unknown keys get a "did you mean", and values that would be unsafe in a shell or a unit
-(paths with `..`, odd service names, a relative `service.dir`) are refused.
+(paths with `..`, odd service names, a relative `dir`) are refused.
 
 ### Editor completion
 
 [`docs/schema/deploy.schema.json`](docs/schema/deploy.schema.json) describes every field, with the
 same descriptions as above, for any editor using the YAML language server
 (VS Code with the YAML extension, Neovim, Zed, JetBrains). Either start each
-`deploy.yaml` with:
+`shipdeck.yaml` with:
 
 ```yaml
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.7.1/docs/schema/deploy.schema.json
@@ -484,7 +484,7 @@ same descriptions as above, for any editor using the YAML language server
 or map it once for the whole repository in `.vscode/settings.json`:
 
 ```json
-{ "yaml.schemas": { "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.7.1/docs/schema/deploy.schema.json": "**/deploy.yaml" } }
+{ "yaml.schemas": { "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.7.1/docs/schema/deploy.schema.json": "**/shipdeck.yaml" } }
 ```
 
 The website serves the newest one at
@@ -539,9 +539,9 @@ It runs as `ssh.user`, so the server needs no sudo rule, and a runtime from
 `nvm` works.
 
 ```yaml
+dir: /opt/web                             # current/ releases/ backups/ shared/
 service:
   name: web
-  dir: /opt/web
   manager: pm2
   start: node dist/main.js
   env_file: .env
@@ -624,10 +624,11 @@ live release and service with `shipdeck work`.
 
 One project lock covers deploys, rollbacks, cleanup and service control. The
 connected agent holds the lock. Upload tickets are tied to the lock token, and
-every `deploy.yaml` server command writes a `.shipdeck.command` lease. A new
+every `shipdeck.yaml` server command writes a `.shipdeck.command` lease. A new
 operation refuses while that command is alive, so an agent disconnect cannot
 let two deploys overlap.
 
 If agent preparation or the handshake fails, the connection stops. The engine
 does not use a plain SSH path to bypass the version or privilege rules.
 
+dir: /opt/web

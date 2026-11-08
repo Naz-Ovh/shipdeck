@@ -50,14 +50,18 @@ impl Run<'_> {
         {
             return self.connection_lost(step, &err);
         }
-        match server.journal().await {
-            Ok(lines) if !lines.is_empty() => {
-                report.log(LogKind::Info, "last log lines:");
-                for line in lines {
-                    report.log(LogKind::Err, line);
+        if server.is_static() {
+            report.log(LogKind::Info, "static site: there is no process log");
+        } else {
+            match server.journal().await {
+                Ok(lines) if !lines.is_empty() => {
+                    report.log(LogKind::Info, "last log lines:");
+                    for line in lines {
+                        report.log(LogKind::Err, line);
+                    }
                 }
+                _ => report.log(LogKind::Warn, "could not read the service's log"),
             }
-            _ => report.log(LogKind::Warn, "could not read the service's log"),
         }
         let error = format!("{err:#}");
         let id = self.release.clone().unwrap_or_default();

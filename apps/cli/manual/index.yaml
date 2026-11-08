@@ -1,6 +1,6 @@
 # The manual's topics, in the order `shipdeck man index` prints them. Each
 # key's text is in details.yaml; build.rs refuses a key missing from either.
-# deploy.yaml's properties are in configs.yaml, not here.
+# shipdeck.yaml's properties are in configs.yaml, not here.
 #
 # key:   what `shipdeck man details <KEY>` takes; lowercase, `.` and `-`
 # brief: a few words saying what the page answers
@@ -34,7 +34,7 @@
     - { key: hosts, brief: "~/.ssh/config aliases, host keys, sessions" }
     - { key: shell-env, brief: "server commands load the login shell's files (nvm, PATH); how pm2 is found" }
 
-- section: deploy.yaml (properties - shipdeck man configs)
+- section: shipdeck.yaml (properties - shipdeck man configs)
   topics:
     - { key: config, brief: "deploy root, discovery, the launch check, YAML notes" }
     - { key: config.files, brief: "file patterns: sources, globs, `!`, never-shipped" }
@@ -79,7 +79,7 @@
 - section: Help
   topics:
     - { key: presets, brief: "what each init preset writes" }
-    - { key: examples, brief: "complete deploy.yaml files" }
+    - { key: examples, brief: "complete shipdeck.yaml files" }
     - { key: recipes, brief: "migrations, secrets, CI, monorepo, cross-compile" }
     - { key: troubleshooting, brief: "error messages and fixes" }
 

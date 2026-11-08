@@ -15,7 +15,7 @@ use fast_glob::{ErrorKind, glob_match, validate};
 
 #[derive(Debug, Clone)]
 pub struct Pattern {
-    /// As written in deploy.yaml.
+    /// As written in shipdeck.yaml.
     pub text: String,
     /// It started with `!`.
     pub negated: bool,

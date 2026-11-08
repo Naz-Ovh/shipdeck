@@ -91,7 +91,7 @@ Remote code execution is the risk to design out, not a feature to add.
   users are preserved.
 - App archives must remain inside their intended release. The agent keeps the
   path, archive, symlink, mode, entry and size checks under root.
-- `deploy.yaml` server commands remain the one shell exception, because their
+- `shipdeck.yaml` server commands remain the one shell exception, because their
   contract is a shell line. They run as the deploy user.
 - Guided setup offers full sudo or only the commands shipdeck runs. It never
   widens access without that explicit choice. The sudo password travels on
@@ -110,7 +110,7 @@ to run unless the same connection holds the lock.
 
 An upload ticket is tied to the lock token. The receiver refuses it when the
 lock is free or belongs to another operation, and re-checks while bytes arrive.
-Every `deploy.yaml` server command writes `.shipdeck.command` with its shell
+Every `shipdeck.yaml` server command writes `.shipdeck.command` with its shell
 PID and a token. A new operation refuses while that command is alive, so an
 agent disconnect cannot let a second deploy overlap a command that is still
 running. A stale lease is removed after its process is gone.

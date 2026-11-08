@@ -36,6 +36,56 @@ delivery, FTP, certificate issuance, cluster scheduling, or a new web server.
 The server-agent work remains separate. Root access remains subject to the
 existing p3d1 decision.
 
+## App-facing nginx settings
+
+Owner direction, 2026-11-09: when nginx is implemented, a project gets a
+dedicated nginx settings block. It is not mixed into `service` or `static`.
+Everything that only makes sense for nginx belongs here. At least:
+
+- response headers;
+- `location` blocks;
+- an override for the served path or root;
+- raw nginx configuration as a string block, as the escape hatch.
+
+A rough shape, not an agreed field list:
+
+```yaml
+dir: /var/www/admin
+static: {root: dist}
+
+nginx:
+  headers:
+    X-Frame-Options: DENY
+  locations:
+    /assets/: {expires: 30d}
+  root: dist/public        # override, when it differs from static.root
+  raw: |
+    # arbitrary nginx directives, validated before use
+```
+
+Still undecided:
+
+- the block name (`nginx`, `serve`, `web`) and whether it sits on the deploy
+  or on each app;
+- which settings get typed fields and which appear only in the raw block;
+- how a typed `location` and raw text combine, and which wins;
+- what a path override means next to `static.root`; one must win, never both
+  silently;
+- domains, TLS and certificates, which stay with the domain phase.
+
+Rules that do not change:
+
+- shipdeck owns its generated site file. Raw text is validated with `nginx -t`
+  as part of the whole candidate before activation.
+- A failed validation leaves the previous file and the running configuration
+  untouched.
+- Raw text never overwrites unrelated nginx files.
+- A deployment records the routing settings it used, so rollback can restore
+  them or refuse to pretend it did.
+
+This section records direction only. The field shape is not agreed until the
+owner confirms it and implementation is scheduled.
+
 ## Data model
 
 Define public types and signatures before implementing non-trivial modules.

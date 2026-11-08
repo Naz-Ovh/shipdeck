@@ -6,12 +6,12 @@ fn the_headline_says_what_did_not_happen() {
     // Found by /qa on 2026-10-15
     // Report: .gstack/qa-reports/run-20261015T030609Z/qa-report-shipdeck-init-2026-10-15.md
     let files = [FileProblems::without_source(
-        PathBuf::from("/work/deploy/my-api/deploy.yaml"),
+        PathBuf::from("/work/deploy/my-api/shipdeck.yaml"),
         Problem::new("`ssh.user` is not a user name"),
     )];
     let text = render(&files, Path::new("/work"), false, "nothing written");
     assert!(
-        text.starts_with("✘ nothing written: 1 deploy.yaml file has 1 problem"),
+        text.starts_with("✘ nothing written: 1 shipdeck.yaml file has 1 problem"),
         "{text}"
     );
 }
@@ -20,8 +20,9 @@ fn the_headline_says_what_did_not_happen() {
 fn renders_problems_like_a_compiler() {
     let text = "\
 name: Demo
+dir: /opt/demo
 ssh: { host: example.com, user: deploy }
-service: { name: demo, dir: /opt/demo }
+service: { name: demo }
 pipeline:
   build:
     run:
@@ -30,7 +31,7 @@ pipeline:
     binary: target/release/demo
 ";
     let files = vec![FileProblems {
-        path: PathBuf::from("/work/deploy/api/deploy.yaml"),
+        path: PathBuf::from("/work/deploy/api/shipdeck.yaml"),
         source: Some(text.to_string()),
         problems: parse(text).unwrap_err(),
     }];
@@ -38,14 +39,14 @@ pipeline:
     assert_eq!(
         plain,
         "\
-✘ shipdeck did not start: 1 deploy.yaml file has 1 problem
+✘ shipdeck did not start: 1 shipdeck.yaml file has 1 problem
 
-api/deploy.yaml
+api/shipdeck.yaml
   error: build cannot run commands on the server
-    ┌─ deploy/api/deploy.yaml:7:7
+    ┌─ deploy/api/shipdeck.yaml:8:7
     │
-  6 │     run:
-  7 │       server: make
+  7 │     run:
+  8 │       server: make
     │       ^^^^^^ build runs on your PC only
     │
     = help: the server sets up the release in `pipeline.setup.run.server`

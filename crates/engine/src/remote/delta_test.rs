@@ -166,8 +166,9 @@ mod scripts {
         let yaml = "
     name: Demo
     project: ../app
+    dir: /opt/demo
     ssh: { host: 203.0.113.10, user: deploy }
-    service: { name: demo, dir: /opt/demo, start: ./same.txt }
+    service: { name: demo, start: ./same.txt }
     pipeline:
       pack:
         files:

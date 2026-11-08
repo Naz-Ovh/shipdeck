@@ -188,6 +188,7 @@ pub fn service_file_for(
     let text = match service.manager {
         Manager::Systemd => unit::render_spec(spec, release, start_path)?,
         Manager::Pm2 => pm2::render_spec(spec, start_path)?,
+        Manager::Static => return Ok(None),
     };
     Ok(Some(ServiceFile { name, text }))
 }
@@ -197,6 +198,12 @@ pub fn service_file_for(
 pub fn start_line(deployable: &Deployable, start_path: Option<&str>) -> String {
     let service = &deployable.config.service;
     match (service.manager, &service.pm2.ecosystem) {
+        (Manager::Static, _) => format!(
+            "static site: {}",
+            service
+                .served_path("")
+                .unwrap_or_else(|| "no served path".into())
+        ),
         (Manager::Systemd, _) => unit::exec_start(deployable, start_path),
         (Manager::Pm2, Some(file)) => format!("pm2 app {} from {file}", service.pm2_app()),
         (Manager::Pm2, None) => format!(
@@ -251,6 +258,7 @@ pub fn gather_services(
     let binary_name = deployable.binary_name();
     let binary = binary_path.as_deref().zip(binary_name.as_deref());
     let mut entries = collect(&deployable.config.service, binary, own, selection, true)?;
+    check_static_root(entries.iter().map(|entry| entry.path.as_str()), service, "")?;
     content::hash_all(&mut entries, progress)?;
     Ok(Contents {
         entries,
@@ -278,16 +286,7 @@ pub fn gather_apps(
     let mut own = Vec::new();
     let mut replaced = Vec::new();
     let mut unused_ecosystem = Vec::new();
-    insert_entry(
-        &mut entries,
-        Entry {
-            path: crate::config::monorepo::RELEASE_METADATA.into(),
-            source: Source::Bytes(metadata.to_vec()),
-            mode: 0o600,
-            size: u64::try_from(metadata.len())?,
-            sha256: None,
-        },
-    )?;
+    insert_metadata(&mut entries, metadata)?;
     for app in apps {
         let dir = Path::new(app.release_dir);
         if app.release_dir.contains(['\\', '\n', '\r'])
@@ -360,6 +359,13 @@ pub fn gather_apps(
             insert_entry(&mut entries, entry)?;
         }
     }
+    for app in apps {
+        check_static_root(
+            entries.keys().map(String::as_str),
+            app.service,
+            app.release_dir,
+        )?;
+    }
     check_parents(&entries)?;
     let mut entries: Vec<Entry> = entries.into_values().collect();
     content::hash_all(&mut entries, progress)?;
@@ -369,6 +375,49 @@ pub fn gather_apps(
         replaced,
         unused_ecosystem,
     })
+}
+
+/// Adds the saved monorepo settings to a shared release.
+fn insert_metadata(entries: &mut BTreeMap<String, Entry>, metadata: &[u8]) -> Result<()> {
+    insert_entry(
+        entries,
+        Entry {
+            path: crate::config::monorepo::RELEASE_METADATA.into(),
+            source: Source::Bytes(metadata.to_vec()),
+            mode: 0o600,
+            size: u64::try_from(metadata.len())?,
+            sha256: None,
+        },
+    )
+}
+
+/// Refuses a static site whose served folder is missing from the release.
+fn check_static_root<'a>(
+    paths: impl Iterator<Item = &'a str>,
+    service: &Service,
+    release_dir: &str,
+) -> Result<()> {
+    let Some(root) = service.static_root() else {
+        return Ok(());
+    };
+    let root = release_path(root);
+    let prefix = if release_dir.is_empty() {
+        format!("{root}/")
+    } else {
+        format!("{release_dir}/{root}/")
+    };
+    if !paths.into_iter().any(|path| path.starts_with(&prefix)) {
+        let app = if release_dir.is_empty() {
+            String::new()
+        } else {
+            format!("{release_dir}: ")
+        };
+        bail!(
+            "{app}`static.root` is {root:?}, but the release has no {root} folder; \
+             add it to `pipeline.pack.files.include`, or fix `static.root`"
+        );
+    }
+    Ok(())
 }
 
 /// Checks generated process file names before adding them to a release.

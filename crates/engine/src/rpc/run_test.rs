@@ -7,11 +7,12 @@ use shipdeck_protocol::message::request::{Initialize, WorkspaceOpen};
 
 use super::run;
 
-/// A `deploy.yaml` with nothing to complain about.
+/// A `shipdeck.yaml` with nothing to complain about.
 const SAMPLE: &str = "\
 name: Demo
+dir: /opt/demo
 ssh: { host: example.com, user: deploy }
-service: { name: demo, dir: /opt/demo, start: node dist/main.js }
+service: { name: demo, start: node dist/main.js }
 pipeline:
   pack:
     files:
@@ -83,7 +84,7 @@ fn scratch(name: &str) -> std::path::PathBuf {
 async fn opened(name: &str) -> (App, std::path::PathBuf) {
     let root = scratch(name);
     std::fs::create_dir_all(root.join("web")).unwrap();
-    std::fs::write(root.join("web/deploy.yaml"), SAMPLE).unwrap();
+    std::fs::write(root.join("web/shipdeck.yaml"), SAMPLE).unwrap();
     let mut app = App::start();
     let answer = app
         .call(
@@ -268,7 +269,7 @@ async fn an_app_using_the_protocol_crate_talks_to_the_engine() {
 
     let root = scratch("typed");
     std::fs::create_dir_all(root.join("web")).unwrap();
-    std::fs::write(root.join("web/deploy.yaml"), SAMPLE).unwrap();
+    std::fs::write(root.join("web/shipdeck.yaml"), SAMPLE).unwrap();
     let opened = app
         .workspace_open(&WorkspaceOpen {
             root: root.to_str().unwrap().to_string(),
@@ -290,7 +291,7 @@ async fn an_app_using_the_protocol_crate_talks_to_the_engine() {
 async fn a_request_after_the_open_sees_the_workspace() {
     let root = scratch("order");
     std::fs::create_dir_all(root.join("web")).unwrap();
-    std::fs::write(root.join("web/deploy.yaml"), SAMPLE).unwrap();
+    std::fs::write(root.join("web/shipdeck.yaml"), SAMPLE).unwrap();
     let mut app = App::start();
     app.send(json!({
         "jsonrpc": "2.0",

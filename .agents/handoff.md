@@ -1,5 +1,64 @@
 # Handoff
 
+## Config file renamed to shipdeck.yaml — 2026-11-09
+
+Discovery, `init`, the manual, docs, examples and tests now use
+`shipdeck.yaml` or `shipdeck.yml`. `deploy.yaml` and `deploy.yml` are no longer
+read. The JSON Schema file keeps its name, `deploy.schema.json`. The docs page
+moved to `/docs/reference/shipdeck-yaml`. Breaking change; the upgrading guide
+has the `mv` step. `just verify` and the docs build passed.
+
+## Nginx app settings direction — 2026-11-09
+
+The owner wants a dedicated nginx block in `shipdeck.yaml` when nginx is built,
+separate from `service` and `static`. It should cover response headers,
+`location` blocks, a served path override, and raw nginx configuration as a
+string block. Field name and exact shape are open. Saved in
+`docs/feature/nginx-config-management.md#app-facing-nginx-settings`; tracker
+row `p4a4` is planned. No code changed for this.
+
+## Static site mode — 2026-11-08
+
+Built `static:` as the second kind of deployment. A deploy (or a monorepo app)
+is a `service` or a `static` site, never both. A static site has no unit, no
+restart and no process probe. The release switches `current` as before, and
+nginx serves `<dir>/current/<root>` (single) or
+`<dir>/current/apps/<app>/<root>` (monorepo), so the path does not change.
+
+### What changed
+
+- **Config.** `DeployConfigFile` accepts `service` or `static`, and a required
+  top-level `dir` for every deploy. `DeployConfig` stays a runtime type with one
+  `Service`; a static site is a `Service` with `manager: static` and a
+  `static_root`. `service.dir` and `static.dir` are gone; both are refused.
+  Monorepo apps and single static deploys take `static: {root}`.
+- **Paths.** One `inside_path` helper accepts `./dist`, `dist/./public`,
+  rejects `/dist`, `..` and an empty result. It is used for `static.root` and
+  for app config file paths, so `./apps/admin.yaml` now works.
+- **Checks.** Exactly one target; no `pipeline.pack.binary`, `start`,
+  `process_manager`, `env`, `env_file` or `shared` with a static app. The pack
+  step stops when `static.root` is not in the release.
+- **Deploy.** Restart is skipped for static; health is HTTP-only (and skips
+  when no URL is set); install/restart/control/logs are no-ops or clear errors.
+  Monorepo switch installs only process units and restarts only process apps.
+- **UI and docs.** Static sites show `static` in the TUI, with controls and
+  logs refused with a clear message. Schema, manual, website reference,
+  monorepo guide, examples guide, `examples/static`, and tracker `p4a0` are
+  updated.
+
+### Verified
+
+`just verify` passed after the `dir` move: formatting,
+`cargo check --workspace --all-targets`, strict pedantic/performance Clippy,
+and all workspace tests. `just schema` regenerated both schema copies, and the
+docs website build passed. The CLI parses and starts a static deploy; the test
+run stopped at the unreachable example host.
+
+Not verified: a full static deploy over SSH. Rootless Podman cannot start in
+this environment (`newuidmap: write to uid_map failed`), and no `sshd` is
+installed. The owner should deploy `examples/static` to a real server with
+nginx pointed at `/var/www/static/current/dist`.
+
 ## v0.8.1 release restart prepared — 2026-11-08
 
 The owner authorized committing the runner fix, the Apache license removal,
@@ -210,7 +269,7 @@ the first six were fixed. All ten are now fixed and the review is `(done)`.
   during the stream. `service/control` holds the lock for the whole change.
 - **8, lost legacy lock channel.** The plain SSH lock shell is monitored. If its
   channel ends, `is_alive` fails and release reports shutdown or timeout errors.
-- **9, commands outliving the agent lock.** Every `deploy.yaml` server command
+- **9, commands outliving the agent lock.** Every `shipdeck.yaml` server command
   writes a `.shipdeck.command` lease with its shell PID and a token. A new
   deploy, rollback, cleanup or service control refuses while that command is
   alive; a stale lease is removed. This keeps a disconnected agent from letting

@@ -215,6 +215,7 @@ impl fmt::Display for Shown<Manager> {
         match self.0 {
             Manager::Systemd => f.write_str("systemd  a unit installed and restarted with sudo"),
             Manager::Pm2 => f.write_str("pm2      runs as the SSH user, no sudo"),
+            Manager::Static => f.write_str("static   files served by nginx, no process"),
         }
     }
 }

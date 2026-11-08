@@ -11,7 +11,7 @@ must be able to:
 
 | What | Why |
 | --- | --- |
-| create `service.dir` (itself, or with sudo), or write to it | the first deploy creates the app's folder; every deploy writes releases into it |
+| create `dir` (itself, or with sudo), or write to it | the first deploy creates the app's folder; every deploy writes releases into it |
 | `systemctl daemon-reload`, `systemctl enable <service>`, `systemctl restart <service>` | install and restart the app |
 | `install -m 0644 <dir>/current/<service>.service /etc/systemd/system/<service>.service` | put the release's unit in place |
 | `journalctl -u <service> -n 30 --no-pager` | show the log when a release fails |

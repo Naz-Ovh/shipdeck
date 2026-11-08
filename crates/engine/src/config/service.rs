@@ -16,6 +16,9 @@ pub struct Service {
     pub name: String,
     /// An absolute folder on the server, such as `/opt/my-api`. It holds
     /// `current` (the live release), `releases/`, `backups/` and `shared/`.
+    /// Read from the top-level `dir`; never written inside `service`.
+    #[serde(skip)]
+    #[schemars(skip)]
     pub dir: String,
     /// What keeps the app running: `systemd`, a unit shipdeck installs with
     /// sudo, or `pm2`, run as the SSH user without sudo. Default: systemd.
@@ -45,9 +48,59 @@ pub struct Service {
     /// `shared/` and is linked into every release.
     #[serde(default)]
     pub shared: Vec<String>,
+    /// The folder a static site serves, when this is not a process.
+    /// Read from `static.root`; never written in `service:`.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub static_root: Option<String>,
 }
 
 impl Service {
+    /// A static site: files in a release, with no process to keep up.
+    #[must_use]
+    pub fn static_site(
+        name: impl Into<String>,
+        dir: impl Into<String>,
+        root: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            dir: dir.into(),
+            manager: Manager::Static,
+            pm2: Pm2::default(),
+            start: None,
+            run_as: None,
+            env_file: None,
+            env: BTreeMap::new(),
+            shared: Vec::new(),
+            static_root: Some(root.into()),
+        }
+    }
+
+    /// Whether this deployable serves files instead of running a process.
+    #[must_use]
+    pub fn is_static(&self) -> bool {
+        self.static_root.is_some()
+    }
+
+    /// The folder inside the release that nginx serves, for a static site.
+    #[must_use]
+    pub fn static_root(&self) -> Option<&str> {
+        self.static_root.as_deref()
+    }
+
+    /// The live folder a web server reads, after the switch.
+    #[must_use]
+    pub fn served_path(&self, release_dir: &str) -> Option<String> {
+        let root = release_path(self.static_root()?);
+        let app = if release_dir.is_empty() {
+            String::new()
+        } else {
+            format!("{release_dir}/")
+        };
+        Some(format!("{}/current/{app}{root}", self.dir))
+    }
+
     /// The start program and arguments, using the packed binary as a default.
     #[must_use]
     pub fn command(&self, binary: Option<&str>) -> (Program, String) {
@@ -73,13 +126,14 @@ impl Service {
 
     /// The file shipdeck writes into each release for the manager:
     /// `<name>.service`, or `<name>.pm2.json` when there is no
-    /// `pm2.ecosystem`.
+    /// `pm2.ecosystem`. A static site has no process file.
     #[must_use]
     pub fn own_file(&self) -> Option<String> {
         match self.manager {
             Manager::Systemd => Some(format!("{}.service", self.name)),
             Manager::Pm2 if self.pm2.ecosystem.is_some() => None,
             Manager::Pm2 => Some(format!("{}.pm2.json", self.name)),
+            Manager::Static => None,
         }
     }
 
@@ -109,6 +163,10 @@ pub enum Manager {
     /// PM2, run as the SSH user: no sudo. Reloaded with
     /// `pm2 startOrReload`, then saved with `pm2 save`.
     Pm2,
+    /// No process: a web server serves the release's files.
+    #[serde(skip)]
+    #[schemars(skip)]
+    Static,
 }
 
 impl Manager {
@@ -118,6 +176,7 @@ impl Manager {
         match self {
             Self::Systemd => "systemd",
             Self::Pm2 => "PM2",
+            Self::Static => "static",
         }
     }
 }

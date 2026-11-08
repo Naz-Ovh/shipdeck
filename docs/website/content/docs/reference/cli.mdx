@@ -3,7 +3,7 @@ title: Command line
 description: Every argument and flag of the shipdeck command, its errors, exit codes and what it prints.
 ---
 
-You point shipdeck at a deploy root, it checks every `deploy.yaml` under it, and then opens the terminal UI. For scripts and CI, `deploy`, `rollback`, `releases`, `server-info`, `work`, `events` and `setup` do the same work [without the UI](#without-the-ui), and `man` prints [the manual](#the-manual).
+You point shipdeck at a deploy root, it checks every `shipdeck.yaml` under it, and then opens the terminal UI. For scripts and CI, `deploy`, `rollback`, `releases`, `server-info`, `work`, `events` and `setup` do the same work [without the UI](#without-the-ui), and `man` prints [the manual](#the-manual).
 
 ## Synopsis
 
@@ -33,7 +33,7 @@ shipdeck --schema > deploy.schema.json    # the JSON Schema, for offline editors
 
 ### DEPLOY_ROOT
 
-The folder whose subfolders each hold a `deploy.yaml`. Each direct subfolder with a `deploy.yaml` (or `deploy.yml`) is one deployable. The search is not recursive. See [Deploy root](/docs/guides/deploy-root).
+The folder whose subfolders each hold a `shipdeck.yaml`. Each direct subfolder with a `shipdeck.yaml` (or `shipdeck.yml`) is one deployable. The search is not recursive. See [Deploy root](/docs/guides/deploy-root).
 
 | | |
 | --- | --- |
@@ -112,7 +112,7 @@ Run server commands without the login shell's startup files, on every server of 
 | | |
 | --- | --- |
 | Default | off: each connection loads what `~/.bashrc`, `~/.zshrc` and the like export (nvm, pyenv, a longer `PATH`) |
-| Per server | `ssh.shell_env: false` in its `deploy.yaml` |
+| Per server | `ssh.shell_env: false` in its `shipdeck.yaml` |
 
 Loading the startup files costs a second or two per connection. Turn it off when a startup file expects a person (it starts tmux or asks a question), or when server commands should see the plain SSH environment; then name tools by absolute path or install them system-wide.
 
@@ -132,7 +132,7 @@ The flag does not exist on Linux and macOS, so `shipdeck --help` lists it only o
 
 ### `--schema`
 
-Print the JSON Schema of `deploy.yaml` to stdout and exit with `0`. It runs before anything else, so a deploy root given with it is ignored. Use it for editor completion when you work offline:
+Print the JSON Schema of `shipdeck.yaml` to stdout and exit with `0`. It runs before anything else, so a deploy root given with it is ignored. Use it for editor completion when you work offline:
 
 ```sh
 shipdeck --schema > deploy.schema.json
@@ -151,7 +151,7 @@ Usage: shipdeck [OPTIONS] [DEPLOY_ROOT]
        shipdeck <COMMAND>
 
 Commands:
-  init         Create a deployable folder with a deploy.yaml from a preset; asks for what the flags leave out
+  init         Create a deployable folder with a shipdeck.yaml from a preset; asks for what the flags leave out
   engine       Run as the engine: it answers the app on stdin and stdout, one message per line
   deploy       Build and deploy one or more deployables, one after another, without the TUI
   rollback     Switch a deployable to a release already on the server, without the TUI
@@ -160,22 +160,22 @@ Commands:
   work         Show what an interrupted operation left, and clean it up with --cleanup
   events       Print the events saved on the server, oldest first
   setup        Prepare a server once: packages, the project folder, and sudo access
-  man          The manual, for people and coding agents: `man index` (topics), `man configs` (deploy.yaml), `man details <KEY>...`
+  man          The manual, for people and coding agents: `man index` (topics), `man configs` (shipdeck.yaml), `man details <KEY>...`
   help         Print this message or the help of the given subcommand(s)
 
 Arguments:
-  [DEPLOY_ROOT]  Folder whose subfolders each hold a deploy.yaml
+  [DEPLOY_ROOT]  Folder whose subfolders each hold a shipdeck.yaml
 
 Options:
       --key <PATH>           Log in with this private key file
       --key-text <TEXT>      Log in with this private key's text (it shows in `ps`; SHIPDECK_SSH_KEY does not)
       --password <PASSWORD>  Log in with this password (it lands in your shell history; SHIPDECK_PASSWORD does not)
       --no-shell-env         Run server commands without the login shell's startup files (~/.bashrc, ~/.zshrc, ...), on every server
-      --schema               Print the JSON Schema of deploy.yaml, for editor completion
+      --schema               Print the JSON Schema of shipdeck.yaml, for editor completion
   -h, --help                 Print help
   -V, --version              Print version
 
-Each folder under DEPLOY_ROOT with a deploy.yaml is one deployable.
+Each folder under DEPLOY_ROOT with a shipdeck.yaml is one deployable.
 Login, first found: --key, --key-text, --password, SHIPDECK_SSH_KEY,
 SHIPDECK_PASSWORD; else the host's ~/.ssh/config key, then the TUI asks
 for the password. SHIPDECK_KEY_PASSPHRASE unlocks an encrypted key.
@@ -202,25 +202,25 @@ These are printed to the terminal and shipdeck exits without opening the screen.
 | `--key` and `--password` together | `error: the argument '--key <PATH>' cannot be used with '--password <PASSWORD>'` | `2` |
 | Root is not a folder | `Error: /nonexistent is not a folder` | `1` |
 | Key file missing | `Error: the key file /nope/key does not exist` | `1` |
-| A `deploy.yaml` has problems | the problem report on stderr (below) | `1` |
+| A `shipdeck.yaml` has problems | the problem report on stderr (below) | `1` |
 
 ### The problem report
 
-shipdeck reads and checks every `deploy.yaml` before it opens the screen. If any file has a problem, it prints a report to stderr and exits with `1`. For `shipdeck ./scripts/deploy` where `scripts/deploy/my-api-prod/deploy.yaml` holds only `name: x`:
+shipdeck reads and checks every `shipdeck.yaml` before it opens the screen. If any file has a problem, it prints a report to stderr and exits with `1`. For `shipdeck ./scripts/deploy` where `scripts/deploy/my-api-prod/shipdeck.yaml` holds only `name: x`:
 
 ```txt
-✘ shipdeck did not start: 1 deploy.yaml file has 2 problems
+✘ shipdeck did not start: 1 shipdeck.yaml file has 2 problems
 
-my-api-prod/deploy.yaml
+my-api-prod/shipdeck.yaml
   error: `ssh` is missing
-    ┌─ ./scripts/deploy/my-api-prod/deploy.yaml
+    ┌─ ./scripts/deploy/my-api-prod/shipdeck.yaml
     │
     = help: add `ssh: { host: my-server, user: deploy }`
 
   error: `service` is missing
-    ┌─ ./scripts/deploy/my-api-prod/deploy.yaml
+    ┌─ ./scripts/deploy/my-api-prod/shipdeck.yaml
     │
-    = help: add `service: { name: my-api, dir: /opt/my-api }`
+    = help: add `dir: /opt/my-api`
 ```
 
 Each file starts with a heading of its folder and file name. The path after `┌─` is the deploy root as you typed it plus the file; an absolute root under the current folder is shown relative to it. The report is in colour only when stderr is a terminal and `NO_COLOR` is not set. `NO_COLOR` affects only this report; the screen itself always uses its colours. Every message is listed in [Config problems](/docs/reference/config-problems).
@@ -230,7 +230,7 @@ Each file starts with a heading of its folder and file name. The path after `┌
 | Code | Meaning |
 | --- | --- |
 | `0` | Normal quit, or `--schema`, `--help`, `--version`; for a command, the release is live |
-| `1` | Bad deploy root, missing key file, problems in a `deploy.yaml`, or a terminal error; for a command, also an unknown name or a failure before the live release changed |
+| `1` | Bad deploy root, missing key file, problems in a `shipdeck.yaml`, or a terminal error; for a command, also an unknown name or a failure before the live release changed |
 | `2` | Wrong usage: a missing argument or conflicting flags, or a key `man details` does not know |
 | `3` | A command only: the new release failed and the previous one is live again |
 | `4` | A command only: the new release failed and stays live (`--on-failure keep`) |
@@ -246,7 +246,7 @@ A deploy or rollback that fails inside the screen does not change the exit code:
 
 ### `init <DEPLOY_ROOT> [NAME]`
 
-Creates `<DEPLOY_ROOT>/<NAME>/` with a `deploy.yaml` written from a preset, an empty `.env` and a `.gitignore` that keeps `.env` out of git. It connects to nothing. In a terminal it asks for whatever the flags leave out (Esc stops without writing anything). With no terminal it asks nothing, and `NAME`, `--preset` and `--host` are required.
+Creates `<DEPLOY_ROOT>/<NAME>/` with a `shipdeck.yaml` written from a preset, an empty `.env` and a `.gitignore` that keeps `.env` out of git. It connects to nothing. In a terminal it asks for whatever the flags leave out (Esc stops without writing anything). With no terminal it asks nothing, and `NAME`, `--preset` and `--host` are required.
 
 ```sh
 shipdeck init ./scripts/deploy
@@ -268,18 +268,18 @@ shipdeck init ./scripts/deploy my-api --preset nodejs --manager pm2 --host prod
 
 | Flag | When left out |
 | --- | --- |
-| `NAME` | Asked. The folder's name, also `name` and `service.name`. `service.dir` is `/opt/<NAME>`. |
+| `NAME` | Asked. The folder's name, also `name` and `service.name`. `dir` is `/opt/<NAME>`. |
 | `--preset <PRESET>` | Asked. `nodejs`, `golang`, `java`, `kotlin`, `rust`, `dart`, `python` or `bun`. |
 | `--manager <systemd\|pm2>` | Asked, else `systemd`. |
 | `--host <HOST>` | Asked. An address or an alias from `~/.ssh/config`. |
 | `--user <USER>` | Asked, offering the alias's `User`; else the alias's `User`. |
 | `--project <PATH>` | Asked, else the current folder. Written relative to the new folder. |
 
-What `init` writes passes the same checks as a launch; a problem is printed the [same way](#the-problem-report) and nothing is written. It never replaces an existing `deploy.yaml`, and it leaves an existing `.env` or `.gitignore` alone. The presets are a starting point: check the build command and paths against your project.
+What `init` writes passes the same checks as a launch; a problem is printed the [same way](#the-problem-report) and nothing is written. It never replaces an existing `shipdeck.yaml`, and it leaves an existing `.env` or `.gitignore` alone. The presets are a starting point: check the build command and paths against your project.
 
 ## Without the UI
 
-These commands run the same work as the screen, for scripts and CI. They take the deploy root first, then a deployable by its folder name or its `name`. Every `deploy.yaml` under the root is checked first, as for the screen. Progress goes to stderr as plain lines, in colour only when stderr is a terminal and `NO_COLOR` is not set. Nothing waits for an answer, except `setup` which may ask for a sudo password on a terminal.
+These commands run the same work as the screen, for scripts and CI. They take the deploy root first, then a deployable by its folder name or its `name`. Every `shipdeck.yaml` under the root is checked first, as for the screen. Progress goes to stderr as plain lines, in colour only when stderr is a terminal and `NO_COLOR` is not set. Nothing waits for an answer, except `setup` which may ask for a sudo password on a terminal.
 
 ### `deploy <DEPLOY_ROOT> <NAME>...`
 
@@ -310,7 +310,7 @@ What to do when the new release fails after the switch: at the switch, the resta
 
 #### `--allow-unchanged`
 
-Deploy even when nothing changed since the live release: the new release's fingerprint (its files, modes, links, service file and `deploy.yaml`) equals the live one's. Without it such a deploy stops at Pack, before anything on the server changes, with exit code `6`:
+Deploy even when nothing changed since the live release: the new release's fingerprint (its files, modes, links, service file and `shipdeck.yaml`) equals the live one's. Without it such a deploy stops at Pack, before anything on the server changes, with exit code `6`:
 
 ```txt
 ▲ My API (prod): nothing changed since v0.3.1-ab12cd3-20261014.153012, so nothing was deployed; --allow-unchanged deploys it anyway
@@ -338,7 +338,7 @@ v0.3.0-9f8e7d6-20261012.091000  0.3.0    9f8e7d6  2026-10-12 09:10  31.0 MiB  un
 
 ### `server-info <DEPLOY_ROOT> <NAME>`
 
-Prints the server's real facts from the connected agent: Linux and kernel, CPU and cores, available and total memory, the disk behind `service.dir`, uptime, the agent version, and where common tools were found. It changes nothing. When the connection cannot prepare the agent, it fails with a clear message.
+Prints the server's real facts from the connected agent: Linux and kernel, CPU and cores, available and total memory, the disk behind `dir`, uptime, the agent version, and where common tools were found. It changes nothing. When the connection cannot prepare the agent, it fails with a clear message.
 
 ### `work <DEPLOY_ROOT> <NAME> [--cleanup]`
 
@@ -350,7 +350,7 @@ Prints numbered events from `~/.shipdeck/state.db`, oldest first, with `--after 
 
 ### `setup <DEPLOY_ROOT> <NAME> [--access full|commands]`
 
-Guided one-time server setup. It asks for the sudo password on stdin, installs missing tools from the Linux's own packages, creates `service.dir`, and installs a `visudo`-checked sudoers rule. `--access full` grants password-free sudo for every command; `--access commands` (default) grants exactly what shipdeck runs. Root needs no rule. Debian/Ubuntu and Fedora/RHEL are supported; another Linux is named and stopped. `SHIPDECK_SUDO_PASSWORD` keeps the password out of history and `ps`.
+Guided one-time server setup. It asks for the sudo password on stdin, installs missing tools from the Linux's own packages, creates `dir`, and installs a `visudo`-checked sudoers rule. `--access full` grants password-free sudo for every command; `--access commands` (default) grants exactly what shipdeck runs. Root needs no rule. Debian/Ubuntu and Fedora/RHEL are supported; another Linux is named and stopped. `SHIPDECK_SUDO_PASSWORD` keeps the password out of history and `ps`.
 
 ### What the screen would ask
 
@@ -373,7 +373,7 @@ The whole manual, built into the binary, for you and for the coding agent helpin
 | Command | Prints |
 | --- | --- |
 | `shipdeck man` or `man index` | every topic as `key: brief`, by section |
-| `shipdeck man configs` | every `deploy.yaml` property as a YAML tree, with its type, default and brief |
+| `shipdeck man configs` | every `shipdeck.yaml` property as a YAML tree, with its type, default and brief |
 | `shipdeck man details <KEY>...` | topics and properties in full |
 
 A key is a topic key from the index (`quickstart`, `step.health`, `exit-codes`) or a property path from `man configs` (`service.env`, `pipeline.health.url`). Give several, apart or comma-separated:

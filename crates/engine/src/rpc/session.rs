@@ -104,7 +104,7 @@ impl Session {
         let (questions, inbox) = unbounded_channel();
         let pool = Pool::new(convert::login(params.login.clone()), questions)
             .with_passphrase(passphrase());
-        // The app's flag wins over each deploy.yaml's `ssh.shell_env`.
+        // The app's flag wins over each shipdeck.yaml's `ssh.shell_env`.
         let pool = if params.no_shell_env {
             pool.without_shell_env()
         } else {

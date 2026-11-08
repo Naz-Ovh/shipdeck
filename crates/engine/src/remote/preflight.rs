@@ -120,6 +120,7 @@ echo \"active=$(systemctl is-active {svc} 2>&1 | head -n1)\"
         let active = match self.manager {
             Manager::Systemd => systemd.clone(),
             Manager::Pm2 => self.pm2_state().await?.0,
+            Manager::Static => "static".into(),
         };
         Ok(Facts {
             arch: normalize_arch(&get("arch")),

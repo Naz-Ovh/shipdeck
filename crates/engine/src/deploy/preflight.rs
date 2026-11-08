@@ -42,13 +42,16 @@ pub async fn preflight_apps<'a>(
     tools.extend(SERVER_TOOLS.iter().map(|(name, _)| (*name).to_string()));
     for app in apps {
         tools.extend(app.pipeline.preflight.requires.iter().cloned());
-        if app.service.manager == Manager::Pm2 {
-            tools.insert("pm2".to_string());
-        }
-        if app.service.pm2.ecosystem.is_none()
-            && let (Program::Tool(name) | Program::Absolute(name), _) = app.service.command(None)
-        {
-            tools.insert(name);
+        if !app.service.is_static() {
+            if app.service.manager == Manager::Pm2 {
+                tools.insert("pm2".to_string());
+            }
+            if app.service.pm2.ecosystem.is_none()
+                && let (Program::Tool(name) | Program::Absolute(name), _) =
+                    app.service.command(None)
+            {
+                tools.insert(name);
+            }
         }
     }
     if legacy_lock {
@@ -262,7 +265,8 @@ pub(super) fn check_tools(deployable: &Deployable, facts: &Facts, report: &Repor
             if missing.len() == 1 { "it" } else { "them" }
         );
     }
-    if let (Program::Tool(tool), _) = deployable.start()
+    if !deployable.config.service.is_static()
+        && let (Program::Tool(tool), _) = deployable.start()
         && let Some(path) = facts.tool_path(&tool)
         && deployable.config.service.manager == Manager::Systemd
         && !deployable.unit_template_path().is_file()
@@ -326,6 +330,12 @@ pub(super) fn check_local(deployable: &Deployable) -> Result<()> {
         );
     }
     let template = deployable.unit_template_path();
+    if deployable.config.service.is_static() && template.is_file() {
+        bail!(
+            "{} is a systemd unit, but this is a static site; remove it",
+            template.display()
+        );
+    }
     if deployable.config.service.manager == Manager::Pm2 && template.is_file() {
         bail!(
             "{} is a systemd unit, but service.manager is pm2; remove it, or use systemd",

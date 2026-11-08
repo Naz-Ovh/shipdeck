@@ -5,7 +5,7 @@
 #     | bash -s -- --user deploy --dir /opt/my-api --service my-api --key 'ssh-ed25519 AAAA... me@pc'
 #
 # Fill in your own values: the SSH user, service.dir and service.name from
-# deploy.yaml, and your public key. Not root? Put `sudo` before `bash`.
+# shipdeck.yaml, and your public key. Not root? Put `sudo` before `bash`.
 #
 # It creates the deploy user, authorizes its key, creates the app folder
 # owned by that user, and installs the sudo rule shipdeck needs (checked by
@@ -54,7 +54,7 @@ while [ $# -gt 0 ]; do
 done
 
 # Every value ends up in a sudo rule run as root, so only plain names pass;
-# these are the same rules shipdeck applies to deploy.yaml.
+# these are the same rules shipdeck applies to shipdeck.yaml.
 [ -n "$DEPLOY_USER" ] && [ -n "$APP_DIR" ] && [ -n "$SERVICE" ] || { usage >&2; die "--user, --dir and --service are required"; }
 [[ "$DEPLOY_USER" =~ ^[A-Za-z0-9._-]+$ ]] || die "--user may only use letters, digits, '.', '_' and '-'"
 [[ "$APP_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]] || die "--dir must be an absolute path of letters, digits, '.', '_', '-' and '/'"

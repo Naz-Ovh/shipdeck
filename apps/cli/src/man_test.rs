@@ -19,9 +19,11 @@ fn schema_paths() -> BTreeSet<String> {
 
 fn walk(root: &Value, node: &Value, prefix: &str, out: &mut BTreeSet<String>) {
     let node = resolve(root, node);
-    if let Some(alternatives) = node.get("oneOf").and_then(Value::as_array) {
-        for alternative in alternatives {
-            walk(root, alternative, prefix, out);
+    for key in ["oneOf", "anyOf"] {
+        if let Some(alternatives) = node.get(key).and_then(Value::as_array) {
+            for alternative in alternatives {
+                walk(root, alternative, prefix, out);
+            }
         }
     }
     let Some(properties) = node.get("properties").and_then(Value::as_object) else {

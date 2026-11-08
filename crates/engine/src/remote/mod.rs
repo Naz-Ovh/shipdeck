@@ -1,6 +1,6 @@
 //! What shipdeck does on the server, as small `sh` scripts over one session.
 //!
-//! Layout under `service.dir`:
+//! Layout under `dir`:
 //! `current -> releases/<id>`, `releases/<id>/`, `backups/<id>.tar.zst`,
 //! `shared/`.
 
@@ -111,6 +111,12 @@ impl Server {
         self.manager
     }
 
+    /// Whether this deployable serves files instead of running a process.
+    #[must_use]
+    pub fn is_static(&self) -> bool {
+        self.manager == Manager::Static
+    }
+
     /// The deployment folder shared by this process's releases.
     #[must_use]
     pub fn dir(&self) -> &str {
@@ -132,29 +138,33 @@ impl Server {
     }
 
     /// The service as the agent's typed requests carry it.
-    #[must_use]
-    pub fn agent_service(&self) -> AgentService {
-        AgentService {
+    ///
+    /// # Errors
+    /// Returns an error for a static site, which has no process to carry.
+    pub fn agent_service(&self) -> Result<AgentService> {
+        let manager = match self.manager {
+            Manager::Systemd => AgentManager::Systemd,
+            Manager::Pm2 => AgentManager::Pm2,
+            Manager::Static => bail!("a static site has no process"),
+        };
+        Ok(AgentService {
             root: self.dir.clone(),
             service: self.service.clone(),
-            manager: match self.manager {
-                Manager::Systemd => AgentManager::Systemd,
-                Manager::Pm2 => AgentManager::Pm2,
-            },
+            manager,
             user: self.user.clone(),
             pm2_file: self.pm2_file.clone(),
             env: self.env.service.clone(),
             env_file: self.env.env_file.clone(),
-        }
+        })
     }
 
-    /// The commands that need root here; see [`sudo_commands`]. PM2 needs
-    /// none.
+    /// The commands that need root here; see [`sudo_commands`]. PM2 and
+    /// static sites need none.
     #[must_use]
     pub fn sudo_commands(&self) -> Vec<String> {
         match self.manager {
             Manager::Systemd => sudo_commands(&self.dir, &self.service),
-            Manager::Pm2 => Vec::new(),
+            Manager::Pm2 | Manager::Static => Vec::new(),
         }
     }
 
@@ -169,7 +179,7 @@ impl Server {
         if self.is_root() { "" } else { "sudo -n " }
     }
 
-    /// Creates `service.dir` for an app's first deploy: as the user if it
+    /// Creates `dir` for an app's first deploy: as the user if it
     /// may, else with sudo (then handed to the user), else it says so.
     ///
     /// # Errors
@@ -313,7 +323,7 @@ echo \"current -> $(readlink current)\"",
     /// # Errors
     /// Returns an error when the unit cannot be installed or enabled.
     pub async fn install_unit(&self, report: &Reporter) -> Result<()> {
-        if self.manager == Manager::Pm2 {
+        if !matches!(self.manager, Manager::Systemd) {
             return Ok(());
         }
         let (dir, svc, sudo) = (&self.dir, &self.service, self.sudo());
@@ -338,6 +348,9 @@ echo \"current -> $(readlink current)\"",
     /// # Errors
     /// Returns an error when the service cannot be restarted.
     pub async fn restart(&self, report: &Reporter) -> Result<()> {
+        if self.manager == Manager::Static {
+            return Ok(());
+        }
         if self.manager == Manager::Pm2 {
             let script = self.pm2_script("startOrReload");
             self.run(&format!("reload {} in pm2", self.pm2_app), &script, report)
@@ -419,7 +432,7 @@ echo {done}
         Ok(())
     }
 
-    /// Runs one command from deploy.yaml at `place`, streaming its output.
+    /// Runs one command from shipdeck.yaml at `place`, streaming its output.
     /// It sees `service.env`, then `service.env_file` (as systemd reads it:
     /// no shell expansion), then `vars`.
     ///
@@ -435,7 +448,7 @@ echo {done}
         let (dir, shown, env_file) = match place {
             Place::AppDir => (
                 self.dir.clone(),
-                "in service.dir".to_string(),
+                "in dir".to_string(),
                 env.env_file.as_ref().map(|f| format!("current/{f}")),
             ),
             Place::Release(id) => {
@@ -474,7 +487,7 @@ echo {done}
             &self.dir,
             &crate::remote::lease::new_token(),
         ));
-        // The command is shell by design: it comes from deploy.yaml, written
+        // The command is shell by design: it comes from shipdeck.yaml, written
         // by whoever deploys, and runs as the deploy user.
         script.push_str(command);
         script.push('\n');
@@ -517,6 +530,9 @@ echo {done}
                 "pm2 logs {} --lines 30 --nostream --raw 2>&1",
                 sh_quote(&self.pm2_app)
             ),
+            Manager::Static => {
+                bail!("a static site has no process logs; nginx keeps its own in /var/log/nginx")
+            }
         };
         let out = self.session.exec(&script).await?;
         Ok(out.stdout.lines().map(str::to_string).collect())
@@ -540,10 +556,10 @@ fn env_prelude(dir: &str, env: &CommandEnv, env_file: Option<String>) -> String 
     script
 }
 
-/// Where a command from deploy.yaml runs on the server.
+/// Where a command from shipdeck.yaml runs on the server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Place {
-    /// `service.dir`, for preflight; the env file is the live release's.
+    /// `dir`, for preflight; the env file is the live release's.
     AppDir,
     /// `releases/<id>`, for setup, while the old release is still live.
     Release(String),

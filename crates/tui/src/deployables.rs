@@ -390,6 +390,9 @@ fn pipeline_section(lines: &mut Vec<Line<'static>>, config: &DeployConfig) {
     let health = &pipeline.health;
     let waits = match &health.url {
         Some(url) => format!("{url} · {}s", health.timeout_secs),
+        None if config.service.is_static() => {
+            format!("files served · {}s", health.timeout_secs)
+        }
         None => format!(
             "{} active · {}s",
             config.service.manager.label(),
@@ -435,6 +438,10 @@ fn policy_section(lines: &mut Vec<Line<'static>>, config: &DeployConfig, deploya
             "env file",
             vec![Span::styled(file.clone(), theme::text())],
         );
+    }
+    if let Some(path) = deployable.served_path() {
+        field(lines, "serves", vec![Span::styled(path, theme::text())]);
+        return;
     }
     let unit = if deployable.unit_template_path().is_file() {
         "service.template"
@@ -510,12 +517,12 @@ fn empty(frame: &mut Frame, area: Rect, app: &App) {
         Line::from(Span::styled("No deployables yet", theme::bold(ACCENT))),
         Line::default(),
         Line::from(Span::styled(
-            format!("shipdeck looks for folders with a deploy.yaml inside {root}"),
+            format!("shipdeck looks for folders with a shipdeck.yaml inside {root}"),
             theme::text(),
         )),
         Line::default(),
         Line::from(Span::styled(
-            format!("{root}/server-prod/deploy.yaml"),
+            format!("{root}/server-prod/shipdeck.yaml"),
             Style::new().fg(VIOLET),
         )),
         Line::from(Span::styled(
@@ -524,7 +531,7 @@ fn empty(frame: &mut Frame, area: Rect, app: &App) {
         )),
         Line::default(),
         Line::from(Span::styled(
-            "The README and examples/ show every deploy.yaml field.",
+            "The README and examples/ show every shipdeck.yaml field.",
             theme::muted(),
         )),
     ];

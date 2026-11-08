@@ -3,6 +3,7 @@
 # on the server. shipdeck writes my-api.pm2.json into each release.
 name: My API (prod)
 project: ../../../my-api
+dir: /opt/my-api
 
 ssh:
   host: prod
@@ -10,7 +11,6 @@ ssh:
 
 service:
   name: my-api
-  dir: /opt/my-api
   manager: pm2
   start: node dist/main.js --port 3000   # arguments go after the script
   env_file: .env

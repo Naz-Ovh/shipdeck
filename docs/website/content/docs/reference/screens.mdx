@@ -119,11 +119,11 @@ The live summary is one of:
 | `not connected · c connects` | No connection yet, or you disconnected. |
 | `⠋ connecting…` | Connecting and reading the live status. |
 | `✘ <error>` | The first line of the error, for example `✘ connecting to deploy@203.0.113.11 timed out after 15s`. |
-| `not deployed yet: the first deploy creates its folder` | `service.dir` does not exist on the server. |
+| `not deployed yet: the first deploy creates its folder` | `dir` does not exist on the server. |
 | `nothing deployed yet` | The folder exists but has no live release. |
 | `v0.3.1 (ab12cd3) · active` | The live version, commit and `systemctl is-active` state. A dirty build reads `v0.3.1 (ab12cd3, uncommitted changes)`. |
 
-The panel on the right shows the selected deployable, read from its `deploy.yaml`:
+The panel on the right shows the selected deployable, read from its `shipdeck.yaml`:
 
 - **TARGET:** `ssh` (with `→ <address:port>  ~/.ssh/config` when the host is an alias), `login`, `folder`, `service` with its state, `runs as`, `start` (the full `ExecStart`), and `live`.
 - **SERVER:** once connected through the agent: Linux and kernel, CPU and cores, free and total memory, the disk behind the folder, uptime, and the agent version.
@@ -464,7 +464,7 @@ No other key works here, not even `Esc` or `Ctrl+C`, so you cannot quit until yo
 
 ### Nothing changed
 
-Opens during Pack when the new release's fingerprint equals the live release's: the same files, modes and links, the same service file and the same `deploy.yaml`. The deploy waits for the answer; nothing on the server has changed yet. The screen jumps to Operation, and the title names the deployable's folder, for example `api-prod · nothing changed`.
+Opens during Pack when the new release's fingerprint equals the live release's: the same files, modes and links, the same service file and the same `shipdeck.yaml`. The deploy waits for the answer; nothing on the server has changed yet. The screen jumps to Operation, and the title names the deployable's folder, for example `api-prod · nothing changed`.
 
 ```txt
 Nothing changed since v0.3.1-ab12cd3-20261014.153012 (live).

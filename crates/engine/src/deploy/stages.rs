@@ -346,12 +346,20 @@ impl Run<'_> {
         if let Err(err) = switched {
             return Err(self.recover(server, Step::Switch, err).await);
         }
-        self.finish(Step::Switch, format!("current → {id}"));
+        let mut detail = format!("current → {id}");
+        if let Some(path) = self.deployable.served_path() {
+            detail = format!("{detail} · served at {path}");
+        }
+        self.finish(Step::Switch, detail);
         Ok(())
     }
 
     /// Restart: bring the service up on the new release.
     pub(super) async fn step_restart(&self, server: &Server) -> Result<(), Ended> {
+        if self.config().service.is_static() {
+            self.skip(Step::Restart, "static site: nothing to restart");
+            return Ok(());
+        }
         self.start(Step::Restart, &self.config().service.name);
         if let Err(err) = restart_processes(&[server], self.report).await {
             return Err(self.recover(server, Step::Restart, err).await);

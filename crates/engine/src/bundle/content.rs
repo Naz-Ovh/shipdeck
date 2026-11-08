@@ -44,7 +44,7 @@ impl Contents {
     /// `sha256:<hex>` over what makes the release what it is: each path with
     /// its kind, a file's mode and SHA-256, a link's target; the service file
     /// rendered without the release's name, so a new id, version or build
-    /// time leave it alone; and `deploy.yaml`. Two releases with the same
+    /// time leave it alone; and `shipdeck.yaml`. Two releases with the same
     /// fingerprint run the same files the same way.
     ///
     /// # Errors

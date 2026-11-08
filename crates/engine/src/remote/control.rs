@@ -69,6 +69,7 @@ fn log_script(manager: Manager, service: &str, pm2_app: &str, sudo: &str) -> Str
     match manager {
         Manager::Systemd => format!("{sudo}{}", journal_follow(&sh_quote(service))),
         Manager::Pm2 => format!("pm2 logs {} --raw --lines {LOG_LINES}", sh_quote(pm2_app)),
+        Manager::Static => String::new(),
     }
 }
 
@@ -78,6 +79,7 @@ pub fn log_command(service: &Service) -> String {
     match service.manager {
         Manager::Systemd => journal_follow(&service.name),
         Manager::Pm2 => format!("pm2 logs {} --raw --lines {LOG_LINES}", service.pm2_app()),
+        Manager::Static => "a static site has no process logs".to_string(),
     }
 }
 
@@ -87,6 +89,9 @@ impl Server {
     /// # Errors
     /// Returns an error when stop or disable is not permitted.
     pub async fn check_stop_permission(&self) -> Result<()> {
+        if self.manager == Manager::Static {
+            return Ok(());
+        }
         if self.manager == Manager::Systemd {
             self.check_sudo(|service| systemctl(Control::Stop, service))
                 .await?;
@@ -101,8 +106,12 @@ impl Server {
     /// # Errors
     /// Returns an error when retiring the process fails.
     pub async fn retire(&self, report: &crate::deploy::report::Reporter) -> Result<()> {
+        if self.manager == Manager::Static {
+            return Ok(());
+        }
         self.check_stop_permission().await?;
         let script = match self.manager {
+            Manager::Static => return Ok(()),
             Manager::Systemd => format!(
                 "set -e\nstate=$(systemctl show {} -p LoadState --value)\nif [ \"$state\" != not-found ]; then {}systemctl stop {}; {}systemctl disable {}; fi",
                 self.q_service(),
@@ -128,13 +137,18 @@ impl Server {
     /// Returns an error when sudo is not allowed, the PM2 state is unreadable,
     /// or the command fails.
     pub async fn control(&self, action: Control) -> Result<()> {
+        if self.is_static() {
+            bail!("a static site has no process to {}", action.verb());
+        }
         if let Some(agent) = self.session.agent() {
             let action = match action {
                 Control::Stop => AgentServiceAction::Stop,
                 Control::Start => AgentServiceAction::Start,
                 Control::Restart => AgentServiceAction::Restart,
             };
-            agent.service_control(&self.agent_service(), action).await?;
+            agent
+                .service_control(&self.agent_service()?, action)
+                .await?;
             return Ok(());
         }
         let script = match self.manager {
@@ -150,6 +164,7 @@ impl Server {
                 Control::Start => self.pm2_script("start"),
                 Control::Restart => self.pm2_script("startOrReload"),
             },
+            Manager::Static => return Ok(()),
         };
         self.session
             .exec(&script)
@@ -169,8 +184,11 @@ impl Server {
         on_line: impl FnMut(&str),
         stop: impl Future<Output = ()>,
     ) -> Result<Option<u32>> {
+        if self.is_static() {
+            bail!("a static site has no process logs; nginx keeps its own in /var/log/nginx");
+        }
         if let Some(agent) = self.session.agent() {
-            let (view, mut events) = agent.open_log(&self.agent_service(), LOG_LINES).await?;
+            let (view, mut events) = agent.open_log(&self.agent_service()?, LOG_LINES).await?;
             let mut on_line = on_line;
             let mut stop = std::pin::pin!(stop);
             loop {

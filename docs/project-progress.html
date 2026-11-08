@@ -237,13 +237,15 @@
       <h2>Up next</h2>
       <ol>
         <li>Monorepo deployment is built and verified through SSH in Podman: shared releases, saved app settings, rollback, controls, and logs (<a href="#p1d3">p1d3</a>). Nginx and oxmgr remain future work.</li>
+        <li>Static sites are built: <code>static:</code> next to <code>service:</code>, no process, and a stable path for nginx. Start with <a href="../docs/feature/static-site-mode.md">the plan</a> and <code>examples/static</code>; the owner has not tried it yet (<a href="#p4a0">p4a0</a>).</li>
+        <li>The config file is now <code>shipdeck.yaml</code> or <code>shipdeck.yml</code>; <code>deploy.yaml</code> is no longer read. Existing projects need one <code>mv</code> (<a href="#p0c6">p0c6</a>).</li>
         <li>The privileged-agent policy is built and verified in Podman: root-owned <code>/opt/shipdeck/agent/v&lt;version&gt;/agent</code>, sudo launch, same-major compatibility, newer-major refusal, atomic installs, and explicit app users (<a href="#p3a1">p3a1</a>, <a href="#p3d1">p3d1</a>). This needs a major release because the install and execution contracts changed. The owner must choose and publish the version.</li>
         <li>Agent completion remains verified: all ten findings in the <a href="../docs/review/agent-completion-review.md">agent completion review</a> are fixed. A release still needs the four <code>shipdeck-agent-*</code> archives. Follow the <a href="../.agents/task/agent-completion.md">agent completion plan</a> and the handoff.</li>
         <li>Owner: answer the remaining decisions marked <b>waiting</b>: four for the desktop app (<a href="#p2d1">p2d1</a> to <a href="#p2d4">p2d4</a>).</li>
         <li>Owner: five changes since version 0.6.1 are built but not released. They are Windows support (<a href="#p0f2">p0f2</a>), release details with <kbd>D</kbd> (<a href="#p0b3">p0b3</a>), wrapped log lines (<a href="#p0e3">p0e3</a>), the check for Windows line endings (<a href="#p0c4">p0c4</a>), and the end of support for pre-0.6 releases (<a href="#p0c5">p0c5</a>). Try them, then say when to make a release.</li>
         <li>Owner: look at the spec page, <a href="visual/Plan/spec.html">spec.html</a> (<a href="#p1a1">p1a1</a>), and say yes or what to change. All the older planning pages are merged into it.</li>
         <li>Owner: click through the desktop mockup, <a href="visual/prototype/desktop.html">desktop.html</a> (<a href="#p2a1">p2a1</a>), and say yes or what to change. This is the second take: everything starts from a server. The bar at the bottom of the page switches the theme and the network, shows the first run, picks how the next deploy ends, and opens each dialog.</li>
-        <li>Owner: two questions about the settings backup (<a href="#p1c6">p1c6</a>). Should the file be locked with a password? Should it also hold each project's <code>deploy.yaml</code>? And one about servers that stay connected (<a href="#p1c7">p1c7</a>): how long until an unused one disconnects? Recommended: 10 minutes.</li>
+        <li>Owner: two questions about the settings backup (<a href="#p1c6">p1c6</a>). Should the file be locked with a password? Should it also hold each project's <code>shipdeck.yaml</code>? And one about servers that stay connected (<a href="#p1c7">p1c7</a>): how long until an unused one disconnects? Recommended: 10 minutes.</li>
         <li>Both the console commands (<a href="#p1d1">p1d1</a>) and the TUI (<a href="#p1d2">p1d2</a>) work through the engine now, over the pipe. Nothing runs the engine in its own process any more. Next: when an app closes, the engine finishes the step it is on (<a href="#p1c2">p1c2</a>). The desktop app waits, as you asked.</li>
       </ol>
     </aside>
@@ -280,11 +282,11 @@ const PLAN = [
     "<p>shipdeck builds your project on your own PC. Then it sends the project to your server over SSH and runs it there as a systemd service.</p><p>Every deploy becomes a new release in its own folder. The live release is never changed in place.</p>",
     "<code>crates/engine</code> · docs/plan.md"],
    ["p0a2", "Any project: Rust, Go, Node.js, Python", "done", "2026-10-14",
-    "<p>One file, <code>deploy.yaml</code>, says what to build, what to send and how to start the project. You can send a binary, a folder of files, or both.</p><p>A binary is checked against the server's CPU and glibc before anything is sent. So a build that cannot run there stops early.</p>",
+    "<p>One file, <code>shipdeck.yaml</code>, says what to build, what to send and how to start the project. You can send a binary, a folder of files, or both.</p><p>A binary is checked against the server's CPU and glibc before anything is sent. So a build that cannot run there stops early.</p>",
     "<code>examples/</code> · README.md"],
    ["p0a3", "Eleven steps, each with your own commands", "done", "2026-10-15",
     "<p>A deploy runs these steps in order: preflight, build, pack, upload, unpack, setup, backup, switch, restart, health and done. If something fails, a step called failed runs.</p><p>Most steps can run your own commands: on your PC, on the server, or both. For example, <code>npm ci --omit=dev</code> can run on the server before the new release goes live.</p>",
-    "<code>pipeline:</code> in deploy.yaml · docs/plan.md, “The deploy, step by step”"],
+    "<code>pipeline:</code> in shipdeck.yaml · docs/plan.md, “The deploy, step by step”"],
    ["p0a4", "Rollback when the health check fails", "done", "2026-10-14",
     "<p>After the switch, shipdeck checks that the new release is healthy. If it is not, shipdeck asks whether to roll back. With no answer in 30 seconds, it rolls back by itself.</p><p>With <code>rollback: auto</code>, it never asks.</p>",
     "<code>pipeline.failed.rollback</code>"],
@@ -310,8 +312,8 @@ const PLAN = [
     "<code>crates/tui</code>"],
   ]},
   { title: "Config", items: [
-   ["p0c1", "Every mistake in deploy.yaml, reported at once", "done", "2026-10-14",
-    "<p>Before anything starts, shipdeck reads every <code>deploy.yaml</code>. It lists every mistake at once, like a compiler: the file, the line, a mark under the problem, and a hint.</p>",
+   ["p0c1", "Every mistake in shipdeck.yaml, reported at once", "done", "2026-10-14",
+    "<p>Before anything starts, shipdeck reads every <code>shipdeck.yaml</code>. It lists every mistake at once, like a compiler: the file, the line, a mark under the problem, and a hint.</p>",
     "<code>crates/engine/src/config</code>"],
    ["p0c2", "Help in your editor", "done", "2026-10-16",
     "<p>The config has a JSON Schema, <code>deploy.schema.json</code>. Editors use it to complete fields and to explain each one. It is published with every release, and the docs website serves it too.</p>",
@@ -319,12 +321,15 @@ const PLAN = [
    ["p0c3", "shipdeck init: start a new project from a preset", "done", "2026-10-15",
     "<p><code>shipdeck init</code> makes a new project folder. It asks only for what the flags leave out, and it writes a comment above every field it fills in.</p>",
     "<code>crates/engine/src/init</code> · <code>bin/shipdeck</code>"],
-   ["p0c4", "Refuse Windows line endings in deploy.yaml", "built", "2026-10-18",
-    "<p>A <code>deploy.yaml</code> saved with Windows line endings (CRLF) is refused at the config check.</p><p>It is in the code, but not in a release yet.</p>",
+   ["p0c4", "Refuse Windows line endings in shipdeck.yaml", "built", "2026-10-18",
+    "<p>A <code>shipdeck.yaml</code> saved with Windows line endings (CRLF) is refused at the config check.</p><p>It is in the code, but not in a release yet.</p>",
     ""],
    ["p0c5", "No more support for releases and configs from before 0.6", "built", "2026-10-18",
     "<p>Old formats from before version 0.6 are no longer read. The code no longer carries the old paths.</p><p>It is in the code, but not in a release yet.</p>",
     ""],
+   ["p0c6", "shipdeck.yaml is the config file name", "built", "2026-11-09",
+    "<p>Discovery reads <code>shipdeck.yaml</code> or <code>shipdeck.yml</code>. <code>deploy.yaml</code> and <code>deploy.yml</code> are no longer read. <code>init</code>, the manual, docs and examples use the new name.</p><p>The JSON Schema file keeps its name, <code>deploy.schema.json</code>, because editors already point at it.</p>",
+    "<a href=\"../docs/website/content/docs/guides/upgrading.mdx\">upgrading guide</a> · <code>crates/engine/src/config</code>"],
   ]},
   { title: "SSH and the server", items: [
    ["p0d1", "Log in with keys, passwords or ~/.ssh/config names", "done", "2026-10-15",
@@ -399,10 +404,10 @@ const PLAN = [
     "<p>The last known state of your servers and releases is saved on your PC. Without a connection, you can still look at it. It is read-only: nothing is queued to run later.</p><p>Where it lives is decision <a href=\"#p1e1\">p1e1</a>.</p>",
     ""],
    ["p1c5", "Find the projects on a server", "planned", "",
-    "<p>You log in to a server, and the engine lists the projects that shipdeck deployed there before. You do not need their <code>deploy.yaml</code> on your PC to see them, start them, stop them or read their logs.</p><p>The desktop app needs this for its first way in: start from a server, then pick a project. The owner asked for this on 2026-10-31.</p>",
+    "<p>You log in to a server, and the engine lists the projects that shipdeck deployed there before. You do not need their <code>shipdeck.yaml</code> on your PC to see them, start them, stop them or read their logs.</p><p>The desktop app needs this for its first way in: start from a server, then pick a project. The owner asked for this on 2026-10-31.</p>",
     "<a href=\"#p2a1\">p2a1</a>"],
    ["p1c6", "Back up your settings: export and import", "planned", "",
-    "<p>Everything shipdeck keeps on your PC can be saved to one file: your servers, your projects and the folders they are linked to, the host keys you trusted, and your preferences. Import that file on a new PC, or after a reinstall, and everything is back.</p><p>The engine does it, so the desktop app, the TUI and the CLI all get it. Your SSH keys are not in the file. They stay in <code>~/.ssh</code>. The owner asked for this on 2026-10-31.</p><p>To decide: should the file be locked with a password? Should it also hold a copy of each project's <code>deploy.yaml</code>?</p>",
+    "<p>Everything shipdeck keeps on your PC can be saved to one file: your servers, your projects and the folders they are linked to, the host keys you trusted, and your preferences. Import that file on a new PC, or after a reinstall, and everything is back.</p><p>The engine does it, so the desktop app, the TUI and the CLI all get it. Your SSH keys are not in the file. They stay in <code>~/.ssh</code>. The owner asked for this on 2026-10-31.</p><p>To decide: should the file be locked with a password? Should it also hold a copy of each project's <code>shipdeck.yaml</code>?</p>",
     ""],
    ["p1c7", "Several servers connected at once", "planned", "",
     "<p>You can be connected to several servers at the same time. Going back to the list of servers does not disconnect you, so opening a server again is instant.</p><p>A server you have not opened for a while disconnects by itself. You pick how long in Settings: 5, 10 or 30 minutes, or never. A running deploy keeps its server connected. The owner asked for this on 2026-10-31.</p><p>To decide: the default time. <b>Recommended:</b> 10 minutes.</p>",
@@ -461,7 +466,7 @@ const PLAN = [
     "<p>Without a connection, the app shows the last known state, with the time it was last seen. Buttons that change the server stay off until you connect.</p>",
     "<a href=\"#p1c4\">p1c4</a>"],
    ["p2b5", "Add a project, step by step", "planned", "",
-    "<p>Adding a project takes the whole window, in four steps, like Vercel. <b>Source:</b> drop a folder, choose one, or import from Git. A folder stays where it is. <b>Analyze:</b> the engine looks inside (<a href=\"#p1c8\">p1c8</a>). <b>Configure:</b> the name, the server, the build and start commands, and every variable from <code>.env</code>, all hidden until you show them. <b>Deploy:</b> the live steps, then “It is live”.</p><p>shipdeck saves the config inside the project, in <code>scripts/deploy/&lt;name&gt;/deploy.yaml</code>. You pick that name, like <code>prod</code> or <code>staging</code>. The variables go in a <code>.env</code> next to it, which git ignores. So the same project deploys from the desktop app, the TUI or CI. You run nothing on the server.</p><p>Everything is saved as a draft while you type. Drafts wait in Projects until you deploy them. The owner asked for this on 2026-10-31.</p>",
+    "<p>Adding a project takes the whole window, in four steps, like Vercel. <b>Source:</b> drop a folder, choose one, or import from Git. A folder stays where it is. <b>Analyze:</b> the engine looks inside (<a href=\"#p1c8\">p1c8</a>). <b>Configure:</b> the name, the server, the build and start commands, and every variable from <code>.env</code>, all hidden until you show them. <b>Deploy:</b> the live steps, then “It is live”.</p><p>shipdeck saves the config inside the project, in <code>scripts/deploy/&lt;name&gt;/shipdeck.yaml</code>. You pick that name, like <code>prod</code> or <code>staging</code>. The variables go in a <code>.env</code> next to it, which git ignores. So the same project deploys from the desktop app, the TUI or CI. You run nothing on the server.</p><p>Everything is saved as a draft while you type. Drafts wait in Projects until you deploy them. The owner asked for this on 2026-10-31.</p>",
     "<a href=\"#p2a1\">p2a1</a> · <a href=\"#p1c8\">p1c8</a> · <a href=\"#p3c1\">p3c1</a>"],
   ]},
   { title: "Deploy from Git", items: [
@@ -469,7 +474,7 @@ const PLAN = [
     "<p>Connect your Git account once, pick a repository, and shipdeck clones it to your PC. Then the same steps as a folder. Any Git address works too, over HTTPS or SSH. The owner asked for this on 2026-10-31.</p>",
     "<a href=\"#p2b5\">p2b5</a>"],
    ["p2e2", "Deploy on every push or release, built on CI", "planned", "",
-    "<p>You pick “on every push to main” or “on every release”. shipdeck adds a workflow file to the repository (GitHub Actions, GitLab CI or Bitbucket Pipelines) and stores the SSH key as a secret there. Then each push or release runs <code>shipdeck deploy</code> on the CI machine. Your PC can be off.</p><p>It uses the same <code>deploy.yaml</code> as the desktop app and the TUI.</p>",
+    "<p>You pick “on every push to main” or “on every release”. shipdeck adds a workflow file to the repository (GitHub Actions, GitLab CI or Bitbucket Pipelines) and stores the SSH key as a secret there. Then each push or release runs <code>shipdeck deploy</code> on the CI machine. Your PC can be off.</p><p>It uses the same <code>shipdeck.yaml</code> as the desktop app and the TUI.</p>",
     "<code>apps/cli/src/console</code>"],
    ["p2e3", "Deploy on every push, built on your server", "deferred", "",
     "<p>This is how Vercel and Netlify work: Git sends a message (a webhook) to the server on each push. The server pulls the code, builds it and switches. No CI is needed.</p><p>It needs a helper that is always on (<a href=\"#p8a1\">p8a1</a>) and a web address for Git to call (phase 4), so it comes after those.</p>",
@@ -538,6 +543,9 @@ const PLAN = [
  { n: 4, title: "Domains and HTTPS", short: "Domains", c: "teal",
    blurb: "Give each project a web address with HTTPS, using nginx.", subs: [
   { title: "nginx", items: [
+   ["p4a0", "Static sites: files, no process", "built", "2026-11-08",
+    "<p>A deploy can be a service, as before, or a static site. A static site has files and no process: no unit, no restart and no process logs. The release still switches <code>current</code>, and nginx serves <code>&lt;dir&gt;/current/&lt;root&gt;</code>.</p><p>Every deploy now names <code>dir</code> at the top level, and <code>static</code> takes only <code>root</code>. A monorepo app uses <code>static: {root}</code> inside its shared release. A deploy with neither target, or with both, is refused. <code>service.dir</code> and <code>static.dir</code> are refused, so there is one place for the folder. Relative paths accept <code>./</code>. The pack step stops when <code>root</code> is not in the release.</p><p>nginx config, domains and HTTPS are still the next step. This only gives static files a stable path to serve.</p>",
+    "<a href=\"../docs/feature/static-site-mode.md\">feature plan</a> · examples/static"],
    ["p4a1", "A domain for each project", "planned", "",
     "<p>For example, <code>https://my-api.example.com</code>. nginx sends the traffic to the project's port. Each project gets one nginx config file, which you can read and extend.</p>",
     ""],
@@ -547,6 +555,9 @@ const PLAN = [
    ["p4a3", "The DNS record to add", "planned", "",
     "<p>The app shows the exact DNS record you need to add at your domain provider.</p>",
     ""],
+   ["p4a4", "A dedicated nginx block for each project", "planned", "",
+    "<p>Owner direction: nginx-only settings get their own block, separate from <code>service</code> and <code>static</code>. It should cover response headers, <code>location</code> blocks, a served path override, and raw nginx configuration as a string block.</p><p>The field name and exact shape are undecided. Raw text must pass <code>nginx -t</code> before activation, and a failed check leaves the previous configuration running.</p>",
+    "<a href=\"../docs/feature/nginx-config-management.md#app-facing-nginx-settings\">plan: App-facing nginx settings</a>"],
   ]},
   { title: "Decisions for the owner", items: [
    ["p4b1", "Decide: which Linux comes first", "deferred", "",

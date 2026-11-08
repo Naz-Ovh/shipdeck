@@ -38,8 +38,9 @@ fn deployable(slug: &str, name: &str, host: &str) -> Deployable {
         "
 name: {name}
 project: ../../../Server
+dir: /opt/{slug}
 ssh: {{ host: {alias}, user: deploy }}
-service: {{ name: {slug}, dir: /opt/{slug}, start: ./server -E=.env }}
+service: {{ name: {slug}, start: ./server -E=.env }}
 pipeline:
   build:
     run:
@@ -62,10 +63,10 @@ fn node_app() -> Deployable {
         "
 name: Web (prod)
 project: ../../../web
+dir: /opt/web
 ssh: { host: web, user: deploy }
 service:
   name: web
-  dir: /opt/web
   start: node dist/main.js
   env_file: .env
   shared: [uploads]

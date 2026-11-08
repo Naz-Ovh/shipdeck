@@ -1,4 +1,4 @@
-//! The second look at a deploy.yaml: values that have the right shape but
+//! The second look at a shipdeck.yaml: values that have the right shape but
 //! would be unsafe or ambiguous once they reach a remote shell, a systemd
 //! unit or the release folder.
 
@@ -8,19 +8,31 @@ use super::glob::Pattern;
 use super::problem::{Problem, Span};
 use super::yaml::Node;
 use super::{
-    Commands, DeployConfig, Manager, Program, file_name, is_ecosystem_file, is_node, is_plain_name,
-    is_program, is_unit_name, release_path, split_args,
+    Commands, DeployConfigFile, Manager, Program, Service, file_name, inside_path,
+    is_ecosystem_file, is_node, is_plain_name, is_program, is_unit_name, release_path, split_args,
 };
 use crate::release::MANIFEST_FILE;
 
-pub fn check(config: &DeployConfig, root: &Node) -> Vec<Problem> {
+pub fn check(config: &DeployConfigFile, root: &Node) -> Vec<Problem> {
     let mut rules = Rules {
         root,
         problems: Vec::new(),
     };
     rules.top(config);
-    rules.service(config);
-    rules.pm2(config);
+    rules.dir(&config.dir);
+    match (&config.service, &config.static_site) {
+        (Some(service), None) if service.is_static() => rules.static_site(config, service),
+        (Some(service), None) => {
+            rules.service(service, config.pipeline.pack.binary.is_some());
+            rules.pm2(config, service);
+        }
+        (None, Some(site)) => {
+            let service =
+                Service::static_site(config.name.clone(), config.dir.clone(), site.root.clone());
+            rules.static_site(config, &service);
+        }
+        _ => {}
+    }
     rules.pipeline(config);
     rules.backup(config);
     rules.files(config);
@@ -48,7 +60,7 @@ impl Rules<'_> {
         self.problems.push(problem);
     }
 
-    fn top(&mut self, config: &DeployConfig) {
+    fn top(&mut self, config: &DeployConfigFile) {
         if config.name.trim().is_empty() {
             self.fail(
                 &["name"],
@@ -64,7 +76,7 @@ impl Rules<'_> {
                 &["project"],
                 "`project` is empty",
                 "empty",
-                "a folder relative to this deploy.yaml, such as `../../../web`; leave it out for this folder",
+                "a folder relative to this shipdeck.yaml, such as `../../../web`; leave it out for this folder",
             );
         }
         if config.ssh.host.trim().is_empty() {
@@ -80,19 +92,33 @@ impl Rules<'_> {
                 "letters, digits, `.`, `_` and `-` only",
             );
         }
+        match (&config.service, &config.static_site) {
+            (Some(_), Some(_)) => self.fail(
+                &["static"],
+                "`service` and `static` cannot both be set",
+                "pick one",
+                "remove `static` for a process, or `service` for a static site",
+            ),
+            (None, None) => self.fail(
+                &["service"],
+                "one of `service` or `static` is needed",
+                "nothing to run or serve",
+                "add `service` with `start`, or `static` with `dir` and `root`",
+            ),
+            _ => {}
+        }
     }
 
-    fn service(&mut self, config: &DeployConfig) {
-        self.service_name(config);
-        self.service_dir(config);
-        self.service_run(config);
-        self.service_env(config);
-        self.service_shared(config);
+    fn service(&mut self, service: &Service, binary: bool) {
+        self.service_name(service);
+        self.service_run(service, binary);
+        self.service_env(service);
+        self.service_shared(service);
     }
 
     /// `service.name`: a unit name, without `.service`.
-    fn service_name(&mut self, config: &DeployConfig) {
-        let name = &config.service.name;
+    fn service_name(&mut self, service: &Service) {
+        let name = &service.name;
         if name.ends_with(".service") {
             self.fail(
                 &["service", "name"],
@@ -110,13 +136,12 @@ impl Rules<'_> {
         }
     }
 
-    /// `service.dir`: an absolute folder on the server.
-    fn service_dir(&mut self, config: &DeployConfig) {
-        let dir = &config.service.dir;
+    /// `dir`: an absolute folder on the server, for every kind of deploy.
+    fn dir(&mut self, dir: &str) {
         if !(dir.starts_with('/') && dir.len() > 1) {
             self.fail(
-                &["service", "dir"],
-                "`service.dir` must be an absolute path",
+                &["dir"],
+                "`dir` must be an absolute path",
                 "not absolute",
                 "such as /opt/my-api",
             );
@@ -126,8 +151,8 @@ impl Rules<'_> {
             || dir.split('/').any(|part| part == "..")
         {
             self.fail(
-                &["service", "dir"],
-                "`service.dir` may only use letters, digits, `.`, `_`, `-` and `/`",
+                &["dir"],
+                "`dir` may only use letters, digits, `.`, `_`, `-` and `/`",
                 "not allowed",
                 "and no `..`",
             );
@@ -135,11 +160,10 @@ impl Rules<'_> {
     }
 
     /// What runs: `service.start`, `service.run_as` and `service.env_file`.
-    fn service_run(&mut self, config: &DeployConfig) {
-        let service = &config.service;
+    fn service_run(&mut self, service: &Service, binary: bool) {
         let ecosystem = service.manager == Manager::Pm2 && service.pm2.ecosystem.is_some();
         match &service.start {
-            None if config.pipeline.pack.binary.is_none() && !ecosystem => self.fail(
+            None if !binary && !ecosystem => self.fail(
                 &["service"],
                 "`service.start` is needed when there is no `pipeline.pack.binary`",
                 "what does the service run?",
@@ -208,8 +232,8 @@ impl Rules<'_> {
     }
 
     /// `service.env`: variable names and values a unit line can carry.
-    fn service_env(&mut self, config: &DeployConfig) {
-        for (key, value) in &config.service.env {
+    fn service_env(&mut self, service: &Service) {
+        for (key, value) in &service.env {
             let valid = !key.is_empty()
                 && !key.starts_with(|c: char| c.is_ascii_digit())
                 && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
@@ -232,9 +256,9 @@ impl Rules<'_> {
     }
 
     /// `service.shared`: folders inside the release, none of them overlapping.
-    fn service_shared(&mut self, config: &DeployConfig) {
+    fn service_shared(&mut self, service: &Service) {
         let mut seen: Vec<String> = Vec::new();
-        for (index, entry) in config.service.shared.iter().enumerate() {
+        for (index, entry) in service.shared.iter().enumerate() {
             let at = ["service", "shared", &index.to_string()];
             let stored = release_path(entry);
             if entry.starts_with('/') || !is_program(entry) || stored.is_empty() {
@@ -244,7 +268,7 @@ impl Rules<'_> {
                     "not allowed",
                     "such as `uploads` or `data/cache`",
                 );
-            } else if reserved(config).contains(&stored) {
+            } else if reserved(service).contains(&stored) {
                 self.fail(&at, format!("{stored} belongs to shipdeck"), "reserved", "");
             } else if let Some(other) = seen.iter().find(|other| overlaps(other, &stored)).cloned()
             {
@@ -260,8 +284,28 @@ impl Rules<'_> {
         }
     }
 
-    fn pm2(&mut self, config: &DeployConfig) {
-        let service = &config.service;
+    /// `static.root`: files to serve, with no process.
+    fn static_site(&mut self, config: &DeployConfigFile, service: &Service) {
+        let root = service.static_root().unwrap_or_default();
+        if let Err(why) = inside_path(root) {
+            self.fail(
+                &["static", "root"],
+                format!("`static.root` {why}"),
+                "not a folder inside the release",
+                "such as `dist`, shipped with `pipeline.pack.files.include`",
+            );
+        }
+        if config.pipeline.pack.binary.is_some() {
+            self.fail(
+                &["pipeline", "pack", "binary"],
+                "`pipeline.pack.binary` does not apply to a static site",
+                "nothing to run",
+                "remove it, and ship the site with `pipeline.pack.files.include`",
+            );
+        }
+    }
+
+    fn pm2(&mut self, config: &DeployConfigFile, service: &Service) {
         let pm2 = &service.pm2;
         if service.manager != Manager::Pm2 {
             if self.root.span_of(&["service", "pm2"]).is_some() {
@@ -327,7 +371,7 @@ impl Rules<'_> {
                     &["service", "pm2", "options"],
                     "`pm2.options` and `pm2.ecosystem` are both set",
                     "pick one",
-                    "keep `pm2.ecosystem` (your file, deploy.yaml settings ignored), or `pm2.options` (shipdeck writes the file)",
+                    "keep `pm2.ecosystem` (your file, shipdeck.yaml settings ignored), or `pm2.options` (shipdeck writes the file)",
                 );
             }
         }
@@ -357,7 +401,7 @@ impl Rules<'_> {
         }
     }
 
-    fn pipeline(&mut self, config: &DeployConfig) {
+    fn pipeline(&mut self, config: &DeployConfigFile) {
         let pipeline = &config.pipeline;
         for (index, tool) in pipeline.preflight.requires.iter().enumerate() {
             if !is_program(tool) {
@@ -460,7 +504,7 @@ impl Rules<'_> {
         }
     }
 
-    fn backup(&mut self, config: &DeployConfig) {
+    fn backup(&mut self, config: &DeployConfigFile) {
         let backup = &config.pipeline.backup;
         if backup.keep.open < 1 {
             self.fail(
@@ -471,12 +515,9 @@ impl Rules<'_> {
             );
         }
         let files = &backup.files;
-        let shared: Vec<String> = config
-            .service
-            .shared
-            .iter()
-            .map(|s| release_path(s))
-            .collect();
+        let shared: Vec<String> = config.service.as_ref().map_or_else(Vec::new, |service| {
+            service.shared.iter().map(|s| release_path(s)).collect()
+        });
         for (list, entries) in [("include", &files.include), ("exclude", &files.exclude)] {
             let mut literals: Vec<String> = Vec::new();
             for (index, text) in entries.iter().enumerate() {
@@ -531,10 +572,13 @@ impl Rules<'_> {
         }
     }
 
-    fn files(&mut self, config: &DeployConfig) {
+    fn files(&mut self, config: &DeployConfigFile) {
         let pack = &config.pipeline.pack;
         let files = &pack.files;
-        let reserved = reserved(config);
+        let reserved: Vec<String> = config
+            .service
+            .as_ref()
+            .map_or_else(|| vec![MANIFEST_FILE.to_string()], reserved);
         if let Some(binary) = &pack.binary {
             if binary.trim().is_empty() {
                 self.fail(
@@ -598,7 +642,7 @@ impl Rules<'_> {
                         "",
                     );
                 } else if list == "include" && literal.is_empty() && source == "deploy" {
-                    // `.` is fine: deploy.yaml itself is always left out.
+                    // `.` is fine: shipdeck.yaml itself is always left out.
                 } else if literals.contains(&literal) {
                     self.fail(
                         &at,
@@ -609,8 +653,9 @@ impl Rules<'_> {
                 } else if list == "include"
                     && let Some(shared) = config
                         .service
-                        .shared
-                        .iter()
+                        .as_ref()
+                        .into_iter()
+                        .flat_map(|service| service.shared.iter())
                         .map(|s| release_path(s))
                         .find(|shared| !literal.is_empty() && overlaps(shared, &literal))
                 {
@@ -629,9 +674,9 @@ impl Rules<'_> {
 }
 
 /// The files shipdeck writes into every release.
-fn reserved(config: &DeployConfig) -> Vec<String> {
+fn reserved(service: &Service) -> Vec<String> {
     let mut files = vec![MANIFEST_FILE.to_string()];
-    files.extend(config.service.own_file());
+    files.extend(service.own_file());
     files
 }
 

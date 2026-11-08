@@ -217,16 +217,18 @@ impl Multiple<'_> {
             tools.extend(pipeline.preflight.requires);
             http |= pipeline.health.url.is_some();
             let service = app.service(&self.config, name);
-            if service.manager == crate::config::Manager::Pm2 {
-                tools.insert("pm2".to_string());
-            }
-            if service.pm2.ecosystem.is_none()
-                && let (
-                    crate::config::Program::Tool(tool) | crate::config::Program::Absolute(tool),
-                    _,
-                ) = service.command(None)
-            {
-                tools.insert(tool);
+            if !service.is_static() {
+                if service.manager == crate::config::Manager::Pm2 {
+                    tools.insert("pm2".to_string());
+                }
+                if service.pm2.ecosystem.is_none()
+                    && let (
+                        crate::config::Program::Tool(tool) | crate::config::Program::Absolute(tool),
+                        _,
+                    ) = service.command(None)
+                {
+                    tools.insert(tool);
+                }
             }
         }
         if http {

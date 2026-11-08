@@ -196,6 +196,13 @@ impl App {
         let Some(deployable) = self.deployables.get(index).cloned() else {
             return;
         };
+        if deployable.config.service.is_static() {
+            self.notify(
+                "Static site: there is no process to start, stop or restart",
+                Tone::Warn,
+            );
+            return;
+        }
         self.controlling.push(index);
         let name = deployable.config.service.name.clone();
         self.notify(format!("{} {name}…", doing(action)), Tone::Info);
@@ -241,6 +248,13 @@ impl App {
         let Some(deployable) = self.deployables.get(index).cloned() else {
             return;
         };
+        if deployable.config.service.is_static() {
+            self.notify(
+                "Static site: no process logs; nginx keeps its own in /var/log/nginx",
+                Tone::Warn,
+            );
+            return;
+        }
         self.logs = Some(LogsView {
             id: None,
             deployable: index,

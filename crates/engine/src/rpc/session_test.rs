@@ -52,7 +52,7 @@ async fn a_reply_is_written_for_the_app() {
 async fn opens_a_monorepo_as_a_shared_deployment() {
     let folder = std::env::temp_dir().join(format!("shipdeck-rpc-monorepo-{}", std::process::id()));
     std::fs::create_dir_all(folder.join("product")).unwrap();
-    std::fs::write(folder.join("product/deploy.yaml"), "name: product\nssh: {host: 127.0.0.1, user: deploy}\ndir: /opt/product\npipeline: {pack: {files: {include: {project: [server.js]}}}}\napps: {api: {start: node server.js}}\n").unwrap();
+    std::fs::write(folder.join("product/shipdeck.yaml"), "name: product\nssh: {host: 127.0.0.1, user: deploy}\ndir: /opt/product\npipeline: {pack: {files: {include: {project: [server.js]}}}}\napps: {api: {start: node server.js}}\n").unwrap();
     let (session, _connection, _lines) = session();
     let opened = session
         .open(&shipdeck_protocol::message::request::WorkspaceOpen {

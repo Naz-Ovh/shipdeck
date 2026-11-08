@@ -983,7 +983,7 @@ function freshData() {
           rel("0.3.8", "0f1e2d3", "20261012.090101", "19 days ago", "3.9 MB", RUST_FILES("11.4")),
         ] },
       { id: "web", server: "prod-1", runner: "PM2", lang: "Node.js", status: "running", since: "1 day", pid: 1840, mem: "96 MB", dir: "/opt/web",
-        local: "~/code/web/deploy.yaml", health: "http://127.0.0.1:3000/", deployed: "yesterday 17:20",
+        local: "~/code/web/shipdeck.yaml", health: "http://127.0.0.1:3000/", deployed: "yesterday 17:20",
         releases: [
           rel("2.3.0", "77aa1bc", "20261030.172014", "yesterday 17:20", "3.2 MB", NODE_FILES),
           rel("2.2.4", "6e5d4c3", "20261026.101250", "5 days ago", "3.1 MB", NODE_FILES),
@@ -996,13 +996,13 @@ function freshData() {
           rel("1.0.2", "beef002", "20261011.120000", "20 days ago", "636 KB", [["app/", "18 files, 405 KB", ""], ["requirements.txt", "320 B", ""], ["release.json", "1.0 KB", "shipdeck"]]),
         ] },
       { id: "worker", server: "stage-1", runner: "systemd", lang: "Go", status: "stopped", since: "", pid: null, mem: "", dir: "/opt/worker",
-        local: "~/code/worker/deploy.yaml", health: "", deployed: "3 days ago",
+        local: "~/code/worker/shipdeck.yaml", health: "", deployed: "3 days ago",
         releases: [
           rel("0.9.1", "4d5e6f7", "20261028.191512", "3 days ago", "5.6 MB", [["worker", "14.2 MB", "binary"], ["config.toml", "1.2 KB", ""], ["release.json", "1.0 KB", "shipdeck"]]),
           rel("0.9.0", "8a9b0c1", "20261021.090000", "10 days ago", "5.5 MB", [["worker", "14.0 MB", "binary"], ["config.toml", "1.2 KB", ""], ["release.json", "1.0 KB", "shipdeck"]]),
         ] },
       { id: "blog", server: "home-pi", runner: "PM2", lang: "Node.js", status: "running", since: "", pid: null, mem: "", dir: "/home/pi/blog",
-        local: "~/code/blog/deploy.yaml", health: "http://127.0.0.1:4321/", deployed: "4 days ago",
+        local: "~/code/blog/shipdeck.yaml", health: "http://127.0.0.1:4321/", deployed: "4 days ago",
         releases: [rel("1.2.0", "aa11bb2", "20261027.200000", "4 days ago", "1.8 MB", NODE_FILES)] },
     ],
     // App setups not deployed yet, kept on this PC.
@@ -1495,7 +1495,7 @@ function deployWhy(a) {
   if (!reach(s)) return "Needs a live connection";
   if (opHere && !S.op.done) return "This project is deploying now";
   if (busy()) return `Another deploy is running (${S.op.app}). One at a time.`;
-  if (!a.local) return "No deploy.yaml on this PC. Link the project's folder first.";
+  if (!a.local) return "No shipdeck.yaml on this PC. Link the project's folder first.";
   return "";
 }
 
@@ -1520,7 +1520,7 @@ function pApp(s) {
         <button class="btn dark" data-act="deploy" data-a="${a.id}" ${why ? `disabled title="${esc(why)}"` : ""}>${ic("rocket")}Deploy</button>
       </div></div>
     ${other && live && a.local ? `<div class="note warn">${ic("hourglass")}<span class="grow">${esc(why)}</span><button class="btn sm" data-act="open-op">See it</button></div>` : ""}
-    ${!a.local ? `<div class="note">${tile("radar", "sky", "sm")}<span class="grow">shipdeck found this project on the server. There is no <code>deploy.yaml</code> for it on this PC, so you can start, stop, roll back and read its logs, but not deploy it.</span><button class="btn sm" data-act="toast" data-msg="A folder picker opens here.">${ic("folder-open")}Link a folder</button></div>` : ""}
+    ${!a.local ? `<div class="note">${tile("radar", "sky", "sm")}<span class="grow">shipdeck found this project on the server. There is no <code>shipdeck.yaml</code> for it on this PC, so you can start, stop, roll back and read its logs, but not deploy it.</span><button class="btn sm" data-act="toast" data-msg="A folder picker opens here.">${ic("folder-open")}Link a folder</button></div>` : ""}
     <div class="tabs">${tabs.map(([k, n, i]) => `<button class="tab${tab === k ? " on" : ""}" data-act="tab" data-t="${k}">${ic(i)}${n}${k === "deploy" && !S.op.done ? ' <span class="dot-only run"></span>' : ""}</button>`).join("")}</div>
     ${body}`;
 }
@@ -1539,7 +1539,7 @@ function appOverview(a, s) {
       <dt>${ic("circle-check")}Last result</dt><dd>${live ? '<span class="chip ok">' + ic("check") + "200 OK, 4 ms</span>" : '<span class="faint">Unknown</span>'}</dd></dl>`
       : '<p class="muted" style="margin:0">No health check is set. shipdeck only checks that the service starts.</p>'}</div>
     <div class="card"><div class="card-hd">${tile("laptop", "slate", "sm")}<h2>On this PC</h2></div>${a.local ? `<dl class="kv"><dt>${ic("file-code")}Config</dt><dd class="mono" style="font-size:11.5px">${esc(a.local)}</dd><dt>${ic("folder")}On the server</dt><dd class="mono">${esc(a.dir)}</dd></dl>`
-      : `<p class="muted" style="margin:0 0 12px">No <code>deploy.yaml</code> for this project on this PC.</p><button class="btn sm" data-act="toast" data-msg="A folder picker opens here.">${ic("folder-open")}Link a folder</button>`}</div>
+      : `<p class="muted" style="margin:0 0 12px">No <code>shipdeck.yaml</code> for this project on this PC.</p><button class="btn sm" data-act="toast" data-msg="A folder picker opens here.">${ic("folder-open")}Link a folder</button>`}</div>
   </div>`;
 }
 
@@ -1556,7 +1556,7 @@ function appReleases(a, s) {
 
 function appConfig(a) {
   if (!a.local) return `<div class="later" style="margin-top:8px"><div class="tile big slate" style="width:64px;height:64px;border-radius:18px;margin:0 auto 14px">${ic("file-code")}</div>
-    <p class="muted">No <code>deploy.yaml</code> on this PC for ${esc(a.id)}.</p><button class="btn" data-act="toast" data-msg="A folder picker opens here.">${ic("folder-open")}Link a folder</button></div>`;
+    <p class="muted">No <code>shipdeck.yaml</code> on this PC for ${esc(a.id)}.</p><button class="btn" data-act="toast" data-msg="A folder picker opens here.">${ic("folder-open")}Link a folder</button></div>`;
   return `<div class="stack"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">${ic("file-code")}<span class="mono muted">${esc(a.local)}</span><span class="sp"></span>
       <button class="btn sm" data-act="toast" data-msg="Your editor opens the file here.">${ic("external-link")}Open in editor</button></div>
     <pre class="code">${DEPLOY_YAML[a.id] || '<span class="c"># The config of this project. Shown in full in the real app.</span>'}</pre></div>`;
@@ -1659,13 +1659,13 @@ function draftNeeds(d) {
   return out;
 }
 
-// deploy.yaml as shipdeck writes it, in scripts/deploy/<name>/ inside the project.
+// shipdeck.yaml as shipdeck writes it, in scripts/deploy/<name>/ inside the project.
 function yamlOf(d) {
   const n = d.name || "my-project", L = [], env = d.env.filter(e => e.k);
   const list = (key, arr, pad) => arr.length === 1 ? `${pad}${key}: ${arr[0]}` : `${pad}${key}: [${arr.join(", ")}]`;
   const root = d.root && d.root !== "./" && d.root !== "." ? "/" + d.root.replace(/^\.\//, "").replace(/\/$/, "") : "";
   L.push("# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.8.1/docs/schema/deploy.schema.json",
-         `name: ${n}`, `project: ../../..${root}`, "", "ssh:", `  host: ${d.server}`, `  user: ${server(d.server).user}`, "", "service:", `  name: ${n}`, `  dir: ${dirOf(d)}`);
+         `name: ${n}`, `project: ../../..${root}`, `dir: ${dirOf(d)}`, "", "ssh:", `  host: ${d.server}`, `  user: ${server(d.server).user}`, "", "service:", `  name: ${n}`);
   if (d.manager === "pm2") L.push("  manager: pm2");
   if (d.start) L.push(`  start: ${d.start}`);
   if (env.length) L.push(`  env_file: .env   # ${env.length} variables, next to this file`);
@@ -1685,7 +1685,7 @@ function treeHtml(d) {
   return `<ul class="tree">
     <li>${ic("folder")}<span class="mono">${esc(d.folder || "~/code/my-project")}/</span><span class="tg">your project</span></li>
     <li class="l1">${ic("folder")}<span class="mono">scripts/deploy/${esc(deployName(d))}/</span></li>
-    <li class="l2 new">${ic("file-code")}<span class="mono">deploy.yaml</span><span class="tg">new, commit it</span></li>
+    <li class="l2 new">${ic("file-code")}<span class="mono">shipdeck.yaml</span><span class="tg">new, commit it</span></li>
     ${env ? `<li class="l2 new">${ic("file-lock")}<span class="mono">.env</span><span class="tg">${env} variables, git ignores it</span></li>` : ""}
   </ul>`;
 }
@@ -1695,7 +1695,7 @@ function anywhereHtml(d) {
     <li>${tile("ship", "indigo", "sm")}<span><b>Here</b><span class="s">The Deploy button on the project.</span></span></li>
     <li>${tile("terminal", "slate", "sm")}<span><b>The TUI</b><code>shipdeck ./scripts/deploy</code></span></li>
     <li>${tile("git-pull-request", "orange", "sm")}<span><b>CI or a script</b><code>shipdeck deploy ./scripts/deploy ${nm}</code></span></li>
-  </ul><p class="hint" style="margin:10px 0 0">All three read the same <code>deploy.yaml</code>.</p>`;
+  </ul><p class="hint" style="margin:10px 0 0">All three read the same <code>shipdeck.yaml</code>.</p>`;
 }
 function suActs(d) {
   if (d.step < 2) return "";
@@ -1816,7 +1816,7 @@ function configStep(d, s) {
         <span class="env-from">${e.from === ".env" ? ".env" : "added"}</span>
         <button class="icon-btn" data-act="env-del" data-i="${i}" title="Remove" aria-label="Remove">${ic("trash-2")}</button></div>`).join("")}</div>
       <div class="acts" style="margin-top:4px"><button class="btn sm" data-act="env-add">${ic("plus")}Add one</button><button class="btn sm" data-act="toast" data-msg="Paste a whole .env here, and each line becomes a variable.">${ic("clipboard-paste")}Paste a .env</button></div>
-      <p class="hint" style="margin:12px 0 0">They are saved in <span class="mono" id="su-env-path">scripts/deploy/${esc(deployName(d))}/.env</span>, which git ignores. Never in deploy.yaml.</p>
+      <p class="hint" style="margin:12px 0 0">They are saved in <span class="mono" id="su-env-path">scripts/deploy/${esc(deployName(d))}/.env</span>, which git ignores. Never in shipdeck.yaml.</p>
     </section>
     <section class="sec">
       <div class="sec-hd">${tile("rocket", "orange", "lg")}<div class="grow"><h2>When it deploys</h2><span class="s">Start from this PC. Add pushes and releases when you want.</span></div></div>
@@ -1886,7 +1886,7 @@ function draftCard(d) {
 function deployDraft(d) {
   const p = PRESETS[d.preset];
   let a = d.app && app(d.app);
-  const fields = { dir: dirOf(d), health: d.health, local: `${cfgDir(d)}/deploy.yaml`, runner: d.manager === "pm2" ? "PM2" : "systemd", lang: p.lang };
+  const fields = { dir: dirOf(d), health: d.health, local: `${cfgDir(d)}/shipdeck.yaml`, runner: d.manager === "pm2" ? "PM2" : "systemd", lang: p.lang };
   if (!a) { a = { id: d.name, server: d.server, status: "stopped", since: "", pid: null, mem: "", deployed: "never", releases: [], ...fields }; D.apps.push(a); d.app = a.id; }
   else Object.assign(a, fields);
   d.step = 3;

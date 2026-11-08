@@ -1,6 +1,14 @@
 use crate::config::fixtures::*;
 use crate::config::*;
 
+/// The sample with extra settings in its `service` block.
+fn service(extra: &str) -> String {
+    SAMPLE.replace(
+        "service: { name: demo }",
+        &format!("service: {{ name: demo{extra} }}"),
+    )
+}
+
 #[test]
 fn an_unquoted_negated_pattern_is_caught() {
     let found = problems(&SAMPLE.replace(
@@ -15,7 +23,7 @@ fn an_unquoted_negated_pattern_is_caught() {
         found[0].help.as_deref(),
         Some("put it in quotes: \"!dist/maps\"")
     );
-    assert_eq!(found[0].at.unwrap().start, (11, 24));
+    assert_eq!(found[0].at.unwrap().start, (12, 24));
 }
 
 #[test]
@@ -32,46 +40,31 @@ fn rejects_unsafe_service_values() {
         assert_eq!(problems(&yaml).len(), 1, "{to} should be rejected");
     }
     for start in ["", "node a\\b", "$(id) x", "'node' x", "../bin/x"] {
-        let yaml = SAMPLE.replace(
-            "dir: /opt/demo }",
-            &format!("dir: /opt/demo, start: {start:?} }}"),
-        );
+        let yaml = service(&format!(", start: {start:?}"));
         assert!(parse(&yaml).is_err(), "start {start:?} should be rejected");
     }
     for file in ["/etc/passwd", "../.env", "a b"] {
-        let yaml = SAMPLE.replace(
-            "dir: /opt/demo }",
-            &format!("dir: /opt/demo, env_file: {file:?} }}"),
-        );
+        let yaml = service(&format!(", env_file: {file:?}"));
         assert!(
             parse(&yaml).is_err(),
             "env_file {file:?} should be rejected"
         );
     }
     for (key, value) in [("1X", "a"), ("A-B", "a"), ("OK", "say \\\"hi\\\"")] {
-        let yaml = SAMPLE.replace(
-            "dir: /opt/demo }",
-            &format!("dir: /opt/demo, env: {{ {key}: \"{value}\" }} }}"),
-        );
+        let yaml = service(&format!(", env: {{ {key}: \"{value}\" }}"));
         assert!(
             parse(&yaml).is_err(),
             "env {key}={value} should be rejected"
         );
     }
     for shared in ["/abs", "../up", "release.json", "a b"] {
-        let yaml = SAMPLE.replace(
-            "dir: /opt/demo }",
-            &format!("dir: /opt/demo, shared: [{shared:?}] }}"),
-        );
+        let yaml = service(&format!(", shared: [{shared:?}]"));
         assert!(
             parse(&yaml).is_err(),
             "shared {shared:?} should be rejected"
         );
     }
-    let yaml = SAMPLE.replace(
-        "dir: /opt/demo }",
-        "dir: /opt/demo, shared: [data, data/cache] }",
-    );
+    let yaml = service(", shared: [data, data/cache]");
     assert!(messages(&yaml)[0].contains("overlap"));
 }
 
@@ -96,7 +89,7 @@ fn a_backup_keeps_at_least_the_live_release_and_holds_something() {
         backup("    files: { include: [\"../x\", data, data] }\n"),
         ["\"../x\" climbs out with `..`", "\"data\" is listed twice"]
     );
-    let shared = SAMPLE.replace("dir: /opt/demo }", "dir: /opt/demo, shared: [uploads] }");
+    let shared = service(", shared: [uploads]");
     assert_eq!(
         messages(&format!(
             "{shared}  backup:\n    files: {{ include: [uploads/a] }}\n"
@@ -132,7 +125,7 @@ fn pm2_settings_that_cannot_work_are_named() {
         let found = messages(&pm2(extra));
         assert!(found.iter().any(|m| m.contains(why)), "{extra}: {found:?}");
     }
-    let yaml = SAMPLE.replace("dir: /opt/demo }", "dir: /opt/demo, pm2: { app: x } }");
+    let yaml = service(", pm2: { app: x }");
     assert!(messages(&yaml)[0].contains("only read with `manager: pm2`"));
     // node's flags have their own PM2 setting.
     parse(&pm2(
@@ -204,8 +197,10 @@ fn checks_patterns_at_launch() {
     assert_eq!(found, ["demo.service belongs to shipdeck"]);
     // The same names deeper down are fine, and so is the whole project.
     assert!(parse(&with_files("[files/release.json, .]")).is_ok());
-    let shared =
-        with_files("[uploads]").replace("dir: /opt/demo }", "dir: /opt/demo, shared: [uploads] }");
+    let shared = with_files("[uploads]").replace(
+        "service: { name: demo }",
+        "service: { name: demo, shared: [uploads] }",
+    );
     assert_eq!(
         messages(&shared),
         ["\"uploads\" is in `service.shared`, so it cannot be shipped too"]
@@ -228,8 +223,8 @@ fn something_must_ship_and_something_must_start() {
     let yaml = with_files("[dist]")
         .replace("    binary: target/release/demo\n", "")
         .replace(
-            "dir: /opt/demo }",
-            "dir: /opt/demo, start: node dist/main.js }",
+            "service: { name: demo }",
+            "service: { name: demo, start: node dist/main.js }",
         );
     assert!(parse(&yaml).is_ok());
 }

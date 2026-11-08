@@ -1,6 +1,6 @@
-# Config: deploy.yaml, the schema, the manual, the examples
+# Config: shipdeck.yaml, the schema, the manual, the examples
 
-Everything people read or write about `deploy.yaml` moves together. A change
+Everything people read or write about `shipdeck.yaml` moves together. A change
 in one usually touches all four.
 
 ## The schema
@@ -26,7 +26,7 @@ in one usually touches all four.
 
 ## The examples
 
-- `examples/<kind>/deploy.yaml` must keep parsing and start with the schema
+- `examples/<kind>/shipdeck.yaml` must keep parsing and start with the schema
   line for this version (`schema_test.rs` checks).
 - A new field goes into the README table, an example, and
   `apps/cli/manual/configs.yaml`.

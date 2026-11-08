@@ -39,7 +39,7 @@ class VersionBumpTests(unittest.TestCase):
             "docs/website/public/deploy.schema.json",
         ]
         paths.extend(str(path.relative_to(ROOT))
-                     for path in (ROOT / "examples").glob("*/deploy.yaml"))
+                     for path in (ROOT / "examples").glob("*/shipdeck.yaml"))
         for name in paths:
             destination = self.root / name
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -77,7 +77,7 @@ class VersionBumpTests(unittest.TestCase):
             original["$id"] = original["$id"].replace(
                 f"/v{self.old}/", f"/v{self.new}/")
             self.assertEqual(original, json.loads(path.read_text()))
-        for path in (self.root / "examples").glob("*/deploy.yaml"):
+        for path in (self.root / "examples").glob("*/shipdeck.yaml"):
             self.assertIn(f"/v{self.new}/", path.read_text())
 
     def test_invalid_versions_leave_files_unchanged(self):

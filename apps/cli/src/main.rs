@@ -39,7 +39,7 @@ const KEY_ENV: &str = "SHIPDECK_SSH_KEY";
     name = "shipdeck",
     version,
     about = "Build locally, deploy over SSH as a systemd service or PM2 app, roll back any release.",
-    after_help = "Each folder under DEPLOY_ROOT with a deploy.yaml is one deployable.\n\
+    after_help = "Each folder under DEPLOY_ROOT with a shipdeck.yaml is one deployable.\n\
                   Login, first found: --key, --key-text, --password, SHIPDECK_SSH_KEY,\n\
                   SHIPDECK_PASSWORD; else the host's ~/.ssh/config key, then the TUI asks\n\
                   for the password. SHIPDECK_KEY_PASSPHRASE unlocks an encrypted key.\n\
@@ -50,14 +50,14 @@ const KEY_ENV: &str = "SHIPDECK_SSH_KEY";
     subcommand_negates_reqs = true
 )]
 struct Cli {
-    /// Folder whose subfolders each hold a deploy.yaml
+    /// Folder whose subfolders each hold a shipdeck.yaml
     #[arg(value_name = "DEPLOY_ROOT", required_unless_present = "schema")]
     root: Option<PathBuf>,
 
     #[command(flatten)]
     login: LoginArgs,
 
-    /// Print the JSON Schema of deploy.yaml, for editor completion
+    /// Print the JSON Schema of shipdeck.yaml, for editor completion
     #[arg(long)]
     schema: bool,
 
@@ -91,13 +91,13 @@ struct LoginArgs {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Create a deployable folder with a deploy.yaml from a preset; asks for what the flags leave out
+    /// Create a deployable folder with a shipdeck.yaml from a preset; asks for what the flags leave out
     Init(InitArgs),
     /// Run as the engine: it answers the app on stdin and stdout, one message per line
     Engine,
     #[command(flatten)]
     Server(ServerCommand),
-    /// The manual, for people and coding agents: `man index` (topics), `man configs` (deploy.yaml), `man details <KEY>...`
+    /// The manual, for people and coding agents: `man index` (topics), `man configs` (shipdeck.yaml), `man details <KEY>...`
     Man(man::ManArgs),
 }
 
@@ -106,7 +106,7 @@ enum Command {
 enum ServerCommand {
     /// Build and deploy one or more deployables, one after another, without the TUI
     Deploy {
-        /// Folder whose subfolders each hold a deploy.yaml
+        /// Folder whose subfolders each hold a shipdeck.yaml
         #[arg(value_name = "DEPLOY_ROOT")]
         root: PathBuf,
 
@@ -127,7 +127,7 @@ enum ServerCommand {
     },
     /// Switch a deployable to a release already on the server, without the TUI
     Rollback {
-        /// Folder whose subfolders each hold a deploy.yaml
+        /// Folder whose subfolders each hold a shipdeck.yaml
         #[arg(value_name = "DEPLOY_ROOT")]
         root: PathBuf,
 
@@ -144,7 +144,7 @@ enum ServerCommand {
     },
     /// List the releases on the server, newest first
     Releases {
-        /// Folder whose subfolders each hold a deploy.yaml
+        /// Folder whose subfolders each hold a shipdeck.yaml
         #[arg(value_name = "DEPLOY_ROOT")]
         root: PathBuf,
 
@@ -157,7 +157,7 @@ enum ServerCommand {
     },
     /// Show Linux, CPU, memory, disk, uptime, and installed tools on a server
     ServerInfo {
-        /// Folder whose subfolders each hold a deploy.yaml
+        /// Folder whose subfolders each hold a shipdeck.yaml
         #[arg(value_name = "DEPLOY_ROOT")]
         root: PathBuf,
         /// The deployable, by folder name or `name`
@@ -168,7 +168,7 @@ enum ServerCommand {
     },
     /// Show what an interrupted operation left, and clean it up with --cleanup
     Work {
-        /// Folder whose subfolders each hold a deploy.yaml
+        /// Folder whose subfolders each hold a shipdeck.yaml
         #[arg(value_name = "DEPLOY_ROOT")]
         root: PathBuf,
         /// The deployable, by folder name or `name`
@@ -182,7 +182,7 @@ enum ServerCommand {
     },
     /// Print the events saved on the server, oldest first
     Events {
-        /// Folder whose subfolders each hold a deploy.yaml
+        /// Folder whose subfolders each hold a shipdeck.yaml
         #[arg(value_name = "DEPLOY_ROOT")]
         root: PathBuf,
         /// The deployable, by folder name or `name`
@@ -199,7 +199,7 @@ enum ServerCommand {
     },
     /// Prepare a server once: packages, the project folder, and sudo access
     Setup {
-        /// Folder whose subfolders each hold a deploy.yaml
+        /// Folder whose subfolders each hold a shipdeck.yaml
         #[arg(value_name = "DEPLOY_ROOT")]
         root: PathBuf,
         /// The deployable, by folder name or `name`
@@ -218,7 +218,7 @@ enum ServerCommand {
 
 #[derive(Args)]
 struct InitArgs {
-    /// Folder whose subfolders each hold a deploy.yaml
+    /// Folder whose subfolders each hold a shipdeck.yaml
     #[arg(value_name = "DEPLOY_ROOT")]
     root: PathBuf,
 
@@ -550,7 +550,7 @@ async fn run_tui(root: PathBuf, args: LoginArgs) -> Result<ExitCode> {
         let folder = PathBuf::from(&info.folder);
         let Ok(found) = shipdeck_engine::config::Deployable::load(&folder) else {
             bail!(
-                "{}: its deploy.yaml cannot be read any more",
+                "{}: its shipdeck.yaml cannot be read any more",
                 folder.display()
             );
         };

@@ -1,4 +1,4 @@
-//! Problems in a `deploy.yaml`, and how they are printed when shipdeck
+//! Problems in a `shipdeck.yaml`, and how they are printed when shipdeck
 //! refuses to start: one block per problem with the line it is on, a caret
 //! under the spot and a hint, in colour on a terminal.
 
@@ -158,9 +158,9 @@ pub fn render(files: &[FileProblems], base: &Path, color: bool, outcome: &str) -
     let count: usize = files.iter().map(|f| f.problems.len()).sum();
     let mut out = String::new();
     let files_text = if files.len() == 1 {
-        "1 deploy.yaml file has".to_string()
+        "1 shipdeck.yaml file has".to_string()
     } else {
-        format!("{} deploy.yaml files have", files.len())
+        format!("{} shipdeck.yaml files have", files.len())
     };
     let problems_text = if count == 1 {
         "1 problem".to_string()
@@ -192,7 +192,7 @@ pub fn render(files: &[FileProblems], base: &Path, color: bool, outcome: &str) -
     out
 }
 
-/// `web-prod/deploy.yaml`: the deployable's folder and the file.
+/// `web-prod/shipdeck.yaml`: the deployable's folder and the file.
 fn short_name(path: &Path) -> String {
     let file = path
         .file_name()

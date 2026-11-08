@@ -37,12 +37,13 @@ shipdeck init ./scripts/deploy my-api --preset rust --manager systemd --host pro
 ```
 
 This creates a deploy config, an empty `.env`, and a rule to keep that secret
-file out of git. Edit `scripts/deploy/my-api/deploy.yaml`:
+file out of git. Edit `scripts/deploy/my-api/shipdeck.yaml`:
 
 ```yaml
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.7.1/docs/schema/deploy.schema.json
 name: My API
 project: ../../..
+dir: /opt/my-api
 
 ssh:
   host: prod
@@ -50,7 +51,6 @@ ssh:
 
 service:
   name: my-api
-  dir: /opt/my-api
   start: ./my-api
   env_file: .env
 
@@ -125,3 +125,4 @@ setup again. It does not reverse database migrations or custom side effects.
 
 For focused help: `shipdeck man index`, then
 `shipdeck man details cli.deploy service.start`.
+dir: /opt/my-api

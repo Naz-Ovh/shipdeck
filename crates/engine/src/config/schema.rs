@@ -1,11 +1,11 @@
-//! The JSON Schema for `deploy.yaml`, generated from the config types. It
+//! The JSON Schema for `shipdeck.yaml`, generated from the config types. It
 //! is published in `docs/schema/` at each release tag for editor completion,
-//! and shipdeck checks every deploy.yaml against it at launch.
+//! and shipdeck checks every shipdeck.yaml against it at launch.
 
 use schemars::generate::SchemaSettings;
 use serde_json::Value;
 
-use super::DeployConfig;
+use super::DeployConfigFile;
 
 /// The file in the shipdeck repository, published with each release.
 pub const FILE_NAME: &str = "docs/schema/deploy.schema.json";
@@ -18,7 +18,7 @@ pub fn url() -> String {
     crate::setup::raw_url(FILE_NAME)
 }
 
-/// The line that gives a deploy.yaml completion in editors using the YAML
+/// The line that gives a shipdeck.yaml completion in editors using the YAML
 /// language server (VS Code's YAML extension, Neovim, Zed, `JetBrains`).
 #[must_use]
 pub fn modeline() -> String {
@@ -30,12 +30,12 @@ pub fn modeline() -> String {
 pub fn generate() -> Value {
     let schema = SchemaSettings::draft07()
         .into_generator()
-        .into_root_schema_for::<DeployConfig>();
+        .into_root_schema_for::<DeployConfigFile>();
     let mut value = schema.to_value();
     unwrap_lines(&mut value);
     if let Some(object) = value.as_object_mut() {
         object.insert("$id".into(), Value::String(url()));
-        object.insert("title".into(), Value::String("shipdeck deploy.yaml".into()));
+        object.insert("title".into(), Value::String("shipdeck.yaml".into()));
     }
     value
 }
@@ -72,7 +72,7 @@ pub fn published() -> Value {
     }
     serde_json::json!({
         "$schema": "http://json-schema.org/draft-07/schema#", "$id": url(),
-        "title": "shipdeck deploy.yaml", "oneOf": [single, mono], "definitions": definitions,
+        "title": "shipdeck.yaml", "oneOf": [single, mono], "definitions": definitions,
     })
 }
 

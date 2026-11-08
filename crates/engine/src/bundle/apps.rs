@@ -53,6 +53,10 @@ fn process_files(
     let template = folder.join(UNIT_TEMPLATE);
     let mut files: Vec<Option<ServiceFile>> = Vec::with_capacity(apps.len());
     for app in apps {
+        if app.service.is_static() {
+            files.push(None);
+            continue;
+        }
         let binary = app
             .pipeline
             .pack

@@ -60,7 +60,7 @@ The unit only points at `current/...`, so a deploy or rollback moves `current` a
 | `{{id}}` | the release id, e.g. `v0.3.1-ab12cd3-20261014.153012` |
 | `{{version}}` | the version part of the id |
 | `{{git}}` | the short commit sha, or `nogit` |
-| `{{dir}}` | `service.dir` |
+| `{{dir}}` | `dir` |
 | `{{workdir}}` | the live working folder |
 | `{{service}}` | `service.name` |
 | `{{user}}` | `service.run_as`, else the SSH user (after `~/.ssh/config`) |
@@ -84,17 +84,17 @@ The arguments follow unchanged. Bare names are resolved because systemd's `PATH`
 
 ## A rendered example
 
-With this deploy.yaml:
+With this shipdeck.yaml:
 
-```yaml title="scripts/deploy/my-api-prod/deploy.yaml"
+```yaml title="scripts/deploy/my-api-prod/shipdeck.yaml"
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
 name: My API (prod)
+dir: /opt/my-api
 ssh:
   host: 203.0.113.10
   user: deploy
 service:
   name: my-api
-  dir: /opt/my-api
   start: ./my-api -E=.env
   env_file: .env
   env:
@@ -149,7 +149,7 @@ As `root` the same commands run without `sudo -n`. Because the unit always comes
 
 ## Your own template
 
-Put a file named `service.template` next to `deploy.yaml`. It replaces the built-in unit for that deployable.
+Put a file named `service.template` next to `shipdeck.yaml`. It replaces the built-in unit for that deployable.
 
 ```ini title="scripts/deploy/my-api-prod/service.template"
 [Unit]
@@ -189,3 +189,4 @@ The errors are prefixed with `rendering <path to service.template>: `.
 <Callout type="warn">
 Values are not escaped for systemd specifiers. A `%` in `service.start` or a `service.env` value is read by systemd as a specifier such as `%h`.
 </Callout>
+dir: /opt/my-api

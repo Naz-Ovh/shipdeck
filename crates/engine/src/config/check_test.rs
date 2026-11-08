@@ -5,8 +5,9 @@ fn every_problem_in_a_file_is_reported_at_once_in_line_order() {
     let found = problems(
         "\
 name: Demo
+dir: opt/demo
 ssh: { host: example.com, user: deploy }
-service: { name: demo.service, dir: opt/demo }
+service: { name: demo.service }
 pipeline:
   unpack:
     run: { server: tar x }
@@ -25,11 +26,11 @@ pipeline:
     assert_eq!(
         lines,
         [
-            (3, "`service.name` is the name without .service"),
-            (3, "`service.dir` must be an absolute path"),
-            (5, "unpack does not take commands"),
-            (10, "`pipeline.health.timeout_secs` must be at least 3"),
-            (12, "`pipeline.failed.rollback` must be ask or auto"),
+            (2, "`dir` must be an absolute path"),
+            (4, "`service.name` is the name without .service"),
+            (6, "unpack does not take commands"),
+            (11, "`pipeline.health.timeout_secs` must be at least 3"),
+            (13, "`pipeline.failed.rollback` must be ask or auto"),
         ]
     );
 }
@@ -94,7 +95,7 @@ fn unknown_keys_get_a_suggestion_or_the_list() {
     assert_eq!(found[0].help.as_deref(), Some("did you mean `health`?"));
 
     let found = problems(&format!("{SAMPLE}colour: red\n"));
-    assert_eq!(found[0].at.unwrap().start, (10, 0));
+    assert_eq!(found[0].at.unwrap().start, (11, 0));
     assert!(
         found[0]
             .help
@@ -122,16 +123,12 @@ fn unknown_keys_get_a_suggestion_or_the_list() {
 fn missing_and_empty_values_are_named() {
     assert_eq!(
         messages(""),
-        [
-            "`name` is missing",
-            "`ssh` is missing",
-            "`service` is missing"
-        ]
+        ["`name` is missing", "`dir` is missing", "`ssh` is missing"]
     );
     let found = messages(&SAMPLE.replace("dir: /opt/demo", "dir:"));
-    assert_eq!(found, ["`service.dir` is empty"]);
-    let found = messages(&SAMPLE.replace(", dir: /opt/demo", ""));
-    assert_eq!(found, ["`service.dir` is missing"]);
+    assert_eq!(found, ["`dir` is empty"]);
+    let found = messages(&SAMPLE.replace("dir: /opt/demo\n", ""));
+    assert_eq!(found, ["`dir` is missing"]);
 }
 
 #[test]

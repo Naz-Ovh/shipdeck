@@ -322,7 +322,7 @@
         <dt>keepup</dt><dd>An optional program that would run on the server all the time. Later.</dd>
         <dt>systemd</dt><dd>The part of Linux that runs services, jobs and timers.</dd>
         <dt>journal</dt><dd>Where systemd keeps the logs.</dd>
-        <dt>project</dt><dd>Your own code that shipdeck deploys, with its own <code>deploy.yaml</code>. For example, <code>my-api</code>.</dd>
+        <dt>project</dt><dd>Your own code that shipdeck deploys, with its own <code>shipdeck.yaml</code>. For example, <code>my-api</code>.</dd>
         <dt>ready-made app</dt><dd>A well-known app that you host yourself, from the catalog, like n8n. It comes in phase 6.</dd>
         <dt>release</dt><dd>One deploy, kept in its own folder on the server.</dd>
       </dl>
@@ -501,8 +501,9 @@
         <div class="meta"><span>your PC</span><span class="dash">later: a home server, always on</span></div>
         <h4>Does</h4>
         <ul class="does">
-          <li>Reads every <code>deploy.yaml</code> and finds every mistake, with the line and a hint.</li>
+          <li>Reads every <code>shipdeck.yaml</code> and finds every mistake, with the line and a hint.</li>
           <li>Builds, packs, finds the files that changed, and uploads them.</li>
+          <li>Keeps a project up with systemd or PM2, or serves a static site with no process.</li>
           <li>Holds the SSH connections, logins and host keys: one connection per server.</li>
           <li>Checks the agent on every connection. Same-major versions are compatible; breaking changes require a major release.</li>
           <li>Starts deploys and reports every step to the apps.</li>
@@ -529,7 +530,7 @@
           <li>Prepares and verifies releases while connected, then activates them as the final deployment phase. Interrupted files stay until the user approves cleanup.</li>
           <li>Uses separate SSH channels for control messages and binary uploads. Writes are bounded so a dead receiver cannot hang a deploy.</li>
           <li>Writes every event into <code>state.db</code>, each with a number, for <code>shipdeck events</code> and reconnect inspection.</li>
-          <li>Runs your <code>deploy.yaml</code> server commands with <code>sh</code>.</li>
+          <li>Runs your <code>shipdeck.yaml</code> server commands with <code>sh</code>.</li>
         </ul>
         <h4>Never</h4>
         <ul class="never">
@@ -1026,8 +1027,8 @@ scripts/server-setup.sh        <span class="c">a public URL pinned to each relea
       <article class="frame" id="safety" data-zoom data-n="#29" data-t="Safety rules">
         <div class="fhead"><h3>Safety rules</h3></div>
         <ul class="plain">
-          <li>Every value that reaches a remote shell is checked or quoted first. The only exception: the server commands people write in <code>deploy.yaml</code>, which run as the deploy user.</li>
-          <li>The agent never runs shell text that an app sends, except those same <code>deploy.yaml</code> commands.</li>
+          <li>Every value that reaches a remote shell is checked or quoted first. The only exception: the server commands people write in <code>shipdeck.yaml</code>, which run as the deploy user.</li>
+          <li>The agent never runs shell text that an app sends, except those same <code>shipdeck.yaml</code> commands.</li>
           <li>Nothing opens a port. SSH keys and <code>known_hosts</code> stay the only way in.</li>
           <li>The agent's messages are a contract like the engine's: only added, and the version is checked when the engine connects.</li>
           <li>Servers without the agent keep the sudo lines they have today. That contract does not change.</li>

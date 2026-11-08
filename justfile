@@ -65,7 +65,7 @@ clean:
 version new:
     cargo run -q --manifest-path scripts/version_bump/Cargo.toml -- "{{new}}"
 
-# Writes the JSON Schema for deploy.yaml, and the website's copy of it.
+# Writes the JSON Schema for shipdeck.yaml, and the website's copy of it.
 schema:
     cargo run -q -p shipdeck -- --schema > docs/schema/deploy.schema.json
     cp docs/schema/deploy.schema.json docs/website/public/deploy.schema.json

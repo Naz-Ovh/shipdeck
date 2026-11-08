@@ -1,4 +1,4 @@
-//! The first look at a deploy.yaml: its shape against the JSON schema, so
+//! The first look at a shipdeck.yaml: its shape against the JSON schema, so
 //! a wrong key or a value of the wrong kind is caught with its line, all at
 //! once. What passes is handed on as plain JSON for serde.
 
@@ -666,9 +666,9 @@ fn missing_help(path: &[String]) -> String {
         "name" => "add `name: My API (prod)` at the top".into(),
         "ssh" => "add `ssh: { host: my-server, user: deploy }`".into(),
         "ssh.host" => "add `host:` with the server's address or a ~/.ssh/config alias".into(),
-        "service" => "add `service: { name: my-api, dir: /opt/my-api }`".into(),
+        "dir" => "add `dir: /opt/my-api`, the folder that holds current and releases".into(),
+        "service" => "add `service: { name: my-api }`".into(),
         "service.name" => "add `name: my-api` (the unit becomes my-api.service)".into(),
-        "service.dir" => "add `dir: /opt/my-api`".into(),
         other => format!("add `{}:`", other.rsplit('.').next().unwrap_or(other)),
     }
 }

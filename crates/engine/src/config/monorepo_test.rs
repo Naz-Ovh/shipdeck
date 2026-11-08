@@ -153,7 +153,7 @@ fn resolves_each_app_inside_the_repository() {
 fn loads_and_checks_external_app_files() {
     let folder = std::env::temp_dir().join(format!("shipdeck-load-apps-{}", std::process::id()));
     std::fs::create_dir_all(folder.join("apps")).unwrap();
-    let path = folder.join("deploy.yaml");
+    let path = folder.join("shipdeck.yaml");
     std::fs::write(&path, "name: product\nssh: {host: prod}\ndir: /opt/product\npipeline: {pack: {files: {include: {project: [dist]}}}}\napps: {api: apps/api.yaml}\n").unwrap();
     std::fs::write(folder.join("apps/api.yaml"), "start: node app.js\n").unwrap();
     let loaded = MonorepoConfig::load(&folder, &path).unwrap();
@@ -167,5 +167,58 @@ fn loads_and_checks_external_app_files() {
     )
     .unwrap();
     assert!(MonorepoConfig::load(&folder, &path).is_err());
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[test]
+fn a_static_app_needs_no_start_and_gets_a_release_folder() {
+    let config = parse(
+        "name: product\nssh: {host: prod}\ndir: /opt/product\npipeline: {pack: {files: {include: {project: [dist]}}}}\napps:\n  admin:\n    project: apps/admin\n    static: {root: ./dist}\n",
+    )
+    .unwrap();
+    config.check_apps().unwrap();
+    let Some(AppDefinition::Inline(app)) = config.apps.get("admin") else {
+        panic!("admin should be inline");
+    };
+    let service = app.service(&config, "admin");
+    assert!(service.is_static());
+    assert_eq!(service.static_root(), Some("./dist"));
+    assert_eq!(
+        service.served_path("apps/admin").as_deref(),
+        Some("/opt/product/current/apps/admin/dist")
+    );
+    assert_eq!(service.own_file(), None);
+}
+
+#[test]
+fn a_static_app_refuses_settings_that_need_a_process() {
+    for app in [
+        "{start: node server.js, static: {root: dist}}",
+        "{static: {root: dist}, process_manager: {name: pm2}}",
+        "{static: {root: dist}, env: {PORT: '3000'}}",
+        "{static: {root: dist}, shared: [uploads]}",
+        "{static: {root: /dist}}",
+    ] {
+        let yaml = format!(
+            "name: product\nssh: {{host: prod}}\ndir: /opt/product\npipeline: {{pack: {{files: {{include: {{project: [dist]}}}}}}}}\napps: {{admin: {app}}}\n"
+        );
+        assert!(parse(&yaml).is_err(), "accepted {app}");
+    }
+}
+
+#[test]
+fn an_app_file_may_start_with_a_dot() {
+    let folder = std::env::temp_dir().join(format!("shipdeck-monorepo-dot-{}", std::process::id()));
+    std::fs::create_dir_all(folder.join("apps")).unwrap();
+    std::fs::write(folder.join("apps/api.yaml"), "start: ./api\n").unwrap();
+    let mut config = parse(
+        "name: product\nssh: {host: prod}\ndir: /opt/product\napps: {api: ./apps/api.yaml}\n",
+    )
+    .unwrap();
+    config.load_app_files(&folder).unwrap();
+    assert!(matches!(
+        config.apps.get("api"),
+        Some(AppDefinition::Inline(_))
+    ));
     std::fs::remove_dir_all(folder).unwrap();
 }

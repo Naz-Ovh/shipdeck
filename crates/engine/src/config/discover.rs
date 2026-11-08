@@ -18,8 +18,8 @@ pub struct Discovery {
     pub problems: Vec<FileProblems>,
 }
 
-/// Every direct subfolder of `root` that holds a `deploy.yaml` (or
-/// `deploy.yml`), sorted by name.
+/// Every direct subfolder of `root` that holds a `shipdeck.yaml` (or
+/// `shipdeck.yml`), sorted by name.
 ///
 /// # Errors
 /// Returns an error when `root` cannot be read.

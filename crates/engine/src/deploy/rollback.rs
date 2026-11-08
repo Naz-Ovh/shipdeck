@@ -130,12 +130,9 @@ impl Run<'_> {
             return self.connection_lost(Step::Switch, &err);
         }
 
-        self.start(Step::Restart, &self.config().service.name);
-        if let Err(err) = super::restart_processes(&[&server], report).await {
-            return self.recover(&server, Step::Restart, err).await;
+        if let Err(err) = self.restart_step(&server).await {
+            return err;
         }
-        self.finish(Step::Restart, "");
-        self.record(&server, "service_restarted", "").await;
         if let Err(err) = self.check_project_lock() {
             return self.connection_lost(Step::Restart, &err);
         }
@@ -158,6 +155,21 @@ impl Run<'_> {
         }
         self.record(&server, "rollback_completed", target).await;
         Ended::ok(target)
+    }
+
+    /// Restarts after a rollback switch; a static site has nothing to restart.
+    async fn restart_step(&mut self, server: &Server) -> Result<(), Ended> {
+        if self.config().service.is_static() {
+            self.skip(Step::Restart, "static site: nothing to restart");
+            return Ok(());
+        }
+        self.start(Step::Restart, &self.config().service.name);
+        if let Err(err) = super::restart_processes(&[server], self.report).await {
+            return Err(self.recover(server, Step::Restart, err).await);
+        }
+        self.finish(Step::Restart, "");
+        self.record(server, "service_restarted", "").await;
+        Ok(())
     }
 
     async fn connect_locked(

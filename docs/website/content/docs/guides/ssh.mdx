@@ -3,13 +3,13 @@ title: SSH and login
 description: How shipdeck finds the server, logs in, checks the host key and keeps one connection per server.
 ---
 
-shipdeck talks to the server over SSH with its own client. It reads the target from `deploy.yaml`, can borrow settings from `~/.ssh/config`, and picks the login method from the command line.
+shipdeck talks to the server over SSH with its own client. It reads the target from `shipdeck.yaml`, can borrow settings from `~/.ssh/config`, and picks the login method from the command line.
 
-## The target in deploy.yaml
+## The target in shipdeck.yaml
 
 The `ssh` block has three separate fields. There is no `user@host:port` form: write each part in its own field.
 
-```yaml title="scripts/deploy/my-api-prod/deploy.yaml"
+```yaml title="scripts/deploy/my-api-prod/shipdeck.yaml"
 ssh:
   host: 203.0.113.10   # an address, a DNS name, or a ~/.ssh/config alias
   user: deploy         # optional when the alias has User
@@ -43,7 +43,7 @@ ssh:
   host: prod
 ```
 
-**Values in `deploy.yaml` win over the alias.** The address is the alias's `HostName`, else `ssh.host`; the port is `ssh.port`, else `Port`, else 22; the user is `ssh.user`, else `User`. When an alias is in use, the connect log line shows the real address: `connect deploy@prod → 203.0.113.10:2222 (...)`.
+**Values in `shipdeck.yaml` win over the alias.** The address is the alias's `HostName`, else `ssh.host`; the port is `ssh.port`, else `Port`, else 22; the user is `ssh.user`, else `User`. When an alias is in use, the connect log line shows the real address: `connect deploy@prod → 203.0.113.10:2222 (...)`.
 
 ### What is read
 
@@ -70,7 +70,7 @@ The matching follows `ssh`: lines before the first `Host` apply to every host, `
 
 ## Logging in
 
-The login method comes from the command line, never from `deploy.yaml`. It applies to every deployable in the run.
+The login method comes from the command line, never from `shipdeck.yaml`. It applies to every deployable in the run.
 
 | You run | shipdeck does |
 | --- | --- |
@@ -165,7 +165,7 @@ shipdeck opens one SSH session per endpoint (host, port, user and key) and reuse
 
 ## Deploying as any SSH user
 
-shipdeck deploys as `ssh.user`, whoever that is. When the user is literally `root`, nothing goes through sudo. Any other user needs write access to `service.dir` (or the right to create it) and passwordless sudo for five commands, plus three more to stop, start or follow the service from the TUI. [Server access](/docs/guides/server-access) covers the options and the setup script.
+shipdeck deploys as `ssh.user`, whoever that is. When the user is literally `root`, nothing goes through sudo. Any other user needs write access to `dir` (or the right to create it) and passwordless sudo for five commands, plus three more to stop, start or follow the service from the TUI. [Server access](/docs/guides/server-access) covers the options and the setup script.
 
 ## Next
 

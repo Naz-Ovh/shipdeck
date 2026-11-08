@@ -84,7 +84,7 @@ pub fn step_icon(state: StepState, tick: u64) -> Span<'static> {
 /// Colour for `systemctl is-active` output.
 pub fn service_color(state: &str) -> Color {
     match state {
-        "active" => OK,
+        "active" | "static" => OK,
         "activating" | "reloading" | "deactivating" => WARN,
         "failed" => ERR,
         _ => MUTED,

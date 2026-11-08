@@ -6,8 +6,9 @@ use super::*;
 
 pub(super) const SAMPLE: &str = "\
 name: Demo
+dir: /opt/demo
 ssh: { host: example.com, user: deploy }
-service: { name: demo, dir: /opt/demo }
+service: { name: demo }
 pipeline:
   build:
     run:
@@ -20,12 +21,12 @@ pipeline:
 pub(super) const NODE: &str = "\
 name: Web (prod)
 project: ../../../web
+dir: /opt/web
 ssh:
   host: prod
   user: deploy
 service:
   name: web
-  dir: /opt/web
   start: node dist/main.js
   env_file: .env
   env: { NODE_ENV: production }
@@ -115,8 +116,8 @@ pub(super) fn scratch(name: &str) -> PathBuf {
 /// SAMPLE with PM2 and `extra` in `service`.
 pub(super) fn pm2(extra: &str) -> String {
     SAMPLE.replace(
-        "dir: /opt/demo }",
-        &format!("dir: /opt/demo, manager: pm2{extra} }}"),
+        "service: { name: demo }",
+        &format!("service: {{ name: demo, manager: pm2{extra} }}"),
     )
 }
 

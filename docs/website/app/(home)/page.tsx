@@ -10,12 +10,12 @@ const install = 'curl -LsSf https://shipdeck.naz.ovh/install.sh | sh';
 
 const yaml = `name: My API (prod)
 project: ../../..
+dir: /opt/my-api
 ssh:
   host: prod
   user: deploy
 service:
   name: my-api
-  dir: /opt/my-api
   start: ./my-api
 pipeline:
   build:
@@ -38,7 +38,7 @@ const features = [
   {
     icon: FileCheck2,
     title: 'Mistakes caught before it starts',
-    body: 'Every deploy.yaml is read before the screen opens. Each problem is printed with its file, line and a hint, all at once, so one run shows you everything to fix.',
+    body: 'Every shipdeck.yaml is read before the screen opens. Each problem is printed with its file, line and a hint, all at once, so one run shows you everything to fix.',
   },
   {
     icon: Layers,
@@ -155,19 +155,19 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* deploy.yaml + releases */}
+      {/* shipdeck.yaml + releases */}
       <section className="sd-band">
         <div className="mx-auto grid w-full max-w-6xl grid-cols-1 gap-10 px-6 py-20 lg:grid-cols-2">
           <div className="flex min-w-0 flex-col">
             <p className="sd-eyebrow">One file per deployable</p>
-            <h2 className="sd-heading mt-3 text-[1.9rem] text-sd-ink">deploy.yaml says what runs where.</h2>
+            <h2 className="sd-heading mt-3 text-[1.9rem] text-sd-ink">shipdeck.yaml says what runs where.</h2>
             <p className="mt-4 text-sd-ink-soft leading-relaxed">
-              Each service gets a folder with a deploy.yaml. Point shipdeck at the folder that holds them all and
+              Each service gets a folder with a shipdeck.yaml. Point shipdeck at the folder that holds them all and
               every one shows up on the first screen. A JSON Schema gives your editor completion for every field.
             </p>
             <div className="mt-6 overflow-hidden rounded-xl border border-sd-line bg-sd-1">
               <div className="flex items-center gap-2 border-b border-sd-line bg-sd-2 px-4 py-2 font-mono text-[0.74rem] text-sd-ink-faint">
-                scripts/deploy/my-api-prod/deploy.yaml
+                scripts/deploy/my-api-prod/shipdeck.yaml
               </div>
               <pre className="overflow-x-auto px-4 py-3.5 font-mono text-[0.78rem] leading-[1.7] text-sd-ink-soft">
                 {yaml.split('\n').map((line, i) => {
@@ -289,10 +289,10 @@ export default function HomePage() {
               Quickstart <ArrowRight className="size-4" />
             </Link>
             <Link
-              href="/docs/reference/deploy-yaml"
+              href="/docs/reference/shipdeck-yaml"
               className="inline-flex items-center rounded-xl border border-sd-line bg-sd-1 px-5 py-2.5 text-[0.95rem] font-medium text-sd-ink transition-colors hover:bg-sd-2"
             >
-              deploy.yaml reference
+              shipdeck.yaml reference
             </Link>
           </div>
         </div>

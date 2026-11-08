@@ -1,4 +1,4 @@
-//! The deploy engine: reading `deploy.yaml`, building, packing, talking to
+//! The deploy engine: reading `shipdeck.yaml`, building, packing, talking to
 //! the server over SSH, and the deploy and rollback flows. The apps only
 //! start a deploy and show what it reports.
 //!

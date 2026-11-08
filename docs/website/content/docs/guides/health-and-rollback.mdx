@@ -45,7 +45,7 @@ Then `pipeline.health.check.server` runs in `current`, and `pipeline.health.chec
 
 When all of this passes, the step shows a summary such as `active, url answers · 3.2s · 2 checks passed`.
 
-```yaml title="deploy.yaml"
+```yaml title="shipdeck.yaml"
 pipeline:
   health:
     url: http://127.0.0.1:3000/health   # fetched on the server
@@ -118,7 +118,7 @@ While the question is open, the keyboard only answers it; you cannot quit until 
 
 ### Rolling back without asking
 
-```yaml title="deploy.yaml"
+```yaml title="shipdeck.yaml"
 pipeline:
   failed:
     rollback: auto

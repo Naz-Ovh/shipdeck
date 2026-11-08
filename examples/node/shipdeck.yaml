@@ -3,13 +3,13 @@
 # before the release goes live.
 name: Web (prod)
 project: ../../../web
+dir: /opt/web
 
 ssh:
   host: prod
 
 service:
   name: web
-  dir: /opt/web
   start: node dist/main.js        # node is looked up on the server
   env_file: .env
   env: { NODE_ENV: production }

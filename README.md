@@ -29,7 +29,7 @@ commands. A monorepo can deploy several apps together as one release.
 
    `prod` is an SSH alias. Set its user and `IdentityFile` in your SSH config,
    or use a server address and pass `--key` when connecting. Edit the new
-   `scripts/deploy/my-api/deploy.yaml`: check the project path, build command,
+   `scripts/deploy/my-api/shipdeck.yaml`: check the project path, build command,
    packed files, server folder, start command, and health check. Build a Linux
    binary for the server's CPU and libc. Keep secrets out of git.
 

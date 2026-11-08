@@ -7,8 +7,9 @@ use crate::ssh::ssh_config::HostConfig;
 
 const SAMPLE: &str = "\
 name: Demo
+dir: /opt/demo
 ssh: { host: example.com, user: deploy, port: 2222 }
-service: { name: demo, dir: /opt/demo, start: node dist/main.js }
+service: { name: demo, start: node dist/main.js }
 pipeline:
   pack:
     files:

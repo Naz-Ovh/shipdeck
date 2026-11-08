@@ -10,15 +10,15 @@ The messages below are copied from shipdeck 0.3.0. Text in angle brackets, such 
 These stop shipdeck before the terminal UI starts. It prints the message and exits with code 1 (or 2 for a flag mistake).
 
 <Accordions>
-  <Accordion title="✘ shipdeck did not start: 1 deploy.yaml file has 2 problems">
-    At least one `deploy.yaml` under the deploy root has a mistake. shipdeck reads every file before it starts, and refuses to start at all if any file has a problem, even when the other deployables are fine. Each problem shows the file, line and column, a caret under the spot, and a `= help:` hint:
+  <Accordion title="✘ shipdeck did not start: 1 shipdeck.yaml file has 2 problems">
+    At least one `shipdeck.yaml` under the deploy root has a mistake. shipdeck reads every file before it starts, and refuses to start at all if any file has a problem, even when the other deployables are fine. Each problem shows the file, line and column, a caret under the spot, and a `= help:` hint:
 
     ```txt
-    ✘ shipdeck did not start: 1 deploy.yaml file has 1 problem
+    ✘ shipdeck did not start: 1 shipdeck.yaml file has 1 problem
 
-    api/deploy.yaml
+    api/shipdeck.yaml
       error: build cannot run commands on the server
-        ┌─ deploy/api/deploy.yaml:7:7
+        ┌─ deploy/api/shipdeck.yaml:7:7
         │
       6 │     run:
       7 │       server: make
@@ -33,7 +33,7 @@ These stop shipdeck before the terminal UI starts. It prints the message and exi
   </Accordion>
 
   <Accordion title="Error: <path> is not a folder">
-    The argument must be the deploy root: the folder that holds one folder per deployable, such as `./scripts/deploy`. Pass that folder, not a single deployable's folder and not a `deploy.yaml` file.
+    The argument must be the deploy root: the folder that holds one folder per deployable, such as `./scripts/deploy`. Pass that folder, not a single deployable's folder and not a `shipdeck.yaml` file.
   </Accordion>
 
   <Accordion title="Error: the key file <path> does not exist">
@@ -45,19 +45,19 @@ These stop shipdeck before the terminal UI starts. It prints the message and exi
   </Accordion>
 
   <Accordion title="No deployables yet">
-    The screen opened but found nothing to deploy. shipdeck looks only at the **direct** subfolders of the deploy root, and only at folders with a `deploy.yaml` or `deploy.yml` inside. A `deploy.yaml` in the root itself, or two levels down, is ignored. Check the path you passed and the folder layout in [Deploy root](/docs/guides/deploy-root).
+    The screen opened but found nothing to deploy. shipdeck looks only at the **direct** subfolders of the deploy root, and only at folders with a `shipdeck.yaml` or `shipdeck.yml` inside. A `shipdeck.yaml` in the root itself, or two levels down, is ignored. Check the path you passed and the folder layout in [Deploy root](/docs/guides/deploy-root).
   </Accordion>
 
-  <Accordion title="deploy.yaml has Windows line endings (CRLF); shipdeck reads LF only">
+  <Accordion title="shipdeck.yaml has Windows line endings (CRLF); shipdeck reads LF only">
     The file was saved with CRLF line endings, usually on Windows. Save it with LF. In Git, a `.gitattributes` line `*.yaml text eol=lf` keeps it that way on Windows checkouts.
   </Accordion>
 
-  <Accordion title="this folder has both deploy.yaml and deploy.yml">
+  <Accordion title="this folder has both shipdeck.yaml and shipdeck.yml">
     Keep one of them. shipdeck will not guess which one you meant.
   </Accordion>
 
   <Accordion title="`ssh.user` is not set, and ~/.ssh/config has no User for <host>">
-    shipdeck needs a user to log in as. Add `user:` under `ssh` in `deploy.yaml`, or a `User` line to the alias in `~/.ssh/config`. This check runs only once the rest of the file is clean, so it can appear after you fix other problems.
+    shipdeck needs a user to log in as. Add `user:` under `ssh` in `shipdeck.yaml`, or a `User` line to the alias in `~/.ssh/config`. This check runs only once the rest of the file is clean, so it can appear after you fix other problems.
   </Accordion>
 
   <Accordion title="~/.ssh/config reaches <host> through `ProxyJump …`, which shipdeck cannot follow yet">
@@ -136,11 +136,11 @@ Preflight checks your PC and the server before anything is built. A failure here
   </Accordion>
 
   <Accordion title="<user> may not create <dir>, and has no sudo without a password">
-    On a first deploy shipdeck creates `service.dir`. The user could not create it, and could not use `sudo -n mkdir` either. Create the folder on the server and give it to the deploy user.
+    On a first deploy shipdeck creates `dir`. The user could not create it, and could not use `sudo -n mkdir` either. Create the folder on the server and give it to the deploy user.
   </Accordion>
 
   <Accordion title="<user> cannot write to <dir>">
-    `service.dir` exists but the deploy user cannot write to it. Change its owner on the server, for example `sudo chown deploy: /opt/my-api`.
+    `dir` exists but the deploy user cannot write to it. Change its owner on the server, for example `sudo chown deploy: /opt/my-api`.
   </Accordion>
 
   <Accordion title="<user> cannot find <tool> on the server">
@@ -152,17 +152,17 @@ Preflight checks your PC and the server before anything is built. A failure here
   </Accordion>
 
   <Accordion title="only <size> free on the server">
-    Preflight needs at least 100 MiB free on the disk that holds `service.dir`. Free some space, or lower `pipeline.backup.keep` so fewer old releases stay on the server.
+    Preflight needs at least 100 MiB free on the disk that holds `dir`. Free some space, or lower `pipeline.backup.keep` so fewer old releases stay on the server.
   </Accordion>
 
   <Accordion title="pipeline.pack.files.include.deploy in <dir>: .env (not found)">
     A file listed in `pipeline.pack.files.include.deploy` is missing from the deploy folder. After a fresh clone this is usually the gitignored `.env`. The **Deploy** confirmation already warns about it in red. Create the file, or let a `pipeline.preflight.run.local` command create it. Literal paths report `(not found)`, globs `(matched nothing)`.
 
-    `deploy.yaml`, `deploy.yml` and `service.template` at the top of the deploy folder are never shipped, so listing them also gives `(not found)`.
+    `shipdeck.yaml`, `shipdeck.yml` and `service.template` at the top of the deploy folder are never shipped, so listing them also gives `(not found)`.
   </Accordion>
 
   <Accordion title="the project folder <path> does not exist (project: <value>)">
-    `project` is relative to the folder that holds `deploy.yaml`, not to where you run shipdeck. For `scripts/deploy/my-api-prod/deploy.yaml` with the source at the repository root, that is `project: ../../..`.
+    `project` is relative to the folder that holds `shipdeck.yaml`, not to where you run shipdeck. For `scripts/deploy/my-api-prod/shipdeck.yaml` with the source at the repository root, that is `project: ../../..`.
   </Accordion>
 
   <Accordion title="rendering <path>: unknown placeholder {{x}}">
@@ -170,7 +170,7 @@ Preflight checks your PC and the server before anything is built. A failure here
   </Accordion>
 
   <Accordion title="`<command>` exited with code <n> on the server">
-    One of your `pipeline.preflight.run.server` commands failed. Its output is in the Log panel just above. Server commands run in `service.dir` with `set -e`, so the first failing command in a line ends it. Local commands report the same message without `on the server`.
+    One of your `pipeline.preflight.run.server` commands failed. Its output is in the Log panel just above. Server commands run in `dir` with `set -e`, so the first failing command in a line ends it. Local commands report the same message without `on the server`.
   </Accordion>
 </Accordions>
 
@@ -216,7 +216,7 @@ Preflight checks your PC and the server before anything is built. A failure here
   </Accordion>
 
   <Accordion title="Nothing changed since <id>, the live release">
-    The new release's fingerprint equals the live one's: the same files, modes and links, the same service file and the same `deploy.yaml`. The screen asks `Deploy anyway?`; No stops with nothing on the server touched. `shipdeck deploy` stops with exit code `6` instead; add `--allow-unchanged` to deploy the duplicate.
+    The new release's fingerprint equals the live one's: the same files, modes and links, the same service file and the same `shipdeck.yaml`. The screen asks `Deploy anyway?`; No stops with nothing on the server touched. `shipdeck deploy` stops with exit code `6` instead; add `--allow-unchanged` to deploy the duplicate.
   </Accordion>
 
   <Accordion title="Every file is sent, though most did not change">
@@ -264,7 +264,7 @@ A failure at Switch, Restart or Health means the new release was already made cu
   </Accordion>
 
   <Accordion title="the service crashed and was restarted <n> time(s) by systemd">
-    systemd restarted the service during the health wait, so shipdeck failed the step at once without waiting for the timeout. The journal lines show why it exited. Common causes: a missing `.env` or a setting in it, a port already in use, or writing outside `service.dir/shared` (the built-in unit makes the rest of the system read-only).
+    systemd restarted the service during the health wait, so shipdeck failed the step at once without waiting for the timeout. The journal lines show why it exited. Common causes: a missing `.env` or a setting in it, a port already in use, or writing outside `dir/shared` (the built-in unit makes the rest of the system read-only).
   </Accordion>
 
   <Accordion title="systemd reports the service as failed">
@@ -304,7 +304,7 @@ A failure at Switch, Restart or Health means the new release was already made cu
   </Accordion>
 
   <Accordion title="A rollback to a backup fails at Setup">
-    A release kept only as a backup is unpacked, then `pipeline.setup` runs in it again, with `SHIPDECK_ACTION=rollback`. These are the setup commands of your `deploy.yaml` now, and they need what setup needs, such as access to your package registry. When they fail, shipdeck logs `releases/<id> was removed; its backup stays` and stops; the live release was not touched. Fix the cause and roll back again. If the release needs a file that setup cannot make again, add it to `pipeline.backup.files.include` for future releases.
+    A release kept only as a backup is unpacked, then `pipeline.setup` runs in it again, with `SHIPDECK_ACTION=rollback`. These are the setup commands of your `shipdeck.yaml` now, and they need what setup needs, such as access to your package registry. When they fail, shipdeck logs `releases/<id> was removed; its backup stays` and stops; the live release was not touched. Fix the cause and roll back again. If the release needs a file that setup cannot make again, add it to `pipeline.backup.files.include` for future releases.
   </Accordion>
 
   <Accordion title="That release is already live">

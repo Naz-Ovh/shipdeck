@@ -27,8 +27,8 @@ From your repository root, create a deployment:
 shipdeck init ./scripts/deploy my-api --preset rust --manager systemd --host prod
 ```
 
-Each direct subfolder of a **deploy root** holds a `deploy.yaml`.
-This example creates `scripts/deploy/my-api/deploy.yaml`. Edit it to name:
+Each direct subfolder of a **deploy root** holds a `shipdeck.yaml`.
+This example creates `scripts/deploy/my-api/shipdeck.yaml`. Edit it to name:
 
 - Your source folder and local build command.
 - The binary or files to send, and any shared data to keep between releases.
@@ -122,7 +122,7 @@ Fetch only the relevant page; [llms-full.txt](/llms-full.txt) contains the whole
 | Next task | Read |
 | --- | --- |
 | First deployment | [Quickstart](/docs/getting-started/quickstart) |
-| Every config field | [deploy.yaml](/docs/reference/deploy-yaml) |
+| Every config field | [shipdeck.yaml](/docs/reference/shipdeck-yaml) |
 | Several apps together | [Monorepos](/docs/monorepos) |
 | Permissions and setup | [Server access](/docs/guides/server-access) |
 | Flags and exit codes | [Command line](/docs/reference/cli) |

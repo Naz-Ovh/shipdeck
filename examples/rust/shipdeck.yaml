@@ -2,6 +2,7 @@
 # A Rust service: compiled here, only the binary and its .env travel.
 name: My API (prod)
 project: ../../../my-api          # your source, relative to this file
+dir: /opt/my-api                  # current/ releases/ backups/ shared/
 
 ssh:
   host: prod                      # an address, or an alias from ~/.ssh/config
@@ -9,7 +10,6 @@ ssh:
 
 service:
   name: my-api                    # my-api.service
-  dir: /opt/my-api                # current/ releases/ backups/ shared/
   start: ./my-api -E=.env         # default: ./<binary>
 
 pipeline:

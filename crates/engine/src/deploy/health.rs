@@ -130,6 +130,9 @@ pub(crate) async fn wait_healthy(
     report: &Reporter,
     step: usize,
 ) -> Result<String> {
+    if server.is_static() && health.url.is_none() {
+        return Ok("static · no URL to check".to_string());
+    }
     let timeout = Duration::from_secs(health.timeout_secs);
     let started = Instant::now();
     let manager = server.manager().label();

@@ -1,6 +1,6 @@
 ---
 title: Upgrading
-description: Install a newer shipdeck, point each deploy.yaml's schema line at the new tag, and renew the server's sudo rule when a release changes it.
+description: Install a newer shipdeck, point each shipdeck.yaml's schema line at the new tag, and renew the server's sudo rule when a release changes it.
 ---
 
 ## Install the new version
@@ -16,22 +16,59 @@ Run the same command you installed with:
 
 ## Update the schema line
 
-The schema line at the top of each `deploy.yaml` names a release:
+The schema line at the top of each `shipdeck.yaml` names a release:
 
-```yaml title="deploy.yaml"
+```yaml title="shipdeck.yaml"
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v<version>/docs/schema/deploy.schema.json
 ```
 
-Change the tag to the new one, so your editor completes the new version's fields. If you map the schema in `.vscode/settings.json` instead, update the URL there. [deploy.yaml](/docs/reference/deploy-yaml#editor-completion) shows both. shipdeck itself ignores the line.
+Change the tag to the new one, so your editor completes the new version's fields. If you map the schema in `.vscode/settings.json` instead, update the URL there. [shipdeck.yaml](/docs/reference/shipdeck-yaml#editor-completion) shows both. shipdeck itself ignores the line.
+
+## Rename `deploy.yaml` to `shipdeck.yaml`
+
+shipdeck no longer looks for `deploy.yaml` or `deploy.yml`. A folder with only
+the old name has no config and is skipped. Rename the file in every deployable
+folder:
+
+```sh
+mv deploy.yaml shipdeck.yaml
+```
+
+Use `shipdeck.yml` if you prefer. Never keep both names in one folder.
+
+## Move `dir` to the top level
+
+Newer shipdeck reads the folder that holds `current`, `releases/`, `backups/`
+and `shared/` from a top-level `dir`. It no longer accepts `service.dir` or
+`static.dir`; an old file stops with `unknown key service.dir`.
+
+Before:
+
+```yaml
+service:
+  name: my-api
+  dir: /opt/my-api
+```
+
+After:
+
+```yaml
+dir: /opt/my-api
+service:
+  name: my-api
+```
+
+A monorepo already has a top-level `dir`; nothing moves there. A static site
+also uses the top-level `dir` and keeps only `static.root`.
 
 ## Read the release notes
 
-The [releases on GitHub](https://github.com/Naz-Ovh/shipdeck/releases) say what changed. shipdeck checks every `deploy.yaml` under the deploy root before it starts, so a key it no longer knows shows up as a [config problem](/docs/reference/config-problems) with the line it is on, before anything runs.
+The [releases on GitHub](https://github.com/Naz-Ovh/shipdeck/releases) say what changed. shipdeck checks every `shipdeck.yaml` under the deploy root before it starts, so a key it no longer knows shows up as a [config problem](/docs/reference/config-problems) with the line it is on, before anything runs.
 
 ## Renew the sudo rule
 
 ## Next
 
 <Cards>
-  <Card title="deploy.yaml" href="/docs/reference/deploy-yaml" description="Every field with its default and rules." />
+  <Card title="shipdeck.yaml" href="/docs/reference/shipdeck-yaml" description="Every field with its default and rules." />
 </Cards>

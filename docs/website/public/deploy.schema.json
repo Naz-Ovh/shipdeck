@@ -63,6 +63,18 @@
             "string",
             "null"
           ]
+        },
+        "static": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/StaticApp"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Static files for this app, served by nginx. Use this instead of `start` and `process_manager`."
         }
       },
       "type": "object"
@@ -70,7 +82,7 @@
     "AppDefinition": {
       "anyOf": [
         {
-          "description": "Path relative to the main deploy.yaml.",
+          "description": "Path relative to the main shipdeck.yaml.",
           "type": "string"
         },
         {
@@ -410,7 +422,7 @@
               "$ref": "#/definitions/Preflight"
             }
           ],
-          "description": "Step 1. shipdeck checks your PC and the server, then runs `run.server` in `service.dir`, then `run.local` in `project`. A failure stops the deploy before anything is built."
+          "description": "Step 1. shipdeck checks your PC and the server, then runs `run.server` in `dir`, then `run.local` in `project`. A failure stops the deploy before anything is built."
         },
         "setup": {
           "allOf": [
@@ -469,7 +481,7 @@
               "$ref": "#/definitions/LocalAndServer"
             }
           ],
-          "description": "`server` runs first, in `service.dir`; then `local`, in `project`."
+          "description": "`server` runs first, in `dir`; then `local`, in `project`."
         }
       },
       "type": "object"
@@ -552,10 +564,6 @@
       "additionalProperties": false,
       "description": "The service shipdeck runs, and where its releases live.",
       "properties": {
-        "dir": {
-          "description": "An absolute folder on the server, such as `/opt/my-api`. It holds `current` (the live release), `releases/`, `backups/` and `shared/`.",
-          "type": "string"
-        },
         "env": {
           "additionalProperties": {
             "type": "string"
@@ -619,8 +627,7 @@
         }
       },
       "required": [
-        "name",
-        "dir"
+        "name"
       ],
       "type": "object"
     },
@@ -652,7 +659,7 @@
       "properties": {
         "deploy": {
           "default": [],
-          "description": "Relative to this deploy.yaml's folder, for files that belong to this deployment, such as `.env`. A file here replaces a project file at the same path.",
+          "description": "Relative to this shipdeck.yaml's folder, for files that belong to this deployment, such as `.env`. A file here replaces a project file at the same path.",
           "items": {
             "type": "string"
           },
@@ -706,15 +713,47 @@
         "host"
       ],
       "type": "object"
+    },
+    "StaticApp": {
+      "additionalProperties": false,
+      "description": "Static files for one app in a shared release.",
+      "properties": {
+        "root": {
+          "description": "Folder inside the app's release folder to serve, such as `dist`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "root"
+      ],
+      "type": "object"
+    },
+    "StaticSite": {
+      "additionalProperties": false,
+      "description": "A static site: files in a release, served by a web server.",
+      "properties": {
+        "root": {
+          "description": "Folder inside the release to serve, such as `dist`. Relative, and not the release root.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "root"
+      ],
+      "type": "object"
     }
   },
   "oneOf": [
     {
       "additionalProperties": false,
-      "description": "One deployable: what it is, where it runs, and the pipeline that ships it.",
+      "description": "`shipdeck.yaml` as written: a service, a static site, or neither (an error).",
       "properties": {
+        "dir": {
+          "description": "The server folder that holds `current`, `releases/`, `backups/` and `shared/`. Absolute, such as `/opt/my-api`.",
+          "type": "string"
+        },
         "name": {
-          "description": "The name shipdeck shows, such as `My API (prod)`. Also the systemd unit's description.",
+          "description": "The name shipdeck shows, such as `My API (prod)`.",
           "type": "string"
         },
         "pipeline": {
@@ -723,20 +762,23 @@
               "$ref": "#/definitions/Pipeline"
             }
           ],
-          "description": "The steps of a deploy, in order: preflight, build, pack, setup, backup, health, done, and failed when a step fails. upload, unpack, switch and restart are done by shipdeck and take no settings."
+          "description": "The steps of a deploy that take settings."
         },
         "project": {
           "default": ".",
-          "description": "Your source folder, relative to this deploy.yaml. Local commands run here, and `pipeline.pack` takes project files from here. Default: the folder of this deploy.yaml.",
+          "description": "Your source folder, relative to this shipdeck.yaml.",
           "type": "string"
         },
         "service": {
-          "allOf": [
+          "anyOf": [
             {
               "$ref": "#/definitions/Service"
+            },
+            {
+              "type": "null"
             }
           ],
-          "description": "The service on the server (a systemd unit or a PM2 app), and where its releases live."
+          "description": "A process on the server: a systemd unit or a PM2 app."
         },
         "ssh": {
           "allOf": [
@@ -745,14 +787,25 @@
             }
           ],
           "description": "How to log in to the server."
+        },
+        "static": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/StaticSite"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Static files on the server, served by nginx. Use this instead of `service`."
         }
       },
       "required": [
         "name",
-        "ssh",
-        "service"
+        "dir",
+        "ssh"
       ],
-      "title": "shipdeck deploy.yaml",
+      "title": "shipdeck.yaml",
       "type": "object"
     },
     {
@@ -800,7 +853,7 @@
         },
         "project": {
           "default": ".",
-          "description": "The repository root, relative to deploy.yaml.",
+          "description": "The repository root, relative to shipdeck.yaml.",
           "type": "string"
         },
         "ssh": {
@@ -822,5 +875,5 @@
       "type": "object"
     }
   ],
-  "title": "shipdeck deploy.yaml"
+  "title": "shipdeck.yaml"
 }

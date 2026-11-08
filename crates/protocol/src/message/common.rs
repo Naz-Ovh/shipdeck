@@ -130,19 +130,19 @@ pub enum Outcome {
 pub struct DeployableInfo {
     /// The folder's name; what every other message calls the project.
     pub slug: String,
-    /// The `name` from `deploy.yaml`.
+    /// The `name` from `shipdeck.yaml`.
     pub name: String,
-    /// `ssh.host` from `deploy.yaml`: an alias or an address.
+    /// `ssh.host` from `shipdeck.yaml`: an alias or an address.
     pub host: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
     /// The port the server answers on.
     #[serde(default = "port")]
     pub port: u16,
-    /// `service.dir`: where the project lives on the server.
+    /// `dir`: where the project lives on the server.
     #[serde(default)]
     pub dir: String,
-    /// The project's folder on this PC, where its `deploy.yaml` is.
+    /// The project's folder on this PC, where its `shipdeck.yaml` is.
     #[serde(default)]
     pub folder: String,
 }
@@ -152,10 +152,10 @@ fn port() -> u16 {
     22
 }
 
-/// One mistake in a `deploy.yaml`, at its line and column.
+/// One mistake in a `shipdeck.yaml`, at its line and column.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Problem {
-    /// The `deploy.yaml` path, as it was opened.
+    /// The `shipdeck.yaml` path, as it was opened.
     pub file: String,
     pub line: u32,
     pub column: u32,

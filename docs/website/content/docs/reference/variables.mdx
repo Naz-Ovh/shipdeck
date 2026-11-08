@@ -11,16 +11,16 @@ Every command you write under `pipeline` runs with a set of `SHIPDECK_*` variabl
 | --- | --- | --- |
 | `SHIPDECK_ACTION` | `deploy`, or `rollback` for a manual rollback from the Releases screen | always |
 | `SHIPDECK_STEP` | The step running the command: `preflight`, `build`, `setup`, `health`, `done`. In `failed` commands: the step that failed. | always |
-| `SHIPDECK_NAME` | `name` from deploy.yaml | always |
+| `SHIPDECK_NAME` | `name` from shipdeck.yaml | always |
 | `SHIPDECK_SERVICE` | `service.name` | always |
 | `SHIPDECK_HOST` | `ssh.host` as written: the alias, not the address it resolves to | always |
-| `SHIPDECK_APP_DIR` | `service.dir` | always |
-| `SHIPDECK_SHARED_DIR` | `service.dir` followed by `/shared` | always |
+| `SHIPDECK_APP_DIR` | `dir` | always |
+| `SHIPDECK_SHARED_DIR` | `dir` followed by `/shared` | always |
 | `SHIPDECK_RELEASE` | The release id, such as `v1.4.0-ab12cd3-20261014.153012` | deploy: from build on, so not in preflight. Manual rollback: the target, from the start. |
 | `SHIPDECK_VERSION` | The version part of the id, such as `1.4.0` | as `SHIPDECK_RELEASE`. In a rollback, only when the target's id parses. |
 | `SHIPDECK_PREVIOUS` | The release that was live before this run | once known (preflight commands already see it), and only if something was live |
 | `SHIPDECK_ERROR` | The first line of the error | `failed` commands only |
-| `SHIPDECK_FOLDER` | The deploy folder (where deploy.yaml is), absolute | local commands only |
+| `SHIPDECK_FOLDER` | The deploy folder (where shipdeck.yaml is), absolute | local commands only |
 | `SHIPDECK_PROJECT` | `project`, absolute | local commands only |
 
 In `failed` commands, `SHIPDECK_STEP` can also be a step that takes no commands: `pack`, `upload`, `unpack`, `backup`, `switch`, `restart`, or `connect` in a manual rollback.
@@ -54,7 +54,7 @@ The env file is read from the release the step works with:
 
 | Step | Folder | Env file read from |
 | --- | --- | --- |
-| preflight | `service.dir` | `current/<env_file>`, the **live** release's. Skipped on a first deploy, when there is none. |
+| preflight | `dir` | `current/<env_file>`, the **live** release's. Skipped on a first deploy, when there is none. |
 | setup | `releases/<id>` | the new release (on a rollback to a backup, the release just unpacked) |
 | health, done | `current` | the new release, now live |
 
@@ -87,7 +87,7 @@ curl -fsS -X POST -H 'Content-Type: application/json' \
   "$CHAT_WEBHOOK_URL"
 ```
 
-```yaml title="scripts/deploy/my-api-prod/deploy.yaml"
+```yaml title="scripts/deploy/my-api-prod/shipdeck.yaml"
 pipeline:
   done:
     run:
@@ -97,13 +97,13 @@ pipeline:
       local: '$SHIPDECK_FOLDER/notify.sh "failed at $SHIPDECK_STEP: $SHIPDECK_ERROR"'
 ```
 
-Local commands run in `project`, not in the deploy folder, so `$SHIPDECK_FOLDER` finds a script kept next to deploy.yaml. `CHAT_WEBHOOK_URL` comes from your own shell, since local commands inherit it.
+Local commands run in `project`, not in the deploy folder, so `$SHIPDECK_FOLDER` finds a script kept next to shipdeck.yaml. `CHAT_WEBHOOK_URL` comes from your own shell, since local commands inherit it.
 
 ### Migrations on deploy only
 
 Setup runs on a deploy, and again on a manual rollback to a release kept only as a backup, to remake what the backup left out (see [Releases](/docs/guides/releases#rolling-back-by-hand)). Done runs on both. Check `SHIPDECK_ACTION` in a command that should run on deploys only:
 
-```yaml title="deploy.yaml"
+```yaml title="shipdeck.yaml"
 pipeline:
   setup:
     run:
@@ -117,7 +117,7 @@ pipeline:
 
 ### Writing to the shared folder
 
-```yaml title="deploy.yaml"
+```yaml title="shipdeck.yaml"
 pipeline:
   setup:
     run:

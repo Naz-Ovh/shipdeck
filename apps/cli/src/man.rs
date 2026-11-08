@@ -1,5 +1,5 @@
 //! `shipdeck man`: the manual, for people and coding agents alike.
-//! `man index` lists the topics, `man configs` every deploy.yaml property,
+//! `man index` lists the topics, `man configs` every shipdeck.yaml property,
 //! and `man details <KEY>...` prints topics and properties in full, each in
 //! its own tagged block. The text is `manual/*.yaml`; `build.rs` turns it
 //! into the static data below, so a run reads no file and parses nothing.
@@ -26,7 +26,7 @@ pub struct Topic {
     pub text: &'static str,
 }
 
-/// One deploy.yaml property, in the order of the tree.
+/// One shipdeck.yaml property, in the order of the tree.
 pub struct Config {
     /// Its dotted path, such as `service.env`.
     pub key: &'static str,
@@ -58,7 +58,7 @@ pub struct ManArgs {
 enum Page {
     /// Every topic as `key: brief`; `man` alone prints it too
     Index,
-    /// Every deploy.yaml property as a YAML tree, with its type, default and brief
+    /// Every shipdeck.yaml property as a YAML tree, with its type, default and brief
     Configs,
     /// Topics and properties in full, each in its own tagged block
     Details {
@@ -100,7 +100,7 @@ fn index() -> String {
     let mut out = format!(
         "shipdeck {} manual. Topics as `key: brief`.\n\
          Read in full: shipdeck man details <key> [<key>...]  (several: spaces or commas)\n\
-         deploy.yaml properties: shipdeck man configs; one in full: shipdeck man details <path>\n",
+         shipdeck.yaml properties: shipdeck man configs; one in full: shipdeck man details <path>\n",
         env!("CARGO_PKG_VERSION"),
     );
     for section in SECTIONS {
@@ -114,7 +114,7 @@ fn index() -> String {
 
 fn configs() -> String {
     let mut out = format!(
-        "# deploy.yaml properties (shipdeck {}). Each line: `name: type, default  # brief`.\n\
+        "# shipdeck.yaml properties (shipdeck {}). Each line: `name: type, default  # brief`.\n\
          # commands = one shell line or a list run in order; patterns = paths or globs\n\
          # (man details config.files). One in full: shipdeck man details <path>, e.g. service.env\n",
         env!("CARGO_PKG_VERSION"),

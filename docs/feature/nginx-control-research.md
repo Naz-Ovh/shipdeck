@@ -93,7 +93,7 @@ Keep routing generations and the last verified applied generation in server
 state. Check for manual changes before replacing a managed file. Conflicts need
 a clear report rather than silently overwriting the owner's edits.
 
-The exact deploy.yaml fields remain undecided. This research does not settle
+The exact shipdeck.yaml fields remain undecided. This research does not settle
 whether domains belong at deployment level, app level, or a separate route map.
 
 ## Proposed update and recovery sequence

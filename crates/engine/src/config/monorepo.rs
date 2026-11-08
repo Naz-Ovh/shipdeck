@@ -146,16 +146,17 @@ impl MonorepoConfig {
             let AppDefinition::Inline(app) = definition else {
                 bail!("app {name}: config file has not been loaded");
             };
-            let config = super::DeployConfig {
+            let service = app.service(self, name);
+            let config = super::DeployConfigFile {
                 name: self.name.clone(),
                 project: app.project.clone(),
+                dir: self.dir.clone(),
                 ssh: self.ssh.clone(),
-                service: app.service(self, name),
+                service: Some(service.clone()),
+                static_site: None,
                 pipeline: app.pipeline(&self.pipeline)?,
             };
-            if config.service.manager == Manager::Pm2
-                && !pm2_names.insert(config.service.pm2_app().to_string())
-            {
+            if service.manager == Manager::Pm2 && !pm2_names.insert(service.pm2_app().to_string()) {
                 bail!("app {name}: PM2 app name is used by another app");
             }
             let problems = super::rules::check(&config, &root);
@@ -277,13 +278,10 @@ impl MonorepoConfig {
             let AppDefinition::File(file) = definition else {
                 continue;
             };
-            let relative = Path::new(file);
-            if relative
-                .components()
-                .any(|part| !matches!(part, Component::Normal(_)))
-            {
-                bail!("app {name}: {file} must be a path inside the deploy folder");
-            }
+            let relative = match super::inside_path(file) {
+                Ok(relative) => relative,
+                Err(why) => bail!("app {name}: {file} {why}"),
+            };
             let app_file = root.join(relative);
             let path = app_file
                 .canonicalize()
@@ -332,7 +330,7 @@ impl MonorepoConfig {
 pub struct MonorepoConfig {
     /// The deploy's name.
     pub name: String,
-    /// The repository root, relative to deploy.yaml.
+    /// The repository root, relative to shipdeck.yaml.
     #[serde(default = "super::default_project")]
     pub project: String,
     /// The server where every app runs.
@@ -357,7 +355,7 @@ pub struct MonorepoConfig {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(untagged)]
 pub enum AppDefinition {
-    /// Path relative to the main deploy.yaml.
+    /// Path relative to the main shipdeck.yaml.
     File(String),
     /// The app's settings in the main file.
     Inline(Box<AppConfig>),
@@ -382,6 +380,10 @@ pub struct AppConfig {
     /// App folders kept across releases.
     #[serde(default)]
     pub shared: Vec<String>,
+    /// Static files for this app, served by nginx. Use this instead of
+    /// `start` and `process_manager`.
+    #[serde(default, rename = "static")]
+    pub static_site: Option<StaticApp>,
     /// Replaces the global process manager when present.
     #[serde(default)]
     pub process_manager: Option<ProcessManager>,
@@ -389,6 +391,14 @@ pub struct AppConfig {
     #[serde(default = "empty_pipeline")]
     #[schemars(with = "Pipeline")]
     pub pipeline: serde_json::Value,
+}
+
+/// Static files for one app in a shared release.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct StaticApp {
+    /// Folder inside the app's release folder to serve, such as `dist`.
+    pub root: String,
 }
 
 /// The process manager and its own settings.
@@ -416,9 +426,13 @@ impl AppConfig {
     /// Builds the process settings for this app in the shared deploy folder.
     #[must_use]
     pub fn service(&self, config: &MonorepoConfig, name: &str) -> Service {
+        let service_name = format!("{}-{name}", config.name);
+        if let Some(site) = &self.static_site {
+            return Service::static_site(service_name, config.dir.clone(), site.root.clone());
+        }
         let manager = self.process_manager(&config.process_manager);
         Service {
-            name: format!("{}-{name}", config.name),
+            name: service_name,
             dir: config.dir.clone(),
             manager: manager.name,
             pm2: Pm2 {
@@ -431,6 +445,7 @@ impl AppConfig {
             env_file: self.env_file.clone(),
             env: self.env.clone(),
             shared: self.shared.clone(),
+            static_root: None,
         }
     }
 
@@ -447,6 +462,33 @@ impl AppConfig {
             problems.push(super::Problem::new(format!(
                 "app {name}: project must be inside the repository"
             )));
+        }
+        if let Some(site) = &self.static_site {
+            if self.start.is_some() {
+                problems.push(super::Problem::new(format!(
+                    "app {name}: start and static both say what the app is; keep one"
+                )));
+            }
+            if self.process_manager.is_some() {
+                problems.push(super::Problem::new(format!(
+                    "app {name}: process_manager does not apply to a static app"
+                )));
+            }
+            if !self.env.is_empty() || self.env_file.is_some() {
+                problems.push(super::Problem::new(format!(
+                    "app {name}: env and env_file need a process; remove them, or use start"
+                )));
+            }
+            if !self.shared.is_empty() {
+                problems.push(super::Problem::new(format!(
+                    "app {name}: shared folders are not supported for a static app yet"
+                )));
+            }
+            if let Err(why) = super::inside_path(&site.root) {
+                problems.push(super::Problem::new(format!(
+                    "app {name}: static.root {why}"
+                )));
+            }
         }
         if let Some(start) = &self.start {
             let program = start.split_whitespace().next().unwrap_or_default();

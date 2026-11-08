@@ -57,6 +57,7 @@ fi"
             }
         };
         let (script, pm2) = match self.manager {
+            Manager::Static => (http, None),
             Manager::Systemd => (
                 format!(
                     "echo \"state=$(systemctl is-active {svc} 2>&1 | head -n1)\"
@@ -81,9 +82,10 @@ echo \"restarts=$(systemctl show -p NRestarts --value {svc} 2>/dev/null)\"
             "skipped" | "" => HttpCheck::Skipped,
             other => HttpCheck::Failed(other.strip_prefix("fail:").unwrap_or(other).to_string()),
         };
-        let (state, restarts) = match pm2 {
-            Some(found) => found,
-            None => (get("state").to_string(), get("restarts").parse().ok()),
+        let (state, restarts) = match (self.manager, pm2) {
+            (Manager::Static, _) => ("active".to_string(), None),
+            (_, Some(found)) => found,
+            (_, None) => (get("state").to_string(), get("restarts").parse().ok()),
         };
         Ok(Probe {
             state,

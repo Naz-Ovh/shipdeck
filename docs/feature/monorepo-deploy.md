@@ -7,7 +7,8 @@ Nginx and oxmgr are future work.
 ## Configuration
 
 Use `name`, `project`, `ssh`, `dir`, `process_manager`, `pipeline`, and `apps`.
-Use `service` for a single-app deployment instead.
+A single-app deployment uses the same top-level `dir`, then `service` or
+`static` instead of `apps`.
 
 ```yaml
 name: product

@@ -58,7 +58,7 @@ fn versioned_files(root: &Path) -> Result<Vec<PathBuf>> {
         root.join("docs/visual/prototype/desktop.html"),
     ];
     for entry in fs::read_dir(root.join("examples"))? {
-        let path = entry?.path().join("deploy.yaml");
+        let path = entry?.path().join("shipdeck.yaml");
         if path.is_file() {
             files.push(path);
         }

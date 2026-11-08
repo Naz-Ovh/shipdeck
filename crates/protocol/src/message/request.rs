@@ -35,7 +35,7 @@ pub struct InitializeResult {
 /// `workspace/open`: pick the folder of projects, and how to log in.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceOpen {
-    /// The folder whose subfolders each hold a `deploy.yaml`.
+    /// The folder whose subfolders each hold a `shipdeck.yaml`.
     pub root: String,
     pub login: Login,
     /// Server commands skip the login shell's startup files, on every server.

@@ -60,7 +60,8 @@ fn json_is_yaml_too() {
         r#"{
             "name": "Demo",
             "ssh": { "host": "example.com", "user": "deploy" },
-            "service": { "name": "demo", "dir": "/opt/demo", "start": "./demo -E=.env" },
+            "dir": "/opt/demo",
+            "service": { "name": "demo", "start": "./demo -E=.env" },
             "pipeline": { "pack": { "binary": "target/release/demo" } }
         }"#,
     )
@@ -71,8 +72,8 @@ fn json_is_yaml_too() {
 #[test]
 fn plain_yaml_scalars_read_as_text() {
     let config = parse(&SAMPLE.replace(
-        "service: { name: demo, dir: /opt/demo }",
-        "service:\n  name: demo\n  dir: /opt/demo\n  env:\n    PORT: 3000\n    DEBUG: no\n    RATIO: 1.5",
+        "service: { name: demo }",
+        "service:\n  name: demo\n  env:\n    PORT: 3000\n    DEBUG: no\n    RATIO: 1.5",
     ))
     .unwrap();
     assert_eq!(config.service.env["PORT"], "3000");
@@ -159,8 +160,8 @@ fn start_arguments_split_like_systemd() {
     );
     assert_eq!(split_args("--title \"my api"), None);
     let yaml = SAMPLE.replace(
-        "dir: /opt/demo }",
-        "dir: /opt/demo, start: './demo --title \"oops' }",
+        "service: { name: demo }",
+        "service: { name: demo, start: './demo --title \"oops' }",
     );
     assert!(messages(&yaml)[0].contains("never closed"));
 }
@@ -233,4 +234,115 @@ fn user_may_come_from_ssh_config() {
     let config =
         parse(&SAMPLE.replace("{ host: example.com, user: deploy }", "{ host: prod }")).unwrap();
     assert_eq!(config.ssh.user, None);
+}
+
+const STATIC: &str = "\
+name: Admin
+dir: /var/www/admin
+ssh: { host: example.com, user: deploy }
+static: { root: dist }
+pipeline:
+  pack:
+    files:
+      include:
+        project: [dist]
+";
+
+#[test]
+fn a_static_site_needs_no_process() {
+    let config = parse(STATIC).unwrap();
+    assert!(config.service.is_static());
+    assert_eq!(config.service.dir, "/var/www/admin");
+    assert_eq!(config.service.static_root(), Some("dist"));
+    assert_eq!(config.service.own_file(), None);
+    assert_eq!(config.service.manager, Manager::Static);
+    let demo = deployable(Path::new("/tmp/deploy/admin"), config);
+    assert_eq!(demo.required_tools(), Vec::<String>::new());
+    assert_eq!(
+        demo.served_path().as_deref(),
+        Some("/var/www/admin/current/dist")
+    );
+}
+
+#[test]
+fn a_relative_static_root_may_start_with_a_dot() {
+    for root in ["dist", "./dist", "dist/./public"] {
+        let yaml = STATIC.replace("root: dist", &format!("root: {root}"));
+        let config = parse(&yaml).unwrap_or_else(|problems| {
+            panic!("{root}: {problems:?}");
+        });
+        assert_eq!(config.service.static_root(), Some(root));
+        assert_eq!(
+            config.service.served_path(""),
+            Some(format!("/var/www/admin/current/{}", release_path(root)))
+        );
+    }
+}
+
+#[test]
+fn a_static_root_cannot_be_absolute_outside_or_the_release_itself() {
+    for (root, why) in [
+        ("/dist", "not start with `/`"),
+        ("../dist", "climb out"),
+        (".", "not the folder itself"),
+    ] {
+        let yaml = STATIC.replace("root: dist", &format!("root: {root}"));
+        let found = messages(&yaml);
+        assert!(
+            found.iter().any(|message| message.contains(why)),
+            "{root}: {found:?}"
+        );
+    }
+}
+
+#[test]
+fn a_deploy_is_a_service_or_a_static_site_but_not_both() {
+    let neither = STATIC.replace("static: { root: dist }", "");
+    assert!(
+        messages(&neither)
+            .iter()
+            .any(|message| message.contains("one of `service` or `static`"))
+    );
+    let both = STATIC.replace(
+        "static:",
+        "service: { name: admin, start: node server.js }\nstatic:",
+    );
+    assert!(
+        messages(&both)
+            .iter()
+            .any(|message| message.contains("cannot both be set"))
+    );
+    let binary = STATIC.replace("    files:", "    binary: target/release/admin\n    files:");
+    assert!(
+        messages(&binary)
+            .iter()
+            .any(|message| message.contains("does not apply to a static site"))
+    );
+}
+
+#[test]
+fn dir_is_named_once_at_the_top_level() {
+    let old = SAMPLE.replace("dir: /opt/demo\n", "").replace(
+        "service: { name: demo }",
+        "service: { name: demo, dir: /opt/demo }",
+    );
+    let found = messages(&old);
+    assert!(
+        found
+            .iter()
+            .any(|m| m.contains("unknown key `service.dir`")),
+        "{found:?}"
+    );
+    assert!(found.iter().any(|m| m == "`dir` is missing"), "{found:?}");
+
+    let old_static = STATIC.replace("dir: /var/www/admin\n", "").replace(
+        "static: { root: dist }",
+        "static: { dir: /var/www/admin, root: dist }",
+    );
+    let found = messages(&old_static);
+    assert!(
+        found.iter().any(|m| m.contains("unknown key `static.dir`")),
+        "{found:?}"
+    );
+    assert!(found.iter().any(|m| m == "`dir` is missing"), "{found:?}");
 }

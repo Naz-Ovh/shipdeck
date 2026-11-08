@@ -7,7 +7,7 @@ as a separate release, so you can roll back to an earlier version at any time.
 It exists because the production server is too small to compile Rust, and
 grew to deploy any app built locally: Rust, Go, Node.js, Python. The build
 happens on your PC, and only what `pipeline.pack` lists goes to the server.
-Each step of the pipeline can run your own commands, and `deploy.yaml` says
+Each step of the pipeline can run your own commands, and `shipdeck.yaml` says
 plainly which run on your PC and which on the server; `npm ci --omit=dev`, for
 instance, runs on the server in setup, inside the new release, before it goes
 live.
@@ -22,21 +22,21 @@ live.
 | Code layout | A Cargo workspace: `crates/engine` does the work over `crates/protocol`, `crates/tui` shows it, and `apps/cli` parses the flags, starts the engine, and prints the console commands |
 | SSH session | One session per deployable, opened once and reused for every command and upload |
 | SSH login | `--key <path>` or `--password <value>`; with neither flag, the alias's `IdentityFile` from `~/.ssh/config`, then a password asked in the TUI |
-| SSH host | `ssh.host` may be a `~/.ssh/config` alias (`host: prod`); its `HostName`, `Port`, `User` and `IdentityFile` apply, and `deploy.yaml` wins |
+| SSH host | `ssh.host` may be a `~/.ssh/config` alias (`host: prod`); its `HostName`, `Port`, `User` and `IdentityFile` apply, and `shipdeck.yaml` wins |
 | Server setup | None needed: shipdeck deploys as `ssh.user`, whoever the owner picks (root, ubuntu, ...). The first deploy of an app creates its folder; a missing permission is named at preflight. `server-setup.sh`, run by hand as root, can still create a user with exactly those rights for one app; the TUI never runs it. |
-| Configuration | One folder per deployable under a root folder passed on the command line, each with a `deploy.yaml` |
-| Config check | Every `deploy.yaml` is read before the TUI starts. Any mistake, in any file, stops shipdeck with every problem printed at once, compiler style, in colour: file, line, caret, hint |
+| Configuration | One folder per deployable under a root folder passed on the command line, each with a `shipdeck.yaml` |
+| Config check | Every `shipdeck.yaml` is read before the TUI starts. Any mistake, in any file, stops shipdeck with every problem printed at once, compiler style, in colour: file, line, caret, hint |
 | Editor completion | The config types generate `deploy.schema.json` (draft-07), published at each release tag; examples start with the `yaml-language-server` line. The launch check walks the same schema, and a test keeps the file current |
-| What is committed | `deploy.yaml` and extra files are committed; `.env` and other secrets are gitignored |
+| What is committed | `shipdeck.yaml` and extra files are committed; `.env` and other secrets are gitignored |
 | Any app | `pipeline.pack` ships a `binary` (checked against the server's CPU and glibc), `files`, or both. `service.start` says what the service runs (`node dist/main.js`); a bare program name is found on the server at preflight and written into the unit with its full path |
 | Pipeline | Eleven steps under `pipeline:`: preflight, build, pack, upload, unpack, setup, backup, switch, restart, health, done, plus failed. Each step that can run commands has `run` (and `check` where something must pass) with `local` and `server` sides; a step accepts only the sides it can run (build is local only, setup server only, upload/unpack/switch/restart none) |
-| Files | `pipeline.pack.files.include` and `exclude`, each split into `project` (the source) and `deploy` (next to deploy.yaml). fast-glob/Tailwind patterns; a leading `!` leaves out (include) or keeps (exclude). `.git` never ships; a deploy file replaces a project file at the same path |
+| Files | `pipeline.pack.files.include` and `exclude`, each split into `project` (the source) and `deploy` (next to shipdeck.yaml). fast-glob/Tailwind patterns; a leading `!` leaves out (include) or keeps (exclude). `.git` never ships; a deploy file replaces a project file at the same path |
 | Service environment | `service.env_file: .env` becomes `EnvironmentFile=` and is loaded for server commands too (read like systemd: no expansion); `service.env` adds single variables |
 | Shared folders | `service.shared: [uploads]` lives in `shared/` and is linked into every release at unpack |
 | Server location | `/opt/<app>` |
 | Release layout | `releases/<id>/` folders plus a `current` symlink; systemd only uses `current/...` |
 | Upload | Only what the live release lacks. Pack hashes every file (SHA-256) and asks the server for the hashes of the same paths in `current/`, computed there and then (regular files only, never a link; nothing stored is trusted). A file with the same path and hash stays out of the bundle; folders, links, `release.json` and the service file always go. Unpack copies the rest from `current` with a tar pipe (mtimes kept, never a hard link: the rollback target stays intact), gives each file this release's mode, and checks every file with `sha256sum -c` against a receipt before the release goes into place. A mismatch (current changed meanwhile) sends the whole release once. Nothing live, or a server that cannot hash, sends it whole. Names with a newline, a carriage return or a backslash always go, since GNU and busybox `sha256sum` escape them differently |
-| Nothing changed | `release.json` carries `content`, a SHA-256 fingerprint of the file list (paths, modes and hashes, link targets, folders), the service file rendered without the release's name, and `deploy.yaml` as read. Equal to the live release's, the deploy asks first: the TUI defaults to No and stops before the server is touched; headless stops with its own exit code unless `--allow-unchanged`. A comment edited in `deploy.yaml` counts as a change; a change never counts as none |
+| Nothing changed | `release.json` carries `content`, a SHA-256 fingerprint of the file list (paths, modes and hashes, link targets, folders), the service file rendered without the release's name, and `shipdeck.yaml` as read. Equal to the live release's, the deploy asks first: the TUI defaults to No and stops before the server is touched; headless stops with its own exit code unless `--allow-unchanged`. A comment edited in `shipdeck.yaml` counts as a change; a change never counts as none |
 | Service by hand | `:` on the Deployables screen, as in vim: `:logs` follows the journal or `pm2 logs` live, on a terminal so closing the view ends the command on the server; `:restart`, `:stop` (both ask first) and `:start`. While that deployable deploys, only `:logs`. With systemd, stopping, starting and the log follow are sudo rights of their own (`remote::control_commands`), apart from what a deploy needs, so a server set up before them still deploys |
 | Retention | `pipeline.backup.keep`, per deployable: `open` releases unpacked, then `compressed` releases kept only as their backup. The default is 5 + 15, so 20 versions in total |
 | Backups | After setup, `pipeline.backup.files` picks what of the release goes into `backups/<id>.tar.zst`: by default the shipped files, not what setup made (node_modules, .venv), so a backup is about the size of the upload. `include` adds files setup made that it cannot make again; `exclude` leaves out. Rolling back to a backup unpacks it, links `service.shared` and runs setup again. An open release without a backup is deleted when it leaves the open releases |
@@ -62,12 +62,12 @@ shipdeck deploy ./scripts/deploy my-api   # no TUI, for scripts and CI
 ## Deploy root on your PC
 
 The root folder is any path you pass in. Every subfolder that has a
-`deploy.yaml` is one deployable, and the TUI lists them all.
+`shipdeck.yaml` is one deployable, and the TUI lists them all.
 
 ```
 scripts/deploy/
 ├── server-prod/
-│   ├── deploy.yaml          committed
+│   ├── shipdeck.yaml          committed
 │   ├── service.template     optional, committed: replaces the built-in systemd unit
 │   ├── files/               optional, committed: extra files bundled as they are
 │   └── .env                 gitignored
@@ -78,16 +78,16 @@ scripts/deploy/
 After a fresh clone, every setting is still there. You only copy each `.env`
 back in.
 
-### deploy.yaml
+### shipdeck.yaml
 
 ```yaml
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
 name: My API (prod)
 project: ../../../my-api
+dir: /opt/my-api
 ssh: { host: prod, user: deploy }
 service:
   name: my-api
-  dir: /opt/my-api
   start: ./my-api -E=.env
 pipeline:
   preflight:
@@ -237,7 +237,7 @@ crates/tui/src/    app state, the three screens, the log view, the `:` line, dia
 apps/cli/src/
 └── console/       deploy, rollback and releases without the TUI: lines, answers, exit codes
 crates/engine/src/
-├── config/        the deploy.yaml types (= the JSON Schema), the YAML tree with line numbers,
+├── config/        the shipdeck.yaml types (= the JSON Schema), the YAML tree with line numbers,
 │                  the schema walk and value rules, the problem report, globs, discovery
 ├── build/         release name, running local commands, ELF arch and glibc checks
 ├── bundle/        picking the files, hashing them, the fingerprint and the receipt,
@@ -264,7 +264,7 @@ All seven are done.
 4. **Releases.** The Releases screen, rotation with compression, and manual
    rollback.
 5. **Docs.** README with an example deployable.
-6. **Any app (0.2).** `deploy.yaml`, hooks, `build.files`, `remote.start`,
+6. **Any app (0.2).** `shipdeck.yaml`, hooks, `build.files`, `remote.start`,
    `remote.requires`, `remote.env_file`, and versions from package.json,
    pyproject.toml, VERSION or a git tag.
 7. **The pipeline (0.3).** `pipeline:` with local and server commands per

@@ -7,16 +7,17 @@ use super::report::{OpEvent, OpUpdate};
 use anyhow::anyhow;
 
 use super::*;
-use crate::config::ROLLBACK_ANSWER_SECS;
 use crate::config::parse;
+use crate::config::{Program, ROLLBACK_ANSWER_SECS};
 use crate::remote::Facts;
 use crate::ssh::Endpoint;
 use crate::ssh::ssh_config::HostConfig;
 
 const NODE: &str = "
 name: Web
+dir: /opt/web
 ssh: { host: example.com, user: deploy }
-service: { name: web, dir: /opt/web, start: node dist/main.js }
+service: { name: web, start: node dist/main.js }
 pipeline:
   preflight: { requires: [npm] }
   pack:
@@ -361,4 +362,31 @@ fn stopping_an_unchanged_deploy_skips_the_rest_and_fails_nothing() {
     }
     // Pack (2) through Done (10); Failed (11) is left to `failed`.
     assert_eq!(skipped, (2..=10).collect::<Vec<_>>());
+}
+
+const STATIC: &str = "
+name: Admin
+dir: /var/www/admin
+ssh: { host: example.com, user: deploy }
+static: { root: dist }
+pipeline:
+  preflight: { requires: [npm] }
+  pack:
+    files:
+      include:
+        project: [dist]
+";
+
+#[test]
+fn a_static_site_has_no_start_program_or_unit() {
+    let admin = deployable(STATIC);
+    assert!(admin.config.service.is_static());
+    assert_eq!(admin.config.service.own_file(), None);
+    assert_eq!(admin.required_tools(), ["npm"]);
+    let (program, rest) = admin.start();
+    assert_eq!((program, rest.as_str()), (Program::Tool(String::new()), ""));
+    let facts = facts(&[]);
+    assert_eq!(start_path(&admin, &facts), None);
+    let (report, _rx) = reporter();
+    check_tools(&admin, &facts, &report).unwrap();
 }

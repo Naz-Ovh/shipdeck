@@ -6,7 +6,7 @@ use anyhow::{Result, bail};
 
 use super::report::{LogKind, Outcome, Reporter};
 use super::{Step, apps, preflight_apps};
-use crate::config::monorepo::MonorepoConfig;
+use crate::config::monorepo::{AppDefinition, MonorepoConfig};
 use crate::config::{MonorepoDeployment, Pipeline};
 use crate::remote::Source;
 use crate::ssh::Pool;
@@ -276,6 +276,20 @@ impl<'a> Multiple<'a> {
         })
     }
 
+    /// Says where nginx finds each static app after the switch.
+    fn log_served_paths(&self) {
+        for (name, definition) in &self.config.apps {
+            let AppDefinition::Inline(app) = definition else {
+                continue;
+            };
+            let service = app.service(&self.config, name);
+            if let Some(path) = service.served_path(&format!("apps/{name}")) {
+                self.report
+                    .log(LogKind::Info, format!("{name}: served at {path}"));
+            }
+        }
+    }
+
     /// Switches once, installs every process, restarts all apps, then checks them.
     async fn activate(&mut self, session: &Arc<crate::ssh::Session>) -> Result<()> {
         self.start(Step::Switch);
@@ -285,13 +299,27 @@ impl<'a> Multiple<'a> {
         self.transition(session).await?;
         self.check_project_lock()?;
         self.finish();
+        self.log_served_paths();
         let servers = apps::servers(&self.config, session)?;
-        self.start(Step::Restart);
-        for server in &servers {
-            server.restart(self.report).await?;
+        let processes: Vec<_> = servers
+            .iter()
+            .filter(|server| !server.is_static())
+            .collect();
+        if processes.is_empty() {
+            self.report.skip(
+                Self::index(Step::Restart),
+                "static sites: nothing to restart",
+            );
+            self.step = Step::Restart;
+            self.check_project_lock()?;
+        } else {
+            self.start(Step::Restart);
+            for server in processes {
+                server.restart(self.report).await?;
+            }
+            self.check_project_lock()?;
+            self.finish();
         }
-        self.check_project_lock()?;
-        self.finish();
         self.start(Step::Health);
         self.check_health(session).await?;
         self.check_project_lock()?;

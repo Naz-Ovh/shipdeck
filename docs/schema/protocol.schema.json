@@ -1004,20 +1004,20 @@
       "properties": {
         "dir": {
           "default": "",
-          "description": "`service.dir`: where the project lives on the server.",
+          "description": "`dir`: where the project lives on the server.",
           "type": "string"
         },
         "folder": {
           "default": "",
-          "description": "The project's folder on this PC, where its `deploy.yaml` is.",
+          "description": "The project's folder on this PC, where its `shipdeck.yaml` is.",
           "type": "string"
         },
         "host": {
-          "description": "`ssh.host` from `deploy.yaml`: an alias or an address.",
+          "description": "`ssh.host` from `shipdeck.yaml`: an alias or an address.",
           "type": "string"
         },
         "name": {
-          "description": "The `name` from `deploy.yaml`.",
+          "description": "The `name` from `shipdeck.yaml`.",
           "type": "string"
         },
         "port": {
@@ -1764,7 +1764,7 @@
       ]
     },
     "Problem": {
-      "description": "One mistake in a `deploy.yaml`, at its line and column.",
+      "description": "One mistake in a `shipdeck.yaml`, at its line and column.",
       "properties": {
         "column": {
           "format": "uint32",
@@ -1772,7 +1772,7 @@
           "type": "integer"
         },
         "file": {
-          "description": "The `deploy.yaml` path, as it was opened.",
+          "description": "The `shipdeck.yaml` path, as it was opened.",
           "type": "string"
         },
         "hint": {
@@ -2634,7 +2634,7 @@
           "type": "boolean"
         },
         "root": {
-          "description": "The folder whose subfolders each hold a `deploy.yaml`.",
+          "description": "The folder whose subfolders each hold a `shipdeck.yaml`.",
           "type": "string"
         }
       },

@@ -3,8 +3,8 @@ title: Monorepos
 description: Deploy several apps as one release.
 ---
 
-A monorepo deploy has one `name`, one server folder, and named `apps`.
-Use `dir` and `apps` instead of the single-app `service` section.
+A monorepo deploy has one `name`, one top-level `dir`, and named `apps`.
+Use `dir` and `apps` instead of a single `service` block.
 
 ```yaml
 name: product
@@ -19,12 +19,16 @@ apps:
     project: api
     start: node server.js
     env: {PORT: '3000'}
+    process_manager: {name: pm2}
   web:
     project: web
-    start: node server.js
-    env: {PORT: '3001'}
-    process_manager: {name: pm2}
+    static: {root: dist}
+    pipeline: {pack: {files: {include: {project: [dist]}}}}
 ```
+
+A `static` app has files and no process. `web` is served from
+`/opt/product/current/apps/web/dist`; point nginx there once. One release can
+mix process and static apps.
 
 An app can also name a YAML file relative to the main deploy file:
 `api: configs/api.yaml`. App projects must stay inside the repository project.
@@ -38,8 +42,12 @@ folders. Preflight server commands use the shared deployment folder.
 
 One archive carries every app, process file, and saved release setting.
 Shipdeck verifies it, runs setup, creates one backup, switches once, restarts
-all apps, and checks each one. Global retention and rollback policy apply to
+each process app, and checks every app. Global retention and rollback policy apply to
 the shared release. App backup rules select paths inside each app folder.
+
+A static app accepts `project`, `static` and `pipeline`. It has no `start`,
+`process_manager`, `env`, `env_file` or `shared`. Its `static.root` is relative
+to `apps/<app>` and must be in the packed files.
 
 App `shared` folders live under `shared/apps/<app>` and survive release changes.
 They are excluded from backups. Rollback preserves shared data.
@@ -49,7 +57,9 @@ added apps and manager changes. Compressed backups are unpacked and set up again
 External changes, such as database migrations, are not undone.
 
 Use the normal `deploy`, `rollback`, and `releases` commands, or open the TUI.
-Status and service controls cover all live apps. Combined logs label each app.
+Status and service controls cover the process apps. A static app shows
+`static` and has no logs or controls. Combined logs label each process app.
 Run `shipdeck man details monorepo` for execution details.
 
-Nginx and oxmgr remain future work.
+Nginx routing and oxmgr remain future work. A static app still needs its nginx
+`root` set once, outside shipdeck.

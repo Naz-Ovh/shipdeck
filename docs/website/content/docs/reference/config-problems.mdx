@@ -1,20 +1,20 @@
 ---
 title: Config problems
-description: How shipdeck reports a deploy.yaml it cannot use, and every message it prints, with the cause and the fix.
+description: How shipdeck reports a shipdeck.yaml it cannot use, and every message it prints, with the cause and the fix.
 ---
 
-shipdeck reads every deploy.yaml under the deploy root before it starts. If any file has a problem, it prints all of them at once, each with its file, line and column, and does not start. A deploy from a config shipdeck cannot fully read is never offered.
+shipdeck reads every shipdeck.yaml under the deploy root before it starts. If any file has a problem, it prints all of them at once, each with its file, line and column, and does not start. A deploy from a config shipdeck cannot fully read is never offered.
 
 ## The report
 
 Each problem shows where it is, a caret under the spot, a short label and, when there is one, a hint. This is `shipdeck scripts/deploy` with two broken files:
 
 ```txt
-✘ shipdeck did not start: 2 deploy.yaml files have 3 problems
+✘ shipdeck did not start: 2 shipdeck.yaml files have 3 problems
 
-my-api-prod/deploy.yaml
+my-api-prod/shipdeck.yaml
   error: unknown key `service.strat`
-    ┌─ scripts/deploy/my-api-prod/deploy.yaml:8:3
+    ┌─ scripts/deploy/my-api-prod/shipdeck.yaml:8:3
     │
   8 │   strat: ./my-api
     │   ^^^^^ unknown key
@@ -22,7 +22,7 @@ my-api-prod/deploy.yaml
     = help: did you mean `start`?
 
   error: build cannot run commands on the server
-    ┌─ scripts/deploy/my-api-prod/deploy.yaml:12:7
+    ┌─ scripts/deploy/my-api-prod/shipdeck.yaml:12:7
     │
  11 │     run:
  12 │       server: cargo build --release
@@ -30,9 +30,9 @@ my-api-prod/deploy.yaml
     │
     = help: the server sets up the release in `pipeline.setup.run.server`
 
-web-prod/deploy.yaml
+web-prod/shipdeck.yaml
   error: `pipeline.health.timeout_secs` must be at least 3
-    ┌─ scripts/deploy/web-prod/deploy.yaml:15:19
+    ┌─ scripts/deploy/web-prod/shipdeck.yaml:15:19
     │
  14 │   health:
  15 │     timeout_secs: 2
@@ -64,10 +64,10 @@ Shape problems on optional parts do not hold anything back: value problems still
 
 | Message | When | Fix |
 | --- | --- | --- |
-| `this folder has both deploy.yaml and deploy.yml` | one folder holds both names | Keep one of them. |
+| `this folder has both shipdeck.yaml and shipdeck.yml` | one folder holds both names | Keep one of them. |
 | `cannot read it: <os error>` | the file cannot be read | Fix its permissions. |
 
-Only the direct subfolders of the deploy root are read. A folder with neither `deploy.yaml` nor `deploy.yml` is skipped without a message. See [Deploy root](/docs/guides/deploy-root).
+Only the direct subfolders of the deploy root are read. A folder with neither `shipdeck.yaml` nor `shipdeck.yml` is skipped without a message. See [Deploy root](/docs/guides/deploy-root).
 
 ## YAML syntax
 
@@ -75,12 +75,12 @@ Each of these stops the file at the first one, so only one is shown.
 
 | Message | Label | When | Fix |
 | --- | --- | --- | --- |
-| `deploy.yaml has Windows line endings (CRLF); shipdeck reads LF only` | `a CR here` | a carriage return anywhere in the file | Save it with LF line endings. In Git, `*.yaml text eol=lf` in `.gitattributes` keeps them on Windows checkouts. |
+| `shipdeck.yaml has Windows line endings (CRLF); shipdeck reads LF only` | `a CR here` | a carriage return anywhere in the file | Save it with LF line endings. In Git, `*.yaml text eol=lf` in `.gitattributes` keeps them on Windows checkouts. |
 | `this is not valid YAML: <parser text>` | `here` | a syntax error | Fix the YAML at the caret. |
-| `deploy.yaml holds more than one document` | `a second document starts here` | a second `---` | Remove the `---` line and what follows it, or merge them. |
+| `shipdeck.yaml holds more than one document` | `a second document starts here` | a second `---` | Remove the `---` line and what follows it, or merge them. |
 | `` `<key>` is written twice `` | `first written on line <N>` | the same key twice in one map | Keep one of them. |
 | `a key must be plain text` | `not text` | a list or map used as a key | Use a text key. |
-| `deploy.yaml ends too early` | | the file is cut off | Complete the file. |
+| `shipdeck.yaml ends too early` | | the file is cut off | Complete the file. |
 
 <Callout type="warn" title="Quote patterns that start with * or !">
   YAML reads a leading `*` as an alias, so `project: [*.js]` gives `this is not valid YAML: while parsing node, found unknown anchor`. Inside `[ ]`, braces and commas also break the list: `[src/*.{js,ts}]` is a syntax error. Quote them:
@@ -95,7 +95,7 @@ Each of these stops the file at the first one, so only one is shown.
 | Message | Label | When | Fix |
 | --- | --- | --- | --- |
 | `` unknown key `<path>` `` | `unknown key` | a key the schema does not have | Follow the hint: `` did you mean `<x>`? `` when one known key is close (a typo, wrong case, one or two letters off), otherwise the list of keys that level takes, such as `the top level takes name, pipeline, project, service and ssh`. |
-| `` `<path>` is missing `` | ``needs `<key>` `` | a required key is absent | Add it. The hint gives an example, such as ``add `service: { name: my-api, dir: /opt/my-api }` ``. |
+| `` `<path>` is missing `` | ``needs `<key>` `` | a required key is absent | Add it. The hint gives an example, such as ``add `dir: /opt/my-api` ``. |
 | `<step> does not take commands` | `<step> is done by shipdeck` | `pipeline.upload`, `unpack`, `switch` or `restart` | Move the commands to the step the hint names. |
 | `<step> cannot run commands on the server` | `<step> runs on your PC only` | `build.run.server`, `failed.run.server` | Server work before the switch goes in `pipeline.setup.run.server`. |
 | `<step> cannot run commands on your PC` | `<step> runs on the server only` | `setup.run.local`, `setup.check.local` | Use `pipeline.preflight.run.local` or `pipeline.build.run.local`. |
@@ -135,7 +135,7 @@ These run once the shape of the file is right.
 | --- | --- | --- |
 | `` `name` is empty `` | `empty` | Give a name such as `My API (prod)`. |
 | `` `name` must be one line `` | `several lines` | Use one line. |
-| `` `project` is empty `` | `empty` | A folder relative to this deploy.yaml, such as `../../../web`; leave it out for this folder. |
+| `` `project` is empty `` | `empty` | A folder relative to this shipdeck.yaml, such as `../../../web`; leave it out for this folder. |
 | `` `ssh.host` is empty `` | `empty` | Give an address or an alias. |
 | `` `ssh.user` is not a user name `` | `not allowed` | Letters, digits, `.`, `_` and `-` only. |
 
@@ -145,8 +145,8 @@ These run once the shape of the file is right.
 | --- | --- | --- |
 | `` `service.name` is the name without .service `` | `drop .service` | Write `my-api`, not `my-api.service`. |
 | `` `service.name` is not a unit name `` | `not allowed` | Letters, digits, `.`, `_`, `@` and `-` only. |
-| `` `service.dir` must be an absolute path `` | `not absolute` | Start it with `/`, such as `/opt/my-api`. |
-| ``` `service.dir` may only use letters, digits, `.`, `_`, `-` and `/` ``` | `not allowed` | Remove other characters and any `..`. |
+| `` `dir` must be an absolute path `` | `not absolute` | Start it with `/`, such as `/opt/my-api`. |
+| ``` `dir` may only use letters, digits, `.`, `_`, `-` and `/` ``` | `not allowed` | Remove other characters and any `..`. |
 | `` `service.start` is needed when there is no `pipeline.pack.binary` `` | `what does the service run?` | Add `start`, such as `start: node dist/main.js`, or set `pipeline.pack.binary`. |
 | `` `service.start` is empty `` | `empty` | Give a command, or remove the line to use `./<binary>`. |
 | `` `service.start` must be one line without backslashes `` | `not allowed` | Use one line; move complex setup into a script in the release. |
@@ -206,7 +206,7 @@ These run last, only on a file with no other problem.
 
 | Message | When | Fix |
 | --- | --- | --- |
-| `` `ssh.user` is not set, and ~/.ssh/config has no User for <host> `` | no user in deploy.yaml or the alias | Set `ssh.user`, or add `User` to the alias. |
+| `` `ssh.user` is not set, and ~/.ssh/config has no User for <host> `` | no user in shipdeck.yaml or the alias | Set `ssh.user`, or add `User` to the alias. |
 | ``~/.ssh/config reaches <host> through `ProxyJump ...`, which shipdeck cannot follow yet; put the server's own address in ssh.host`` | the alias uses `ProxyJump` or `ProxyCommand` | Put the server's own address in `ssh.host`. |
 | ``the SSH user "<user>" may only use letters, digits, `.`, `_` and `-` `` | the alias's `User` is not a plain name | Fix the alias, or set `ssh.user`. |
 
@@ -219,7 +219,7 @@ Some things depend on your PC or the server, so shipdeck checks them during the 
 | Checked at | What |
 | --- | --- |
 | Start of Preflight | the `project` folder exists; `service.template` renders |
-| Preflight, on the server | tools in `service.start` and `requires`, sudo rights, free space, `service.dir` is writable |
+| Preflight, on the server | tools in `service.start` and `requires`, sudo rights, free space, `dir` is writable |
 | End of Preflight | every `files.include.deploy` pattern matches |
 | Start of Build | the version file can be read |
 | End of Build | the binary's CPU and glibc, every `files.include.project` pattern matches |

@@ -1,11 +1,11 @@
 ---
 title: Examples
-description: Four complete deploy.yaml files, for a Rust, Go, Node.js and Python service, and what each one shows.
+description: Complete shipdeck.yaml files for a Rust, Go, Node.js and Python service, and a static site, and what each one shows.
 ---
 
-The shipdeck repository has one complete `deploy.yaml` per kind of app in [examples/](https://github.com/Naz-Ovh/shipdeck/tree/main/examples). Each file below is copied from there. All four pass the launch check and start with the schema line for editor completion.
+The shipdeck repository has one complete `shipdeck.yaml` per kind of app in [examples/](https://github.com/Naz-Ovh/shipdeck/tree/main/examples). Each file below is copied from there. All of them pass the launch check and start with the schema line for editor completion.
 
-Each example sits in its own deploy folder, such as `scripts/deploy/web-prod/deploy.yaml`, with `project: ../../../web` pointing at the source from there. See [Deploy root](/docs/guides/deploy-root).
+Each example sits in its own deploy folder, such as `scripts/deploy/web-prod/shipdeck.yaml`, with `project: ../../../web` pointing at the source from there. See [Deploy root](/docs/guides/deploy-root).
 
 | Example | Ships | Built | Notable |
 | --- | --- | --- | --- |
@@ -13,6 +13,7 @@ Each example sits in its own deploy folder, such as `scripts/deploy/web-prod/dep
 | Go | a static binary, templates, `.env` and `config.yaml` | on your PC | version from the git tag, `backup.keep`, `failed.rollback: auto` |
 | Node.js | `dist` and the package files | on your PC; dependencies on the server | `requires`, `shared`, `setup`, `backup`, `done` and `failed` |
 | Python | the source | on the server, in Setup | `include: [.]` with excludes, `.venv` in the release |
+| Static | `dist` | before the deploy | `static` with no process, a fixed nginx path |
 
 ## Rust
 
@@ -24,11 +25,12 @@ A compiled service where only the binary and its `.env` travel.
 - `ssh.host: prod` is an alias from `~/.ssh/config`; `user` is set here, so the alias does not need a `User`.
 - `health.url` is fetched on the server, so `127.0.0.1` works.
 
-```yaml title="examples/rust/deploy.yaml"
+```yaml title="examples/rust/shipdeck.yaml"
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
 # A Rust service: compiled here, only the binary and its .env travel.
 name: My API (prod)
 project: ../../../my-api          # your source, relative to this file
+dir: /opt/my-api                  # current/ releases/ backups/ shared/
 
 ssh:
   host: prod                      # an address, or an alias from ~/.ssh/config
@@ -36,7 +38,6 @@ ssh:
 
 service:
   name: my-api                    # my-api.service
-  dir: /opt/my-api                # current/ releases/ backups/ shared/
   start: ./my-api -E=.env         # default: ./<binary>
 
 pipeline:
@@ -65,18 +66,18 @@ A static Go binary that needs nothing from the server.
 - `health.check.server` runs a command in `current/` until it passes or `timeout_secs` runs out, and `failed.rollback: auto` rolls back without asking.
 - `ssh` has no `user`, so the alias `prod` in `~/.ssh/config` must have a `User`.
 
-```yaml title="examples/go/deploy.yaml"
+```yaml title="examples/go/shipdeck.yaml"
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
 # A Go service: a static binary needs nothing from the server.
 name: Worker (prod)
 project: ../../../worker
+dir: /opt/worker
 
 ssh:
   host: prod
 
 service:
   name: worker
-  dir: /opt/worker
   start: ./worker --config config.yaml
   env_file: .env                  # the service's environment; server commands load it too
   env:
@@ -117,19 +118,19 @@ An app with no binary: built on your PC, with production dependencies installed 
 - `backup` keeps the shipped files of each release, not `node_modules`: a rollback to a backup runs `setup` again to install them. `keep` holds 3 open releases and the backups of 20 more.
 - `done` and `failed` call a local script. `SHIPDECK_STEP` in `failed` names the step that failed.
 
-```yaml title="examples/node/deploy.yaml"
+```yaml title="examples/node/shipdeck.yaml"
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
 # A Node.js app: built here, production dependencies installed on the server
 # before the release goes live.
 name: Web (prod)
 project: ../../../web
+dir: /opt/web
 
 ssh:
   host: prod
 
 service:
   name: web
-  dir: /opt/web
   start: node dist/main.js        # node is looked up on the server
   env_file: .env
   env: { NODE_ENV: production }
@@ -178,11 +179,12 @@ A source-only app: nothing is built on your PC, and the server builds the virtua
 - The backup holds the shipped source, not `.venv`: a rollback to a backup runs `setup` again to build it.
 - There is no `health.url`, so Health waits until `systemctl is-active` says `active` three times in a row, one second apart.
 
-```yaml title="examples/python/deploy.yaml"
+```yaml title="examples/python/shipdeck.yaml"
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
 # A Python app: the source ships as it is; the server builds its virtualenv.
 name: Reports (prod)
 project: ../../../reports
+dir: /opt/reports
 
 ssh:
   host: prod
@@ -190,7 +192,6 @@ ssh:
 
 service:
   name: reports
-  dir: /opt/reports
   start: .venv/bin/python -m app
   env_file: .env
 
@@ -215,9 +216,37 @@ pipeline:
       server: .venv/bin/python -c "import app"
 ```
 
+## Static site
+
+A site with files and no process. The release switches as usual, but nothing
+runs: nginx serves `current/dist`, so the path stays the same.
+
+```yaml title="examples/static/shipdeck.yaml"
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.8.1/docs/schema/deploy.schema.json
+# A static site: dist is packed and switched, and nginx serves current/dist.
+name: Static site
+dir: /var/www/static
+ssh: { host: prod, user: deploy }
+static:
+  root: dist
+pipeline:
+  pack:
+    files:
+      include:
+        project: [dist]
+  health:
+    url: https://static.example.com/
+```
+
+- `static.root` is relative to the release. `dist` and `./dist` are the same.
+- The pack step stops if the release has no `dist` folder.
+- `health.url` checks the site through nginx.
+- There is no restart and no process log. A monorepo app uses
+  `static: {root: dist}` and is served from `current/apps/<app>/`.
+
 ## Next
 
 <Cards>
-  <Card title="deploy.yaml" href="/docs/reference/deploy-yaml" description="Every field in these files, with defaults and rules." />
+  <Card title="shipdeck.yaml" href="/docs/reference/shipdeck-yaml" description="Every field in these files, with defaults and rules." />
   <Card title="Packing files" href="/docs/guides/packing-files" description="How include and exclude patterns pick the files." />
 </Cards>

@@ -7,7 +7,7 @@ Every deploy leaves a complete, named release on the server, and a backup of wha
 
 ## What a release is
 
-A release is one folder, `releases/<id>` under `service.dir`. It holds everything the app needs to run:
+A release is one folder, `releases/<id>` under `dir`. It holds everything the app needs to run:
 
 - the binary, if `pipeline.pack.binary` is set;
 - the files from `pipeline.pack.files`;
@@ -32,7 +32,7 @@ Right after setup, the **backup** step packs part of the new release into `backu
 
 By default a backup holds what shipdeck shipped: the binary and the files `pipeline.pack.files` picked. What setup made, such as `node_modules` or a `.venv`, stays out, because a rollback runs setup again to make it. That keeps backups small.
 
-```yaml title="deploy.yaml"
+```yaml title="shipdeck.yaml"
 pipeline:
   backup:
     files:
@@ -52,7 +52,7 @@ pipeline:
 
 `pipeline.backup.keep` sets how many releases stay on the server:
 
-```yaml title="deploy.yaml"
+```yaml title="shipdeck.yaml"
 pipeline:
   backup:
     keep:
@@ -150,7 +150,7 @@ Only for a compressed release: `Unpack: unpacking backups/<id>.tar.zst`. The bac
 <Step>
 ### Setup
 
-Only for a backup: `Setup: setting up releases/<id>`. shipdeck runs `pipeline.setup.run.server`, then `pipeline.setup.check.server`, in `releases/<id>` with `SHIPDECK_ACTION=rollback`, so `npm ci` and the like make again what the backup left out. These are the setup commands of your `deploy.yaml` now, not of the release, and they need what setup needs, such as access to your package registry. A command that must not run again, such as a migration, can check `SHIPDECK_ACTION` (see [Variables](/docs/reference/variables#migrations-on-deploy-only)).
+Only for a backup: `Setup: setting up releases/<id>`. shipdeck runs `pipeline.setup.run.server`, then `pipeline.setup.check.server`, in `releases/<id>` with `SHIPDECK_ACTION=rollback`, so `npm ci` and the like make again what the backup left out. These are the setup commands of your `shipdeck.yaml` now, not of the release, and they need what setup needs, such as access to your package registry. A command that must not run again, such as a migration, can check `SHIPDECK_ACTION` (see [Variables](/docs/reference/variables#migrations-on-deploy-only)).
 
 If setup fails, `releases/<id>` is removed, its backup stays, and the rollback stops; nothing live changed. For an open release the step is skipped (`already set up`).
 </Step>
@@ -186,7 +186,7 @@ shipdeck lists a folder in `releases/` whose name is safe but is not a release i
 
 `pipeline.done` runs after a deploy and after a manual rollback. Use `SHIPDECK_ACTION` when a command should run only for one of them, or should say which it was:
 
-```yaml title="deploy.yaml"
+```yaml title="shipdeck.yaml"
 pipeline:
   done:
     run:
@@ -199,6 +199,6 @@ More in [Variables](/docs/reference/variables).
 ## Next
 
 <Cards>
-  <Card title="Server layout" href="/docs/reference/server-layout" description="Every folder and file shipdeck keeps under service.dir." />
+  <Card title="Server layout" href="/docs/reference/server-layout" description="Every folder and file shipdeck keeps under dir." />
   <Card title="Health and rollback" href="/docs/guides/health-and-rollback" description="What happens when a release fails after the switch." />
 </Cards>

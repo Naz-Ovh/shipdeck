@@ -1,5 +1,5 @@
 //! `shipdeck init`: a new deployable folder under the deploy root, with a
-//! `deploy.yaml` written from a preset. What it writes goes through the same
+//! `shipdeck.yaml` written from a preset. What it writes goes through the same
 //! checks as a launch before anything touches the disk.
 
 use std::fmt;
@@ -95,7 +95,7 @@ pub struct NewDeployable {
 }
 
 impl NewDeployable {
-    /// The `deploy.yaml` text, with a short comment on each field.
+    /// The `shipdeck.yaml` text, with a short comment on each field.
     #[must_use]
     pub fn yaml(&self) -> String {
         let mut y = Yaml::default();
@@ -112,6 +112,11 @@ impl NewDeployable {
             0,
             &format!("project: {}", quote(&self.project)),
             "your source, relative to this file; local commands run there",
+        );
+        y.line(
+            0,
+            &format!("dir: {}", quote(&format!("/opt/{}", self.name))),
+            "on the server: current/, releases/, backups/, shared/",
         );
         y.raw("");
         self.ssh(&mut y);
@@ -153,11 +158,6 @@ impl NewDeployable {
             format!("the unit: {name}.service")
         };
         y.line(2, &format!("name: {}", quote(name)), &unit);
-        y.line(
-            2,
-            &format!("dir: {}", quote(&format!("/opt/{name}"))),
-            "on the server: current/, releases/, backups/, shared/",
-        );
         if pm2 {
             y.line(
                 2,
@@ -352,7 +352,7 @@ impl NewDeployable {
         y.line(
             8,
             &format!("deploy: [{ENV_FILE}]"),
-            "files next to this deploy.yaml",
+            "files next to this shipdeck.yaml",
         );
         if self.preset == Preset::Python {
             y.raw("      exclude:");
@@ -446,7 +446,7 @@ pub fn project_from(root: &Path, name: &str, project: &Path) -> Result<String> {
             root.display()
         );
     }
-    // deploy.yaml writes paths with `/` on every OS.
+    // shipdeck.yaml writes paths with `/` on every OS.
     let parts: Vec<String> = relative(&root.join(name), &project)
         .components()
         .map(|part| part.as_os_str().to_string_lossy().into_owned())
@@ -473,7 +473,7 @@ pub fn relative(from: &Path, to: &Path) -> PathBuf {
     path
 }
 
-/// The new deployable's `deploy.yaml`, checked as a launch would check it.
+/// The new deployable's `shipdeck.yaml`, checked as a launch would check it.
 ///
 /// # Errors
 /// Returns every problem the generated config has.
@@ -484,9 +484,9 @@ pub fn check(root: &Path, new: &NewDeployable) -> Result<String, FileProblems> {
     Ok(yaml)
 }
 
-/// Writes the folder: `deploy.yaml`, an empty `.env` and a `.gitignore`
+/// Writes the folder: `shipdeck.yaml`, an empty `.env` and a `.gitignore`
 /// that keeps it out of git. Files already there are left alone, and an
-/// existing `deploy.yaml` is never replaced. Returns the files it wrote.
+/// existing `shipdeck.yaml` is never replaced. Returns the files it wrote.
 ///
 /// # Errors
 /// Returns an error when a config file is already there, or the folder or a file cannot be written.

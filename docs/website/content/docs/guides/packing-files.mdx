@@ -5,7 +5,7 @@ description: How pipeline.pack picks the binary and the files that go into a rel
 
 `pipeline.pack` says what goes into a release: a compiled `binary`, `files` from your project and from the deploy folder, or both. shipdeck packs them into one archive, uploads it and unpacks it into `releases/<id>` on the server. A file the live release already has, with the same path and SHA-256, is copied from it on the server instead of sent; see [Only what changed is sent](#only-what-changed-is-sent).
 
-```yaml title="scripts/deploy/my-api-prod/deploy.yaml"
+```yaml title="scripts/deploy/my-api-prod/shipdeck.yaml"
 pipeline:
   pack:
     binary: target/x86_64-unknown-linux-gnu/release/my-api
@@ -43,7 +43,7 @@ A Rust binary built on a new desktop often needs a newer glibc than the server h
 | Source | Base folder | Use it for |
 | --- | --- | --- |
 | `project` | `project` | Build output and source files: `dist`, `package.json`, `templates` |
-| `deploy` | the folder that holds `deploy.yaml` | Files that belong to this deployment: `.env`, `config.yaml` |
+| `deploy` | the folder that holds `shipdeck.yaml` | Files that belong to this deployment: `.env`, `config.yaml` |
 
 Each path keeps its place inside the release: `dist/main.js` from the project lands at `releases/<id>/dist/main.js`, and `.env` from the deploy folder lands at `releases/<id>/.env`.
 
@@ -115,7 +115,7 @@ Both are checked again during Pack.
 ## What shipdeck never ships
 
 - `.git`, file or folder, at any depth, from either source.
-- `deploy.yaml`, `deploy.yml` and `service.template` at the top of the deploy folder.
+- `shipdeck.yaml`, `shipdeck.yml` and `service.template` at the top of the deploy folder.
 - Sockets and pipes.
 - `release.json` and `<service.name>.service` at the release root belong to shipdeck. Including them is refused.
 - Anything inside a `service.shared` folder: those paths are links to `shared/` on the server. See [Environment and secrets](/docs/guides/environment#shared-folders).
@@ -145,7 +145,7 @@ At Pack, shipdeck hashes every file of the release and asks the server for the S
 ✔ Pack  312 files · 309 already on the server · 3 to send · 25.0 MiB → 1.2 MiB
 ```
 
-When nothing at all changed (the same files, modes and links, the same service file and the same `deploy.yaml`), shipdeck asks before deploying a duplicate of the live release; see [The pipeline](/docs/guides/pipeline#3-pack).
+When nothing at all changed (the same files, modes and links, the same service file and the same `shipdeck.yaml`), shipdeck asks before deploying a duplicate of the live release; see [The pipeline](/docs/guides/pipeline#3-pack).
 
 ## Examples
 
@@ -218,5 +218,5 @@ The full files are on the [Examples](/docs/guides/examples) page.
 
 <Cards>
   <Card title="Environment and secrets" href="/docs/guides/environment" description="Ship .env safely and give the service its variables." />
-  <Card title="deploy.yaml" href="/docs/reference/deploy-yaml" description="Every field under pipeline.pack, with defaults and rules." />
+  <Card title="shipdeck.yaml" href="/docs/reference/shipdeck-yaml" description="Every field under pipeline.pack, with defaults and rules." />
 </Cards>

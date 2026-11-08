@@ -83,7 +83,7 @@ fn a_bad_value_is_a_config_problem() {
     let mut new = new(Preset::Go, Manager::Systemd);
     new.user = Some("de ploy".into());
     let problems = check(Path::new("/srv/deploy"), &new).unwrap_err();
-    assert!(problems.path.ends_with("my-api/deploy.yaml"));
+    assert!(problems.path.ends_with("my-api/shipdeck.yaml"));
     assert!(
         problems
             .problems
@@ -104,7 +104,7 @@ fn names_must_fit_the_unit_and_the_folder_and_be_new() {
         assert!(name_problem(&root, bad).is_some(), "{bad:?}");
     }
     std::fs::create_dir_all(root.join("my-api")).unwrap();
-    std::fs::write(root.join("my-api/deploy.yaml"), "").unwrap();
+    std::fs::write(root.join("my-api/shipdeck.yaml"), "").unwrap();
     assert!(
         name_problem(&root, "my-api")
             .unwrap()
@@ -123,7 +123,7 @@ fn writes_the_folder_and_keeps_what_is_there() {
     assert_eq!(
         written,
         [
-            root.join("my-api/deploy.yaml"),
+            root.join("my-api/shipdeck.yaml"),
             root.join("my-api/.gitignore")
         ]
     );
@@ -133,7 +133,7 @@ fn writes_the_folder_and_keeps_what_is_there() {
     );
     assert!(write(&root, "my-api", "name: y\n").is_err());
     assert_eq!(
-        std::fs::read_to_string(root.join("my-api/deploy.yaml")).unwrap(),
+        std::fs::read_to_string(root.join("my-api/shipdeck.yaml")).unwrap(),
         "name: x\n"
     );
     std::fs::remove_dir_all(root).unwrap();

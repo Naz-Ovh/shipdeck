@@ -2,6 +2,7 @@
 # A Python app: the source ships as it is; the server builds its virtualenv.
 name: Reports (prod)
 project: ../../../reports
+dir: /opt/reports
 
 ssh:
   host: prod
@@ -9,7 +10,6 @@ ssh:
 
 service:
   name: reports
-  dir: /opt/reports
   start: .venv/bin/python -m app
   env_file: .env
 
