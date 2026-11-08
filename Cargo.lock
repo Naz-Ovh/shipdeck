@@ -2768,7 +2768,7 @@ dependencies = [
 
 [[package]]
 name = "shipdeck"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2785,7 +2785,7 @@ dependencies = [
 
 [[package]]
 name = "shipdeck-agent"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "anyhow",
  "base16ct",
@@ -2801,7 +2801,7 @@ dependencies = [
 
 [[package]]
 name = "shipdeck-engine"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "anyhow",
  "base16ct",
@@ -2824,7 +2824,7 @@ dependencies = [
 
 [[package]]
 name = "shipdeck-protocol"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "schemars",
  "serde",
@@ -2834,7 +2834,7 @@ dependencies = [
 
 [[package]]
 name = "shipdeck-tui"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "anyhow",
  "crossterm",

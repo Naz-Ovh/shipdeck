@@ -18,7 +18,7 @@ commands. A monorepo can deploy several apps together as one release.
    shipdeck --version
    ```
 
-   For a pinned release, append `-s -- -V=v0.8.0` to `sh`.
+   For a pinned release, append `-s -- -V=v0.8.1` to `sh`.
    Windows currently needs a source build and Git for Windows.
 
 2. **Create a deployment** from your repository root:
