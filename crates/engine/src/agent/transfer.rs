@@ -8,7 +8,8 @@ use shipdeck_protocol::message::agent::{UPLOAD_PREPARE, UploadPrepare, UploadRes
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::Agent;
-use crate::ssh::{Session, sh_quote};
+use super::layout;
+use crate::ssh::Session;
 
 impl Agent {
     /// Streams one verified release archive on a separate SSH channel.
@@ -41,15 +42,12 @@ impl Agent {
             .request(UPLOAD_PREPARE, &request)
             .await
             .context("reserving the agent upload")?;
-        let log = format!(
-            "{}/agent.log",
-            self.path.rsplit_once('/').map_or(".", |(dir, _)| dir)
-        );
-        let command = format!(
-            "exec {} --receive {} 2>>{}",
-            sh_quote(&self.path),
-            sh_quote(&reservation.reservation),
-            sh_quote(&log)
+        let command = layout::receiver_command(
+            &self.prefix,
+            &self.path,
+            &self.operator,
+            &self.operator_home,
+            &reservation.reservation,
         );
         let mut stream = session.open_stream(&command).await?;
         let mut sent = 0_u64;

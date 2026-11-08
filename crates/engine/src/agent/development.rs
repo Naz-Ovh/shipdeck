@@ -1,4 +1,5 @@
-//! Explicit local-agent installation; published downloads never enter this path.
+//! Explicit local-agent installation for development. The upload starts in a
+//! private user folder, but root copies and checks it before anything runs.
 
 use std::ffi::OsStr;
 use std::path::Path;
@@ -13,12 +14,13 @@ use crate::ssh::{Session, sh_quote};
 /// Selects a local Linux agent binary for development, never a release fallback.
 pub(super) const BINARY_ENV: &str = "SHIPDECK_AGENT_BINARY";
 
-/// Uploads a checked Linux executable into a fresh private remote directory.
+/// Uploads a checked Linux executable, then installs the root-owned copy.
 pub(super) async fn install(
     session: &Session,
+    prefix: &str,
     local: &OsStr,
     target: &str,
-    version: &str,
+    label: &str,
 ) -> Result<String> {
     if local.is_empty() {
         bail!("{BINARY_ENV} must name a local Linux agent binary");
@@ -29,25 +31,74 @@ pub(super) async fn install(
         .with_context(|| format!("reading development agent {}", local.display()))?;
     check_target(&data, target)?;
     let digest = base16ct::lower::encode_string(&Sha256::digest(&data));
-    let folder = install::temp_folder(session).await?;
+    let folder = private_folder(session).await?;
     let partial = format!("{folder}/agent.partial");
-    let path = format!("{folder}/shipdeck-agent-{version}");
-    session
+    let uploaded = session
         .upload_with_cat(&data, &partial, |_, _| {})
         .await
-        .with_context(|| format!("uploading development agent; unfinished file: {partial}"))?;
-    let script = finalize_script(&partial, &path, &digest);
-    session
-        .exec_raw(&script)
-        .await?
-        .check("verifying the development agent")?;
-    install::probe(session, &path, version)
-        .await
-        .context("development agent must run on the server and match the engine version")?;
-    Ok(path)
+        .with_context(|| format!("uploading development agent; unfinished file: {partial}"));
+    if let Err(err) = uploaded {
+        remove_folder(session, &folder).await;
+        return Err(err);
+    }
+    let result = install::install_uploaded(session, prefix, &partial, &digest, label).await;
+    remove_folder(session, &folder).await;
+    result
 }
 
-/// Checks format and CPU before sending a host binary to a different platform.
+/// Removes a user-owned upload folder; a failure is reported, not hidden.
+async fn remove_folder(session: &Session, folder: &str) {
+    let script = format!("rm -rf -- {}", sh_quote(folder));
+    match session.exec_raw(&script).await {
+        Ok(output) if output.success() => {}
+        Ok(output) => eprintln!(
+            "shipdeck: {}: could not remove development upload folder {folder}: {}",
+            session.label,
+            output.stderr.trim()
+        ),
+        Err(err) => eprintln!(
+            "shipdeck: {}: could not remove development upload folder {folder}: {err:#}",
+            session.label
+        ),
+    }
+}
+
+/// A fresh folder under tmp, made by `mktemp` and checked before use.
+async fn private_folder(session: &Session) -> Result<String> {
+    let output = session
+        .exec_raw(&temp_dir_script())
+        .await
+        .context("creating a private temporary folder for the agent")?
+        .check("creating a private temporary folder for the agent")?;
+    let folder = output.stdout.trim();
+    if !folder.starts_with('/') {
+        bail!("the server did not create a private temporary folder");
+    }
+    Ok(folder.to_string())
+}
+
+/// `mktemp -d`, then ownership, mode, and symlink checks.
+fn temp_dir_script() -> String {
+    format!(
+        "set -e\n\
+         command -v mktemp >/dev/null 2>&1 || {{ echo 'mktemp is not installed' >&2; exit 1; }}\n\
+         dir=$(mktemp -d \"${{TMPDIR:-/tmp}}/.shipdeck.XXXXXXXXXX\")\n\
+         {checks}\
+         printf '%s' \"$dir\"\n",
+        checks = private_checks("\"$dir\""),
+    )
+}
+
+/// The checks that `folder` is ours, private, and not a symlink.
+fn private_checks(folder: &str) -> String {
+    format!(
+        "[ ! -L {folder} ] || {{ echo 'the agent folder is a symlink' >&2; exit 1; }}\n\
+         [ \"$(stat -c %u {folder})\" = \"$(id -u)\" ] || {{ echo 'the agent folder belongs to another user' >&2; exit 1; }}\n\
+         [ \"$(stat -c %a {folder})\" = \"700\" ] || {{ echo 'the agent folder is not private' >&2; exit 1; }}\n"
+    )
+}
+
+/// Checks format and CPU before sending a host binary to another platform.
 fn check_target(data: &[u8], target: &str) -> Result<()> {
     let file = object::File::parse(data).context("development agent is not an executable")?;
     if file.format() != BinaryFormat::Elf {
@@ -67,18 +118,6 @@ fn check_target(data: &[u8], target: &str) -> Result<()> {
         );
     }
     Ok(())
-}
-
-/// Checks exact uploaded bytes before making the private executable runnable.
-fn finalize_script(partial: &str, path: &str, digest: &str) -> String {
-    format!(
-        "set -e\nactual=$(sha256sum {partial})\nactual=${{actual%% *}}\n\
-         [ \"$actual\" = {digest} ] || {{ echo 'development agent checksum mismatch' >&2; exit 1; }}\n\
-         chmod 0700 {partial}\nmv {partial} {path}",
-        partial = sh_quote(partial),
-        path = sh_quote(path),
-        digest = sh_quote(digest),
-    )
 }
 
 #[cfg(test)]

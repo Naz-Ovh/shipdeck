@@ -4,10 +4,12 @@
 mod binary;
 mod development;
 mod install;
+mod layout;
 mod lock;
 mod ops;
 mod session;
 mod transfer;
+mod version;
 
 pub use binary::target_for;
 pub use lock::ProjectGuard;

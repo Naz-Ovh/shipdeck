@@ -17,19 +17,22 @@ permissions:
 
 jobs:
   check:
-    name: gnu builds within the floor
+    name: agent archives and glibc floors
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
-      - name: Fetch the gnu builds
+      - name: Fetch all platform builds
         uses: actions/download-artifact@v8
         with:
-          pattern: artifacts-build-local-*-linux-gnu
+          pattern: artifacts-build-local-*
           path: artifacts
           merge-multiple: true
+
+      - name: Verify all four agent downloads
+        run: python3 scripts/check-agent-artifacts.py artifacts
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2

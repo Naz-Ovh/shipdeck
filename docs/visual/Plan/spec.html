@@ -504,7 +504,7 @@
           <li>Reads every <code>deploy.yaml</code> and finds every mistake, with the line and a hint.</li>
           <li>Builds, packs, finds the files that changed, and uploads them.</li>
           <li>Holds the SSH connections, logins and host keys: one connection per server.</li>
-          <li>Installs the agent and starts it, at its own version.</li>
+          <li>Checks the agent on every connection. Same-major versions are compatible; breaking changes require a major release.</li>
           <li>Starts deploys and reports every step to the apps.</li>
           <li>Keeps the offline copy on your PC, and fetches what is new from each server.</li>
           <li>Later: opens an SSH tunnel to show database tables.</li>
@@ -529,7 +529,6 @@
           <li>Prepares and verifies releases while connected, then activates them as the final deployment phase. Interrupted files stay until the user approves cleanup.</li>
           <li>Uses separate SSH channels for control messages and binary uploads. Writes are bounded so a dead receiver cannot hang a deploy.</li>
           <li>Writes every event into <code>state.db</code>, each with a number, for <code>shipdeck events</code> and reconnect inspection.</li>
-          <li>Prepares a server once with guided setup: packages, project folder, and full sudo or only the commands shipdeck runs.</li>
           <li>Runs your <code>deploy.yaml</code> server commands with <code>sh</code>.</li>
         </ul>
         <h4>Never</h4>
@@ -918,12 +917,12 @@ server-setup.sh                <span class="c">a public URL of its own: it stays
           <thead><tr><th></th><th>No agent</th><th>On-demand agent</th><th>Always-on agent</th></tr></thead>
           <tbody>
             <tr class="grp"><td colspan="4">On the server</td></tr>
-            <tr><td>Setup</td><td><span class="ok">✓</span>Nothing to install.</td><td><span class="ok">✓</span>Nothing by hand. The server downloads it, a few MB once per version.</td><td><span class="no">✕</span>Install once as root, on every server.</td></tr>
+            <tr><td>Setup</td><td><span class="ok">✓</span>Nothing to install.</td><td><span class="ok">✓</span>Nothing by hand. The first connection downloads it from GitHub. The account needs root or password-free sudo.</td><td><span class="no">✕</span>Install once as root, on every server.</td></tr>
             <tr><td>While you are away</td><td><span class="ok">✓</span>Nothing of ours runs.</td><td><span class="ok">✓</span>Nothing of ours, except jobs you started.</td><td><span class="mid">~</span>A root process, all the time.</td></tr>
             <tr><td>What can be attacked</td><td><span class="ok">✓</span>SSH only.</td><td><span class="ok">✓</span>SSH only.</td><td><span class="no">✕</span>SSH, plus a root program, plus a port if reached without SSH.</td></tr>
-            <tr><td>Root</td><td><span class="mid">~</span>sudo: a fixed list of commands.</td><td><span class="mid">~</span>sudo when a task needs it.</td><td><span class="mid">~</span>Always root. So is any bug in it.</td></tr>
-            <tr><td>Locked-down servers</td><td><span class="ok">✓</span>Works wherever SSH and sh work.</td><td><span class="mid">~</span>A home folder that cannot run programs needs another folder. 32-bit ARM needs its own build.</td><td><span class="no">✕</span>Needs root to install at all.</td></tr>
-            <tr><td>Versions in step</td><td><span class="ok">✓</span>Nothing to keep in step.</td><td><span class="ok">✓</span>Always the same version as your shipdeck.</td><td><span class="no">✕</span>Every server's agent must be updated.</td></tr>
+            <tr><td>Root</td><td><span class="mid">~</span>sudo: a fixed list of commands.</td><td><span class="mid">~</span>The agent runs as root through sudo. App and PM2 commands use the service user.</td><td><span class="mid">~</span>Always root. So is any bug in it.</td></tr>
+            <tr><td>Locked-down servers</td><td><span class="ok">✓</span>Works wherever SSH and sh work.</td><td><span class="mid">~</span>Needs root or password-free sudo for the root-owned <code>/opt</code> install. 32-bit ARM needs its own build.</td><td><span class="no">✕</span>Needs root to install at all.</td></tr>
+            <tr><td>Versions in step</td><td><span class="ok">✓</span>Nothing to keep in step.</td><td><span class="ok">✓</span>Same-major compatibility; <a href="../../feature/agent-version-policy.md">major upgrade and refusal rules</a>.</td><td><span class="no">✕</span>Every server's agent must be updated.</td></tr>
             <tr class="grp"><td colspan="4">How the work gets done</td></tr>
             <tr><td>Commands</td><td><span class="mid">~</span>Shell scripts in, text out.</td><td><span class="ok">✓</span>Typed requests and answers.</td><td><span class="ok">✓</span>Typed requests and answers.</td></tr>
             <tr><td>Sturdy code</td><td><span class="no">✕</span>Quoting, POSIX sh, GNU and busybox differences.</td><td><span class="ok">✓</span>Rust on both ends, tested like the engine.</td><td><span class="ok">✓</span>Rust on both ends.</td></tr>
@@ -944,13 +943,13 @@ server-setup.sh                <span class="c">a public URL of its own: it stays
       <article class="frame" id="road" data-zoom data-n="#24" data-t="One road, not three choices">
         <div class="fhead"><h3>One road, not three choices</h3></div>
         <div class="road">
-          <div class="stop"><b>Legacy path</b><small>Deploys over SSH with shell scripts. They keep working whenever the agent cannot start.</small></div>
+          <div class="stop"><b>Legacy path</b><small>Old shell scripts. They remain in the code, but a connection no longer falls back to them when agent preparation fails.</small></div>
           <div class="arr">→</div>
-          <div class="stop pick"><b>Agent, built</b><small>The on-demand agent does file, service, backup, release and log work with typed requests; old scripts remain the fallback.</small></div>
+          <div class="stop pick"><b>Agent, built</b><small>The on-demand agent does file, service, backup, release and log work with typed requests. It starts from a root-owned <code>/opt</code> path through sudo. App and PM2 commands use the service user.</small></div>
           <div class="arr">→</div>
           <div class="stop later"><b>Later, if needed</b><small>keepup: a separate, optional program for the always-on part.</small></div>
         </div>
-        <div class="note"><b>The decision</b><p>The on-demand agent. It gives a real program on the server (typed requests, live events, Rust instead of shell) and keeps what makes shipdeck easy today: nothing to install, nothing running when you leave, and SSH as the only door.</p><p>The always-on part is not ruled out. It comes as keepup, its own program that talks to the agent over a unix socket. So nothing has to be rewritten.</p></div>
+        <div class="note"><b>The decision</b><p>The on-demand agent. It gives a real program on the server (typed requests, live events, Rust instead of shell) and keeps what makes shipdeck easy today: nothing to install by hand, nothing running when you leave, and SSH as the only door.</p><p>The always-on part is not ruled out. It comes as keepup, its own program that talks to the agent over a unix socket. So nothing has to be rewritten.</p></div>
       </article>
 
     </div>
@@ -983,8 +982,9 @@ server-setup.sh                <span class="c">a public URL of its own: it stays
 ├── backups/&lt;id&gt;.tar.zst     <span class="c">one backup per release (20 in all)</span>
 └── shared/                  <span class="c">kept across releases (uploads, …)</span>
 
+/opt/shipdeck/agent/v&lt;version&gt;/agent <span class="c">root-owned; launched by full path</span>
+
 ~/.shipdeck/                 <span class="c">the agent's own state</span>
-├── bin/                     <span class="c">the agent, at the engine's version</span>
 └── state.db                 <span class="c">every event, numbered</span></pre>
         <div class="note"><b>A contract</b><p>The release ids and the <code>current</code>, <code>releases</code>, <code>backups</code> and <code>shared</code> layout are a contract with servers already deployed to. They change only on purpose.</p></div>
       </article>
@@ -1085,7 +1085,7 @@ server-setup.sh                <span class="c">a public URL of its own: it stays
             <rect class="n d" x="270" y="170" width="110" height="48" rx="10"/>
             <text class="m b" x="325" y="191">PyPI · uvx</text><text class="m xs" x="325" y="207">planned</text>
           </svg>
-          <figcaption>Every channel installs the same binary for the same version. Dashed: planned. There is no Windows binary yet (<a href="../../project-progress.html#p2d2">p2d2</a>).</figcaption>
+          <figcaption>The engine and agent must share a major version; a different minor or patch is compatible. The server installs its agent under <code>/opt</code>. Dashed: planned. There is no Windows binary yet (<a href="../../project-progress.html#p2d2">p2d2</a>).</figcaption>
         </figure>
       </article>
 

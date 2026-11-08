@@ -77,6 +77,7 @@ fn create_sync(request: &AgentBackupCreate, token: &str) -> Result<AgentBackupCr
     file.sync_all().context("saving the backup")?;
     drop(file);
     publish_backup(&part, &done, &request.release)?;
+    crate::owner::apply(&done).context("giving the backup to the deploy user")?;
     let bytes = fs::metadata(&done)
         .context("reading the backup size")?
         .len();
@@ -125,6 +126,7 @@ fn restore_sync(request: &AgentBackupRestore) -> Result<AgentOk> {
     if crate::unpack::entry_exists(&done)? {
         bail!("the release appeared while the backup was unpacked");
     }
+    crate::owner::apply_tree(&staging).context("giving the restored release to the deploy user")?;
     fs::rename(&staging, &done).context("finishing the restored release")?;
     Ok(AgentOk {})
 }

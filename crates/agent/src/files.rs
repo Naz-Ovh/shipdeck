@@ -152,6 +152,7 @@ async fn ensure_dirs(root: &Path, relative: &Path) -> Result<PathBuf> {
                 tokio::fs::create_dir(&path)
                     .await
                     .with_context(|| format!("creating {}", path.display()))?;
+                crate::owner::apply(&path)?;
             }
             Err(err) => return Err(err).context("checking a shared folder"),
         }
@@ -173,6 +174,7 @@ async fn ensure_existing_dirs(release: &Path, parent: &Path) -> Result<()> {
             Ok(_) => bail!("{} is not a directory", path.display()),
             Err(err) if err.kind() == ErrorKind::NotFound => {
                 tokio::fs::create_dir(&path).await?;
+                crate::owner::apply(&path)?;
             }
             Err(err) => return Err(err).context("checking the release folder"),
         }

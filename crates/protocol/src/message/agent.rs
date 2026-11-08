@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// The agent protocol version this crate speaks.
-pub const PROTOCOL: u32 = 2;
+pub const PROTOCOL: u32 = 3;
 
 /// `agent/hello`: agree on the version before anything else.
 pub const HELLO: &str = "agent/hello";
@@ -154,6 +154,9 @@ pub struct AgentService {
     pub manager: AgentManager,
     /// The PM2 ecosystem file, relative to the release; unused with systemd.
     pub pm2_file: String,
+    /// The user PM2 or an app command runs as, never the agent's own user.
+    #[serde(default)]
+    pub user: String,
     /// The environment the app starts with.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
@@ -493,7 +496,7 @@ pub struct AgentHello {
 pub struct AgentHelloResult {
     /// The agent protocol the agent speaks.
     pub protocol: u32,
-    /// The agent's version, which must equal the engine's.
+    /// The agent's version; its major version must equal the engine's.
     pub version: String,
     /// The server's operating system, such as `linux`.
     pub os: String,

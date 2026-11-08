@@ -36,9 +36,6 @@
   `pipeline.health.rollback` is now `pipeline.failed.rollback`. shipdeck
   refuses the old keys and names the new place of each.
 - **Servers need `sha256sum`** (from coreutils). Preflight checks for it.
-- **Run `server-setup.sh` again on systemd servers** to use `:stop`,
-  `:start` and `:logs`. Deploys keep working without it; only those
-  commands say what is missing.
 - Change the schema line in your `deploy.yaml` files to `v0.6.0`.
 
 ### New

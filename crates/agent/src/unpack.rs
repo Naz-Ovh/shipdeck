@@ -102,6 +102,7 @@ fn unpack_sync(request: &UnpackRelease, token: &str) -> Result<UnpackResult> {
     if entry_exists(&finished)? {
         bail!("the release appeared while staging was prepared");
     }
+    crate::owner::apply_tree(&staging).context("giving the release to the deploy user")?;
     fs::rename(&staging, &finished).context("finishing the release")?;
     fs::remove_file(&held).context("removing the completed archive")?;
     fs::remove_file(releases.join(format!(".{}.sha256", request.release)))

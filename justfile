@@ -26,6 +26,10 @@ alias release := build-release
 install:
     cargo install --path apps/cli --locked
 
+# Installs the local release agent into Cargo's bin folder (usually ~/.cargo/bin).
+install-agent:
+    cargo install --path crates/agent --locked
+
 # Checks every workspace target without producing binaries.
 check:
     cargo check --workspace --all-targets --locked
@@ -57,9 +61,14 @@ doc:
 clean:
     cargo clean
 
-# Updates the workspace version and its generated files.
+# Updates the workspace version and release links with a standalone Rust tool.
 version new:
-    cargo run -q -p shipdeck-protocol --example bump-version -- "$1"
+    #!/bin/sh
+    set -eu
+    build_dir=$(mktemp -d)
+    trap 'rm -r "$build_dir"' EXIT
+    rustc --edition=2024 scripts/bump-version.rs -o "$build_dir/bump-version"
+    "$build_dir/bump-version" "$1"
 
 # Writes the JSON Schema for deploy.yaml, and the website's copy of it.
 schema:

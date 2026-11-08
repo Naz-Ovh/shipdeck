@@ -1,12 +1,11 @@
 //! The service by hand: its live state, and stop, start and restart.
 //!
-//! The agent runs the tools directly, without a shell. Systemd commands use
-//! `sudo -n` when the SSH user is not root; PM2 runs as that user.
+//! The agent runs systemd itself because it has root. PM2 and anything that
+//! belongs to the app run as the service user carried by the request.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::sync::OnceLock;
 
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
@@ -68,17 +67,17 @@ fn control_sync(request: &AgentServiceControl) -> Result<AgentOk> {
                 AgentServiceAction::Restart => "startOrReload",
             };
             let file = pm2_file(service)?;
-            let mut environment = environment(service)?;
-            environment.insert("PM2_HOME".into(), pm2_home()?);
-            let output = Command::new("pm2")
-                .arg(verb)
-                .arg(&file)
-                .args(["--only", &service.service, "--update-env"])
-                .envs(&environment)
-                .output()
-                .context("running pm2")?;
+            let file = file.to_str().context("the PM2 file path is not UTF-8")?;
+            let environment = environment(service)?;
+            let output = pm2(
+                service,
+                &[verb, file, "--only", &service.service, "--update-env"],
+                &environment,
+            )?
+            .output()
+            .context("running pm2")?;
             check(&output, &format!("{verb} {}", service.service))?;
-            save_pm2(&environment)?;
+            save_pm2(service, &environment)?;
         }
     }
     Ok(AgentOk {})
@@ -132,8 +131,8 @@ fn state(service: &AgentService) -> Result<String> {
             })
         }
         AgentManager::Pm2 => {
-            let output = Command::new("pm2")
-                .arg("jlist")
+            let empty = BTreeMap::new();
+            let output = pm2(service, &["jlist"], &empty)?
                 .output()
                 .context("running pm2 jlist")?;
             if output.status.code() == Some(127) {
@@ -248,33 +247,34 @@ fn environment(service: &AgentService) -> Result<BTreeMap<String, String>> {
     Ok(environment)
 }
 
-fn pm2_home() -> Result<String> {
-    if let Some(home) = std::env::var_os("PM2_HOME") {
-        return Ok(home.to_string_lossy().into_owned());
+/// A PM2 command with the request's explicit user identity.
+fn pm2(
+    service: &AgentService,
+    args: &[&str],
+    environment: &BTreeMap<String, String>,
+) -> Result<Command> {
+    if service.user.is_empty() {
+        bail!("the request has no execution user for PM2");
     }
-    let home = std::env::var_os("HOME").context("HOME is not set")?;
-    Ok(Path::new(&home).join(".pm2").to_string_lossy().into_owned())
+    let login = crate::identity::resolve(&service.user)?;
+    let program = login.pm2.clone().unwrap_or_else(|| "pm2".to_string());
+    Ok(crate::identity::command(
+        &login,
+        &program,
+        args,
+        environment,
+    ))
 }
 
-fn save_pm2(environment: &BTreeMap<String, String>) -> Result<()> {
-    let output = Command::new("pm2")
-        .arg("save")
-        .envs(environment)
+fn save_pm2(service: &AgentService, environment: &BTreeMap<String, String>) -> Result<()> {
+    let output = pm2(service, &["save"], environment)?
         .output()
         .context("running pm2 save")?;
     check(&output, "pm2 save")
 }
 
 pub(crate) fn is_root() -> bool {
-    static ROOT: OnceLock<bool> = OnceLock::new();
-    *ROOT.get_or_init(|| {
-        Command::new("id")
-            .arg("-u")
-            .output()
-            .ok()
-            .and_then(|output| String::from_utf8(output.stdout).ok())
-            .is_some_and(|text| text.trim() == "0")
-    })
+    crate::identity::is_root()
 }
 
 #[cfg(test)]

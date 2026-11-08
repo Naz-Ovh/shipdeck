@@ -1,16 +1,42 @@
 # Agent completion plan
 
-Updated: 2026-11-08. Status: built and verified; a release with the agent archives remains.
+Updated: 2026-11-08. Status: built and verified; the privileged install policy
+is implemented, and a major release with the agent archives remains.
 
 This is the working plan for completing the server agent. Read it before
 agent work. Keep this checklist current, along with the project tracker and
 `.agents/handoff.md`. Existing tracker IDs stay permanent.
 
+## Privileged install and version policy
+
+Implemented on 2026-11-08, from
+[the agreed policy](../../docs/feature/agent-version-policy.md):
+
+- The first connection prepares the agent. The account must be root or have
+  password-free sudo.
+- The agent lives at `/opt/shipdeck/agent/v<version>/agent`; root owns it and
+  every parent directory. It starts through sudo with the full path.
+- Same-major minor and patch versions are compatible. A newer agent major
+  refuses the connection. A newer engine major clears older versions and
+  installs its release.
+- Installs are locked, checksummed, staged privately, and published in one
+  rename. Older version directories are removed after a successful publish.
+- App and PM2 commands carry an explicit service user. Deployment files are
+  given back to the SSH user.
+- A failed install or handshake ends the connection. No operation runs through
+  an incompatible agent.
+
+The current tree stays at `0.7.1`. This changes the install, privilege, and
+execution contracts, so it needs a major release. The owner must choose and
+publish that version.
+
 ## Agreed scope
 
-- The agent runs as the SSH user and opens no public port.
+- The agent runs as root through sudo on a versioned `/opt` path and opens no
+  public port. App and PM2 commands use the configured service user.
 - One SSH connection carries requests, events, and file data in separate channels.
-- Published builds download their matching agent release over HTTPS.
+- Published builds download the release for the connecting engine over HTTPS.
+  An installed agent with the same major version is reused.
 - Development mode explicitly uploads a local agent over SSH. It is not a
   fallback for failed release downloads. Check CPU, Linux target, protocol,
   and engine version before using it.
@@ -29,10 +55,10 @@ agent work. Keep this checklist current, along with the project tracker and
 
 ## Verified starting point
 
-The agent binary and library exist in `crates/agent`. Its request loop in
-`src/serve.rs` serves only hello, ping, and shutdown. Engine startup and
-installation are in `crates/engine/src/agent`. Startup failure currently leaves
-the existing SSH deployment path available.
+The agent binary and library exist in `crates/agent`. Engine startup and
+privileged installation are in `crates/engine/src/agent`. A startup or
+handshake failure now ends the connection instead of leaving a plain SSH path
+available.
 
 `Session::upload` in `crates/engine/src/ssh/mod.rs` uses SFTP first, with a
 shell-stream fallback. It feeds 256 KiB chunks and configures concurrent SFTP
@@ -122,11 +148,13 @@ new transport, or multiple upload connections without evidence and approval.
 
 ## Decisions still open
 
+- The major release version. The owner must choose it; do not select or publish
+  it without that instruction.
 - Confirm the supported setup distributions and required package list.
-- Preserve today's plain SSH path during migration. The long-term p3d2
-  policy remains an owner decision; no new mandatory-agent rule is approved.
 - Development builds use the explicit `SHIPDECK_AGENT_BINARY` path. Never
   automatically upload an unrelated host build to the VPS.
+- The old plain SSH code remains internally, but a connection no longer uses it
+  to bypass agent preparation.
 
 The owner chose `rusqlite` with bundled SQLite and default features disabled.
 The owner also chose full sudo setup or a password-bypass option.
@@ -146,13 +174,21 @@ including dropped connections during upload, preparation, and activation.
 Check concurrent attempts against the same project and disk-full failures.
 Never claim an unrun check passed or an unmeasured speed gain.
 
-Next: publish a release with the four `shipdeck-agent-*` archives after the
-owner picks the version. The long-term plain SSH policy (p3d2) remains the
-owner's decision. All ten findings in `docs/review/agent-completion-review.md`
-are fixed and the review is `(done)`.
+Next: the owner chooses a major version and publishes a release with the four
+`shipdeck-agent-*` archives. All ten findings in
+`docs/review/agent-completion-review.md` are fixed and the review is `(done)`.
 
 ## Evidence log
 
+- 2026-11-08: Implemented the privileged install and version policy. Podman
+  tests covered first install, reconnection, same-major `0.6.9`, newer-major
+  refusal, older-directory cleanup, simultaneous installs, interrupted
+  download, bad checksum, wrong version, failed handshake, root ownership,
+  replacement attempts by ordinary users, development upload, missing sudo,
+  PM2 and systemd deploys, a setup command running as `shipdeploy`, and
+  non-interactive CLI use. Unit tests cover the version choices and the
+  CLI-major cleanup decision. Formatting, workspace tests, and strict Clippy
+  pass. The release version is not selected.
 - 2026-11-07: Added explicit local agent upload and a typed operation for
   hashing files in the live release. Single-app and monorepo reuse checks now
   call the agent when connected. Agent unit tests and the development-upload

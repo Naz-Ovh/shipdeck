@@ -125,19 +125,18 @@ Preflight checks your PC and the server before anything is built. A failure here
     journalctl -u <service> -n 30 --no-pager
     ```
 
-    Run `server-setup.sh` once on the server as root. It installs a sudo rule for exactly these commands. Or deploy as `root`. See [Server access](/docs/guides/server-access).
   </Accordion>
 
   <Accordion title="the server has no <tool>, which shipdeck unpacks and checks releases with">
     shipdeck itself needs `tar`, `zstd` and `sha256sum` on the server. Install what the message names: `apt install zstd`, or `dnf install zstd`; `sha256sum` comes with `coreutils`.
   </Accordion>
 
-  <Accordion title="<user> may not run sudo <command>. Run server-setup.sh on the server again">
-    `:stop`, `:start` or `:logs` in the TUI needs a sudo right that a deploy does not: `systemctl stop <service>`, `systemctl start <service>` or `journalctl -u <service> -f -n 200 --no-pager`. A server set up before shipdeck had these lacks them, and still deploys. Run the `server-setup.sh` command from the message once on the server as root; it brings the sudo rule up to date. See [Server access](/docs/guides/server-access).
+  <Accordion title="<user> may not run sudo <command>">
+    `:stop`, `:start` or `:logs` in the TUI needs a sudo right that a deploy does not: `systemctl stop <service>`, `systemctl start <service>` or `journalctl -u <service> -f -n 200 --no-pager`. A server set up before shipdeck had these lacks them, and still deploys. See [Server access](/docs/guides/server-access).
   </Accordion>
 
   <Accordion title="<user> may not create <dir>, and has no sudo without a password">
-    On a first deploy shipdeck creates `service.dir`. The user could not create it, and could not use `sudo -n mkdir` either. Create the folder on the server and give it to the deploy user, or run `server-setup.sh` (see [Server access](/docs/guides/server-access)), which does both.
+    On a first deploy shipdeck creates `service.dir`. The user could not create it, and could not use `sudo -n mkdir` either. Create the folder on the server and give it to the deploy user.
   </Accordion>
 
   <Accordion title="<user> cannot write to <dir>">

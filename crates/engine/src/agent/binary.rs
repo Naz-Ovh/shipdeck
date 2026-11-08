@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result, bail};
 
-use crate::ssh::{Session, sh_quote};
+use crate::ssh::Session;
 
 /// The oldest glibc that gets the gnu build: Ubuntu 20.04.
 const GLIBC_FLOOR: (u32, u32) = (2, 31);
@@ -139,56 +139,6 @@ fn asset_url_with(base: Option<&str>, target: &str) -> String {
     format!(
         "{repository}/releases/download/v{}/{name}",
         env!("CARGO_PKG_VERSION")
-    )
-}
-
-/// The POSIX script that downloads `target` to `path` on the server. It needs
-/// `curl` or `wget`, `sha256sum`, `awk`, `tar` and `find`, and outbound HTTPS.
-#[must_use]
-pub fn install_script(target: &str, path: &str) -> String {
-    install_script_with(asset_url(target).as_str(), path)
-}
-
-fn install_script_with(url: &str, path: &str) -> String {
-    let path = sh_quote(path);
-    format!(
-        r#"set -e
-url={url}
-dir=$(dirname {path})
-mkdir -p "$dir"
-tmp="$dir/.shipdeck-agent.$$.tar.gz"
-sum="$dir/.shipdeck-agent.$$.sha256"
-unpack="$dir/.shipdeck-agent.$$.unpack"
-cleanup() {{ rm -f "$tmp" "$sum"; rm -rf "$unpack"; }}
-trap cleanup EXIT
-if command -v curl >/dev/null 2>&1; then
-  curl -fsSL --connect-timeout 10 --max-time 45 "$url" -o "$tmp"
-  curl -fsSL --connect-timeout 10 --max-time 45 "$url.sha256" -o "$sum"
-elif command -v wget >/dev/null 2>&1; then
-  wget -q --timeout=15 --tries=2 -O "$tmp" "$url"
-  wget -q --timeout=15 --tries=2 -O "$sum" "$url.sha256"
-else
-  echo 'neither curl nor wget is installed' >&2
-  exit 1
-fi
-expected=$(awk 'NR == 1 {{ print $1 }}' "$sum")
-actual=$(sha256sum "$tmp" | awk '{{ print $1 }}')
-if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
-  echo 'the agent archive does not match its checksum' >&2
-  exit 1
-fi
-mkdir -p "$unpack"
-tar -xzf "$tmp" -C "$unpack"
-found=$(find "$unpack" -type f -name shipdeck-agent | head -n 1)
-if [ -z "$found" ]; then
-  echo 'the agent archive holds no shipdeck-agent' >&2
-  exit 1
-fi
-mv "$found" {path}
-chmod 0700 {path}
-"#,
-        url = sh_quote(url),
-        path = path,
     )
 }
 

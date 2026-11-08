@@ -1,6 +1,5 @@
 use super::{
-    Arch, Libc, arch, asset_name, asset_url_with, field, install_script_with, libc_from,
-    parse_glibc_version, target,
+    Arch, Libc, arch, asset_name, asset_url_with, field, libc_from, parse_glibc_version, target,
 };
 
 #[test]
@@ -111,25 +110,4 @@ fn a_mirror_base_url_replaces_the_release_url() {
         asset_url_with(Some("  "), "x86_64-unknown-linux-gnu"),
         asset_url_with(None, "x86_64-unknown-linux-gnu")
     );
-}
-
-#[test]
-fn the_install_script_downloads_verifies_and_unpacks() {
-    let script = install_script_with(
-        "https://example.test/shipdeck-agent-x86_64-unknown-linux-gnu.tar.gz",
-        "/home/deploy/.shipdeck/bin/shipdeck-agent-0.7.1",
-    );
-    assert!(script.contains("curl -fsSL --connect-timeout 10 --max-time 45"));
-    assert!(script.contains("wget -q --timeout=15 --tries=2"));
-    assert!(script.contains("sha256sum"));
-    assert!(script.contains("tar -xzf"));
-    assert!(script.contains("trap cleanup EXIT"));
-    assert!(script.contains("'/home/deploy/.shipdeck/bin/shipdeck-agent-0.7.1'"));
-}
-
-#[test]
-fn an_odd_path_is_quoted() {
-    let script = install_script_with("https://example.test/agent.tar.gz", "/home/it's an agent");
-    assert!(script.contains(r"'/home/it'\''s an agent'"), "{script}");
-    assert!(!script.contains("/home/it's an agent'"), "{script}");
 }

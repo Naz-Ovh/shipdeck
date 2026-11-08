@@ -1,10 +1,8 @@
 # The agent
 
-`shipdeck-agent` is a small program the engine starts on a server. It runs
-only while the engine's SSH connection is open, as the SSH user, and exits when
-that connection ends. Nothing listens on a port.
-
-This page covers p3a1 and p3a2. File work and deploy jobs come later.
+`shipdeck-agent` is a small program the engine starts on a Linux server. It
+runs only while the engine's SSH connection is open, and exits when that
+connection ends. Nothing listens on a port.
 
 ## The wire
 
@@ -18,9 +16,10 @@ the agent does not depend on the engine.
 | `agent/ping` | none | none |
 | `agent/shutdown` | none | none; then the agent exits |
 
-The protocol version is `1`. The engine sends `agent/hello` first. A different
-version is refused with `PROTOCOL_VERSION`, and the agent exits. The agent's
-version must match the engine's; both use `[workspace.package].version`.
+The protocol version is `3`. The engine sends `agent/hello` first. A different
+protocol is refused with `PROTOCOL_VERSION`, and the agent exits. The agent's
+major version must match the engine's; a different minor or patch within the
+same major is compatible.
 
 `Connection` from the protocol crate is reused as-is. Agent methods are not in
 its `Ask` or `Event` enums, so they arrive as `Incoming::Other` and the agent
@@ -61,61 +60,95 @@ GNU_LIBC_VERSION`, and `ldd --version` (its first line only). The order is:
 These commands run without the login shell's startup files. A startup file
 that prints would corrupt the protocol.
 
-## Getting it there
+## Privilege and version checks
 
-The bytes never cross SSH. The engine sends a fixed install script, and the
-**server** downloads its own build over HTTPS:
+On every new SSH connection, before any operational request:
 
-1. If `$HOME/.shipdeck/bin/shipdeck-agent-<version>` already runs and reports
-   the right version, nothing happens.
-2. Otherwise the script fetches `shipdeck-agent-<target>.tar.gz` and its
-   `.sha256` file from the GitHub release for this version.
-3. It checks the hash, unpacks, moves the binary in place, and sets mode
-   `0700`.
+1. The engine checks that the account is root or can run `sudo -n -- sh -c
+   'id -u'`. Failure stops the connection with the account and the missing
+   permission.
+2. It lists `/opt/shipdeck/agent/v*`. A directory counts only when every parent
+   directory and the executable are root-owned, not writable by group or other,
+   and the executable reports the version in its directory name.
+3. It applies the major-version rules in `crates/engine/src/agent/version.rs`.
+   Same major uses the newest valid installation. A newer agent major refuses
+   the connection. A newer engine major clears older installations and installs
+   the engine's release.
+4. It starts the agent with the full path through `sudo`, sends `agent/hello`,
+   and checks the protocol, major version, and exact installed label.
 
-The server needs `curl` or `wget`, `sha256sum`, `awk`, `tar`, `find` and
-`timeout`, plus outbound HTTPS. When one is missing, the engine says so and the
-SSH deploy path keeps working. `SHIPDECK_AGENT_BASE_URL` names another download
-folder, for a mirror or a local test.
+A failure stops the connection. The engine does not run operations through an
+agent that failed installation or handshake.
 
-Only the current version is kept. Older `shipdeck-agent-*` files in the home
-folder are removed after a successful start.
+## Installing it
+
+The bytes never cross SSH for a published release. The engine sends a fixed
+install script, and the server downloads its own build over HTTPS:
+
+1. Root takes `/opt/shipdeck/agent/.install.lock` with `flock`, or an atomic
+   `.install.lock.d` directory with stale-owner detection when `flock` is
+   missing.
+2. A private staging directory under `/opt/shipdeck/agent` receives the archive
+   and its `.sha256`.
+3. The script checks the checksum, refuses absolute or parent-escaping paths,
+   refuses links and special files, and unpacks into staging.
+4. It finds exactly one `shipdeck-agent`, installs it root-owned and `0755`,
+   checks its printed version, and renames the complete version directory into
+   place.
+5. It removes every other `v*` directory.
+
+An interrupted attempt leaves staging or no directory, never a valid version
+directory. Two simultaneous connections wait on the lock; the second reuses the
+published result after re-checking it.
+
+`SHIPDECK_AGENT_BASE_URL` names another download folder, for a mirror or a local
+test. The server needs `curl` or `wget`, `sha256sum`, `awk`, `tar`, `find`,
+`install`, `stat`, `chown`, `chmod`, `mktemp`, and either `flock` or `mkdir`.
+
+## Development uploads
+
+`SHIPDECK_AGENT_BINARY` selects an explicit local Linux binary. The engine
+checks its ELF format and CPU, uploads it to a private user folder, and computes
+its SHA-256. Root copies it once into the private staging directory, checks the
+copied bytes and printed version, and runs only the root-owned copy. It is not
+a fallback when a published download fails.
 
 ## Starting it
 
-With the binary in place, the engine runs:
+For a non-root account the engine runs this through the SSH channel:
 
 ```sh
-sh -c 'exec <path> 2>> <folder>/agent.log'
+sh -c 'exec sudo -n -- env SHIPDECK_OPERATOR=<user> SHIPDECK_OPERATOR_HOME=<home> <path> 2>> <home>/.shipdeck-agent.log'
 ```
 
-It does not use the login shell's startup files, and the process replaces
-`sh`, so stdout carries only protocol lines. Diagnostics go to `agent.log`.
+For root it drops the `sudo` prefix. The process replaces `sh`, so stdout
+carries only protocol lines. Diagnostics go to the user's log file.
 
-The engine runs `<path> --version` and compares it with its own before starting.
+The upload receiver on the second SSH channel uses the same `sudo`, identity,
+and state home. It does not run as the SSH user.
 
-If the home folder does not allow running programs (`noexec`) or cannot be
-written, the download repeats under a fresh folder made by
-`mktemp -d "${TMPDIR:-/tmp}/.shipdeck.XXXXXXXXXX"`. Its name is random, so
-another user cannot pre-create it. Before use, the engine checks that it is
-not a symlink, is owned by this user, and is mode `0700`. A concurrent connect
-gets a different folder, and the next connect makes a new one; the tmp folder
-is not reused.
+## Execution identity
 
-When neither place works, the engine says so and the SSH deploy path keeps
-working.
+The agent runs as root. It never lets app commands inherit that identity:
+
+- `AgentService.user` carries the service user.
+- PM2 commands run through `runuser -u <user> -- env -i` with the user's home,
+  login `PATH`, `PM2_HOME`, and the service environment.
+- Systemd unit installation and control stay root work.
+- New project, release, backup, and shared directories are given back to the
+  SSH user. Existing app and service ownership is preserved.
+- `~/.shipdeck/state.db` is located from `SHIPDECK_OPERATOR_HOME`, so events do
+  not move to `/root`.
 
 ## Limits
-
-The agent is optional, so no step may hold a connection for ever:
 
 | Step | Limit |
 | --- | --- |
 | One raw command (`uname`, `home`, probe) | 15 s |
-| The install script, download included | 45 s |
+| The install script, download included | 120 s |
 | Opening the agent's channel | 15 s |
 | `agent/hello` | 15 s |
-| The whole startup | 90 s |
+| The whole startup | 180 s |
 
 Each limited command runs as `timeout -k 3 <limit> sh -c '<script>'` on the
 server. `timeout` sends TERM to the command's process group, then KILL after
@@ -125,28 +158,22 @@ backstop: a channel close does not stop a non-PTY process. The server needs
 
 The install script also bounds its own transfers: `curl --connect-timeout 10
 --max-time 45`, and `wget --timeout=15 --tries=2`. After the deadline the engine
-logs why, stores "no agent", and returns the session.
+logs why and fails the connection.
 
 ## Lifecycle
 
-- The engine starts the agent once per `user@host:port`, right after login.
-- A failure is printed to the engine's stderr and stored as "no agent". It does
-  not fail the connection or the deploy.
+- The engine prepares and starts the agent once per `user@host:port`, right
+  after login.
+- A failure ends the connection. There is no operation without a prepared
+  agent.
 - `Session::close` sends `agent/shutdown` before the SSH disconnect.
 - Dropping the session closes the SSH channel. The agent sees end of input and
   exits.
 
 ## Tests
 
-- `crates/agent/src/serve_test.rs`: hello, ping, shutdown, an unknown method,
-  an unsupported `ask/*`, bad params, and a foreign protocol, all over
-  in-memory pipes.
-- `crates/agent/tests/process.rs`: the real binary, for `agent/hello` and the
-  unanswered-request regression.
-- `crates/engine/src/agent/binary_test.rs`: glibc parsing, numeric comparison,
-  gnu/musl choice, CPU names, release names, and the install script's download,
-  checksum, timeout and quoting steps.
-- `crates/engine/src/agent/install_test.rs`: a private folder passes; a symlink
-  and a world-open folder are refused; two temp folders differ and are `0700`.
-- `crates/engine/src/ssh/ssh_test.rs`: the timeout wrapper's shape, and a
-  cancelled command that must not write its delayed side effect.
+- Unit tests cover version parsing and choices, install script order and
+  integrity, ownership checks, launch and receiver commands, development upload
+  staging, PM2 identity parsing, and file ownership helpers.
+- Podman integration tests cover the installed behavior listed in
+  [the feature doc](../feature/agent.md).

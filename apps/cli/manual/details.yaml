@@ -203,8 +203,6 @@ install:
     Updating: run the install script or `cargo binstall` again, or `bin update shipdeck`. Then:
     - update the `# yaml-language-server: $schema=...` line of each deploy.yaml to the new tag, so
       editors complete the new version's fields;
-    - read the release notes. If a release changes the sudo rule, run server-setup.sh again on
-      the servers that use it; shipdeck also names the command when a right is missing.
 
 cli:
   see: [login, exit-codes, cli.tui, cli.deploy]
@@ -430,7 +428,7 @@ cli.server-info:
       CPU architecture and available cores, available and total memory, the filesystem behind
       service.dir, uptime, the agent's version, and where common tools were found (curl, docker,
       node, pm2, sha256sum, sudo, systemctl, tar, wget, zstd). It changes nothing. It fails with a
-      clear message when the agent is not available on that server.
+      clear message when the connection could not prepare the agent.
 
       The disk numbers come from `df` on the folder that exists, walking up from service.dir when
       the folder is not there yet. PATH is read as the agent sees it; when PATH is unset the output
@@ -1452,8 +1450,7 @@ service-control:
 
     With systemd, stop, start and the live log are sudo rights of their own, apart from what a
     deploy needs. A server set up before they existed still deploys; only these commands then say
-    the right is missing and print the server-setup.sh command that renews the sudo rule, to run
-    once as root. :restart uses the deploy's own right.
+    the right is missing. :restart uses the deploy's own right.
 
     There is no headless form; over plain ssh run the same commands.
 
@@ -1571,15 +1568,16 @@ server:
     - For a compiled binary: the same CPU architecture, and a glibc at least as new as the binary
       needs. Static (musl) binaries need none.
 
-    shipdeck logs in and deploys as ssh.user, whoever you choose: root, ubuntu, a dedicated deploy
-    user. Nothing has to be set up beforehand: an app's first deploy creates its folder and
-    installs its service. The user must be able to create or write service.dir and, for systemd
-    when it is not root, run a fixed list of commands with sudo and no password (see permissions).
-    server-setup.sh, run once as root, creates such a user with exactly those rights.
+    shipdeck logs in as ssh.user, whoever you choose: root, ubuntu, a dedicated deploy user. The
+    first connection installs the agent as root at /opt/shipdeck/agent/v<version>/agent, so the
+    user must be root or have password-free sudo. An app's first deploy then creates its folder
+    and installs its service. The user must also be able to create or write service.dir and, for
+    systemd when it is not root, run a fixed list of commands with sudo and no password (see
+    permissions). App and PM2 commands run as the configured service user, not as the root agent.
 
-    shipdeck leaves on the server only service.dir and, with systemd,
-    /etc/systemd/system/<service>.service; server-setup.sh adds the user and
-    /etc/sudoers.d/shipdeck-<service>. No agent, no daemon, no shipdeck binary.
+    shipdeck leaves on the server service.dir, the agent under /opt/shipdeck/agent, and, with
+    systemd, /etc/systemd/system/<service>.service. server-setup.sh adds the user and
+    /etc/sudoers.d/shipdeck-<service>.
 
     To remove an app, as root:
       systemctl disable --now my-api
@@ -1591,10 +1589,11 @@ server:
 permissions:
   see: [server-setup, service-control, troubleshooting]
   text: |
-    shipdeck deploys as ssh.user. That user must be able to create service.dir (itself, or with
-    `sudo -n mkdir`) or write to it. With PM2 that is all. With systemd, unless the user is root,
-    it also needs these commands through `sudo -n`, without a password, with exactly these
-    arguments for this service and this dir:
+    shipdeck deploys as ssh.user. The first connection needs root or password-free sudo for the
+    agent installer under /opt/shipdeck/agent and its `sh` commands. After that, the user must be
+    able to create service.dir (itself, or with `sudo -n mkdir`) or write to it. With PM2 that is
+    all. With systemd, unless the user is root, it also needs these commands through `sudo -n`,
+    without a password, with exactly these arguments for this service and this dir:
       systemctl daemon-reload
       systemctl enable <service>
       systemctl restart <service>
@@ -1616,16 +1615,15 @@ permissions:
       --no-pager
     Writing the rule by hand is fine too; check it with `visudo -cf <file>`.
 
-    Every other file operation happens inside service.dir as the user, without sudo, and your own
-    server commands run as that user too. These commands change only with a shipdeck release that
-    says so, together with server-setup.sh.
+    The agent may run as root, but it gives new deployment files back to ssh.user. Your own server
+    commands run as that user too. These commands change only with a shipdeck release that says
+    so, together with server-setup.sh.
 
 server-setup:
   see: [permissions, pm2]
   text: |
     server-setup.sh sets up one app's deploy user on a server. It is optional: `shipdeck setup`
-    does the same guided work from the app, and shipdeck also works as root. Run the script once,
-    as root; shipdeck itself never runs it.
+    does the same guided work from the app, and shipdeck also works as root.
       curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v<version>/server-setup.sh \
         | bash -s -- --user deploy --dir /opt/my-api --service my-api \
             --key "$(cat ~/.ssh/id_ed25519.pub)"         # --manager pm2 for a PM2 app
@@ -1857,11 +1855,9 @@ troubleshooting:
 
     Preflight:
     - "deploy may not run: sudo systemctl restart my-api" and "may not run N of the commands
-      shipdeck needs as root": the sudo rule is missing, or names another service or dir. Run
-      server-setup.sh with this --user, --dir and --service, or deploy as root (see permissions).
+      shipdeck needs as root": the sudo rule is missing, or names another service or dir.
     - "deploy may not create /opt/my-api, and has no sudo without a password", "deploy cannot
-      write to /opt/my-api": as root, create the folder and chown it to the user, or run
-      server-setup.sh.
+      write to /opt/my-api": as root, create the folder and chown it to the user.
     - "the server has no zstd, which shipdeck unpacks and checks releases with": install the named
       packages (tar, zstd, coreutils).
     - "deploy cannot find node on the server in the PATH the login shell's startup files set":
@@ -1920,8 +1916,6 @@ troubleshooting:
     - "rollback failed: ... did not come back either" (exit 5): both releases fail now, so
       something outside the releases changed: the database, files in shared/, a package on the
       server. Look at the server now.
-    - "deploy may not run sudo systemctl stop my-api. Run server-setup.sh on the server again":
-      the sudo rule predates :stop, :start and :logs; run the command it shows, as root.
 
     Still unclear: watch the deploy in the TUI, or read the headless log from the top. Every
     command shipdeck runs on the server is logged after `›` before it runs, with its output below.

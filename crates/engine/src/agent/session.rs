@@ -16,8 +16,9 @@ use tokio::sync::Notify;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::AbortHandle;
 
-use super::{binary, development, install};
-use crate::ssh::{Session, sh_quote};
+use super::version::{Action, Installed, Version, choose};
+use super::{binary, development, install, layout};
+use crate::ssh::Session;
 
 /// The hello must not hold the app when the agent is already dead.
 const HELLO_TIMEOUT: Duration = Duration::from_secs(15);
@@ -34,6 +35,10 @@ pub struct Agent {
     os: String,
     arch: String,
     pub(super) path: String,
+    /// The sudo prefix and identity used for the receiver channel too.
+    pub(super) prefix: String,
+    pub(super) operator: String,
+    pub(super) operator_home: String,
     pub(super) logs: LogViews,
     /// Set when the reader task sees the agent's stream end.
     done: Arc<Notify>,
@@ -42,31 +47,49 @@ pub struct Agent {
 }
 
 impl Agent {
-    /// Picks the build, installs it on the server, starts it, and says hello.
+    /// Checks the installed agent versions, installs the release this
+    /// shipdeck needs, starts it as root, and says hello.
     ///
     /// # Errors
     ///
-    /// Fails when the server's C library or CPU has no build, the binary
-    /// cannot be fetched, the server cannot run it, or it does not answer.
+    /// Fails when the account cannot use sudo, a newer agent major is
+    /// installed, the release cannot be fetched or verified, the server has
+    /// no build, the agent cannot run, or it does not answer.
     pub async fn start(session: &Session) -> Result<Self> {
-        let target = binary::target_for(session).await?;
-        let home = install::home(session).await?;
-        let folder = format!("{home}/.shipdeck/bin");
-        let version = env!("CARGO_PKG_VERSION");
-        let path = match std::env::var_os(development::BINARY_ENV) {
-            Some(local) => development::install(session, local.as_ref(), target, version).await?,
-            None => install::install(session, &folder, target, version).await?,
+        let label = env!("CARGO_PKG_VERSION");
+        let cli = Version::parse(label)?;
+        let prefix = layout::sudo_prefix(session).await?;
+        let found = layout::installed(session, &prefix).await?;
+        let selected = match choose(&cli, &found) {
+            Action::Use(installed) => installed,
+            Action::Refuse(installed) => bail!(
+                "the installed agent is v{}, but this shipdeck is v{label}. An agent with a \
+                 newer major version cannot serve it: this shipdeck requires agent major {}. \
+                 Change the agent installation to a v{}.x release.",
+                installed.label,
+                cli.major,
+                cli.major,
+            ),
+            Action::Replace | Action::Install => {
+                let target = binary::target_for(session).await?;
+                let path = match std::env::var_os(development::BINARY_ENV) {
+                    Some(local) => {
+                        development::install(session, &prefix, local.as_ref(), target, label)
+                            .await?
+                    }
+                    None => install::install(session, &prefix, target, label).await?,
+                };
+                Installed {
+                    version: cli,
+                    label: label.to_string(),
+                    path,
+                }
+            }
         };
 
-        let log = format!(
-            "{}/agent.log",
-            path.rsplit_once('/')
-                .map_or(folder.as_str(), |(folder, _)| folder)
-        );
-        let command = format!(
-            "sh -c {}",
-            sh_quote(&format!("exec {} 2>>{}", sh_quote(&path), sh_quote(&log)))
-        );
+        let home = layout::home(session).await?;
+        let command = layout::launch_command(&prefix, &selected.path, &session.user, &home);
+        let path = selected.path;
         let stream = session.open_stream(&command).await?;
         let (read, write) = tokio::io::split(stream);
         let connection = Connection::start(read, write);
@@ -97,6 +120,9 @@ impl Agent {
             os: String::new(),
             arch: String::new(),
             path: path.clone(),
+            prefix: prefix.clone(),
+            operator: session.user.clone(),
+            operator_home: home.clone(),
             logs,
             done,
             lock_token: Mutex::new(None),
@@ -110,9 +136,18 @@ impl Agent {
                 answer.protocol
             );
         }
-        if answer.version != version {
+        let actual = Version::parse(&answer.version)?;
+        if actual.major != cli.major {
             bail!(
-                "the agent at {path} is version {}, and shipdeck is {version}",
+                "the agent at {path} says it is v{}, but this shipdeck requires agent major {}",
+                answer.version,
+                cli.major
+            );
+        }
+        if answer.version != selected.label {
+            bail!(
+                "the agent at {path} is labeled v{}, but it reports v{}",
+                selected.label,
                 answer.version
             );
         }

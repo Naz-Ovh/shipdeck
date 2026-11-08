@@ -43,6 +43,8 @@ pub struct Server {
     service: String,
     manager: Manager,
     pm2_app: String,
+    /// The user the app's own commands and PM2 run as.
+    user: String,
     /// The PM2 file, relative to the release.
     pm2_file: String,
     /// What the app gets when PM2 starts it.
@@ -51,12 +53,17 @@ pub struct Server {
 
 impl Server {
     pub fn new(session: Arc<Session>, service: &Service) -> Self {
+        let user = service
+            .run_as
+            .clone()
+            .unwrap_or_else(|| session.user.clone());
         Self {
             session,
             dir: service.dir.clone(),
             service: service.name.clone(),
             manager: service.manager,
             pm2_app: service.pm2_app().to_string(),
+            user,
             pm2_file: service.pm2_file(),
             env: CommandEnv {
                 service: service.env.clone(),
@@ -134,6 +141,7 @@ impl Server {
                 Manager::Systemd => AgentManager::Systemd,
                 Manager::Pm2 => AgentManager::Pm2,
             },
+            user: self.user.clone(),
             pm2_file: self.pm2_file.clone(),
             env: self.env.service.clone(),
             env_file: self.env.env_file.clone(),

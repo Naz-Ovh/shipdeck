@@ -23,7 +23,7 @@ live.
 | SSH session | One session per deployable, opened once and reused for every command and upload |
 | SSH login | `--key <path>` or `--password <value>`; with neither flag, the alias's `IdentityFile` from `~/.ssh/config`, then a password asked in the TUI |
 | SSH host | `ssh.host` may be a `~/.ssh/config` alias (`host: prod`); its `HostName`, `Port`, `User` and `IdentityFile` apply, and `deploy.yaml` wins |
-| Server setup | None needed: shipdeck deploys as `ssh.user`, whoever the owner picks (root, ubuntu, ...). The first deploy of an app creates its folder; a missing permission is named at preflight. `server-setup.sh`, run by hand as root, can still create a user with exactly those rights for one app; the TUI never runs it. A per-server setup is planned (Still open) |
+| Server setup | None needed: shipdeck deploys as `ssh.user`, whoever the owner picks (root, ubuntu, ...). The first deploy of an app creates its folder; a missing permission is named at preflight. `server-setup.sh`, run by hand as root, can still create a user with exactly those rights for one app; the TUI never runs it. |
 | Configuration | One folder per deployable under a root folder passed on the command line, each with a `deploy.yaml` |
 | Config check | Every `deploy.yaml` is read before the TUI starts. Any mistake, in any file, stops shipdeck with every problem printed at once, compiler style, in colour: file, line, caret, hint |
 | Editor completion | The config types generate `deploy.schema.json` (draft-07), published at each release tag; examples start with the `yaml-language-server` line. The launch check walks the same schema, and a test keeps the file current |
@@ -37,7 +37,7 @@ live.
 | Release layout | `releases/<id>/` folders plus a `current` symlink; systemd only uses `current/...` |
 | Upload | Only what the live release lacks. Pack hashes every file (SHA-256) and asks the server for the hashes of the same paths in `current/`, computed there and then (regular files only, never a link; nothing stored is trusted). A file with the same path and hash stays out of the bundle; folders, links, `release.json` and the service file always go. Unpack copies the rest from `current` with a tar pipe (mtimes kept, never a hard link: the rollback target stays intact), gives each file this release's mode, and checks every file with `sha256sum -c` against a receipt before the release goes into place. A mismatch (current changed meanwhile) sends the whole release once. Nothing live, or a server that cannot hash, sends it whole. Names with a newline, a carriage return or a backslash always go, since GNU and busybox `sha256sum` escape them differently |
 | Nothing changed | `release.json` carries `content`, a SHA-256 fingerprint of the file list (paths, modes and hashes, link targets, folders), the service file rendered without the release's name, and `deploy.yaml` as read. Equal to the live release's, the deploy asks first: the TUI defaults to No and stops before the server is touched; headless stops with its own exit code unless `--allow-unchanged`. A comment edited in `deploy.yaml` counts as a change; a change never counts as none |
-| Service by hand | `:` on the Deployables screen, as in vim: `:logs` follows the journal or `pm2 logs` live, on a terminal so closing the view ends the command on the server; `:restart`, `:stop` (both ask first) and `:start`. While that deployable deploys, only `:logs`. With systemd, stopping, starting and the log follow are sudo rights of their own (`remote::control_commands`), apart from what a deploy needs, so a server set up before them still deploys and only these say to run `server-setup.sh` again |
+| Service by hand | `:` on the Deployables screen, as in vim: `:logs` follows the journal or `pm2 logs` live, on a terminal so closing the view ends the command on the server; `:restart`, `:stop` (both ask first) and `:start`. While that deployable deploys, only `:logs`. With systemd, stopping, starting and the log follow are sudo rights of their own (`remote::control_commands`), apart from what a deploy needs, so a server set up before them still deploys |
 | Retention | `pipeline.backup.keep`, per deployable: `open` releases unpacked, then `compressed` releases kept only as their backup. The default is 5 + 15, so 20 versions in total |
 | Backups | After setup, `pipeline.backup.files` picks what of the release goes into `backups/<id>.tar.zst`: by default the shipped files, not what setup made (node_modules, .venv), so a backup is about the size of the upload. `include` adds files setup made that it cannot make again; `exclude` leaves out. Rolling back to a backup unpacks it, links `service.shared` and runs setup again. An open release without a backup is deleted when it leaves the open releases |
 | Version visibility | Each release carries `release.json` and its own systemd unit, with the version in `Description=`, so `systemctl status` shows it |
@@ -225,43 +225,6 @@ opens the rollback question on top, with its countdown.
 **Releases.** Every unpacked and compressed release on the server, with the
 current one marked. Select one to roll back to it.
 
-## One-time server setup
-
-Only root can create the deploy user, so this runs once as root, by hand.
-`server-setup.sh` lives at the root of this repository; the TUI has no key
-for it:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v<version>/server-setup.sh \
-  | bash -s -- --user deploy --dir /opt/<app> --service <service> --key '<public key>'
-```
-
-The link is pinned to the release tag of the shipdeck build, so what runs as
-root changes only with a release: a change to the script reaches servers
-only through a new release tag. The script validates every value with the
-same rules as `deploy.yaml`, then:
-
-1. Creates the deploy user, with key login only.
-2. Authorizes the key shipdeck logs in with (its public half).
-3. Creates `/opt/<app>` and makes the deploy user its owner.
-4. Installs `/etc/sudoers.d/shipdeck-<service>` after `visudo` accepts it,
-   allowing only what a deploy runs (`remote::sudo_commands`):
-   `systemctl daemon-reload`, `systemctl enable <service>`,
-   `systemctl restart <service>`, installing
-   `<dir>/current/<service>.service` as `/etc/systemd/system/<service>.service`,
-   and reading the service's last 30 journal lines; and what runs the
-   service by hand (`remote::control_commands`): `systemctl stop <service>`,
-   `systemctl start <service>` and `journalctl -u <service> -f -n 200
-   --no-pager`. Dots in the service name become `_` in the file name,
-   because sudo skips files whose names contain one.
-
-A test fails if the script's two lists and shipdeck's own differ. Running
-it again changes nothing already in place and brings an older rule up to
-date. Every file operation inside `/opt/<app>` then runs as the deploy user
-without sudo. Preflight checks what a deploy needs and names what is
-missing; `:stop`, `:start` and `:logs` check their own and show the setup
-command to run again.
-
 ## Code layout
 
 Organised by subject, in a Cargo workspace
@@ -300,7 +263,7 @@ All seven are done.
 3. **Deploy.** The full eight-step flow with automatic rollback.
 4. **Releases.** The Releases screen, rotation with compression, and manual
    rollback.
-5. **Docs.** README with the one-time server setup and an example deployable.
+5. **Docs.** README with an example deployable.
 6. **Any app (0.2).** `deploy.yaml`, hooks, `build.files`, `remote.start`,
    `remote.requires`, `remote.env_file`, and versions from package.json,
    pyproject.toml, VERSION or a git tag.
@@ -324,16 +287,6 @@ answered with `n`; a manual rollback that runs `done` with
 worker shipping `.` minus `!cmd`, `dist` and `go.mod`, with `.git` left out.
 
 ## Still open
-
-- **Server setup, once per server (later).** Today `server-setup.sh` sets up
-  a user for one app. Planned: `curl … | bash` with no arguments, once per
-  server. It asks which user shipdeck logs in as, and whether that user logs
-  in with a pasted public key or a password (or keeps what it has). It
-  installs `shipdeck-root`, a root-owned command the user may run with sudo,
-  which creates app folders and installs, restarts and reads the journal of
-  units shipdeck installed itself; a registry of those units stops a typo in
-  `service.name` from replacing sshd or nginx. Each app's folder and service
-  still come from its first deploy, so dozens of apps need no further setup.
 
 - **Server glibc.** Run `ldd --version | head -1` on the server. If the build
   needs a newer glibc than the server has, the Build step stops and prints the

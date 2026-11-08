@@ -1,5 +1,153 @@
 # Handoff
 
+## Privileged agent install and version policy — 2026-11-08
+
+Implemented the agreed policy in `docs/feature/agent-version-policy.md`. No
+version was selected, committed, pushed, or published.
+
+### What changed
+
+- **Install and launch.** The agent installs at
+  `/opt/shipdeck/agent/v<version>/agent`. Root owns the binary and every parent
+  directory. The connection must be root or have password-free sudo. The agent
+  starts through `sudo` with the full path, and the upload receiver uses the
+  same identity.
+- **Atomic install.** One lock covers the install. It uses `flock`, with an
+  atomic directory lock and stale-owner detection when `flock` is absent.
+  Downloads go to private root staging. The checksum, archive paths, entry
+  types, and printed version are checked before a complete version directory
+  is published in one rename. Older versions are removed after a successful
+  publish.
+- **Version rules.** Every connection lists valid installations. Same-major
+  minor and patch versions are compatible. A newer agent major refuses the
+  connection. A newer engine major clears older agents and installs its own
+  release. A newer installed major blocks the connection even when a same-major
+  install also exists. The protocol is now 3 and the schema was regenerated.
+- **No bypass.** A failed install, version probe, or handshake ends the
+  connection. Operations do not continue through an incompatible agent.
+- **Execution identity.** `AgentService.user` carries the service user. PM2
+  commands and logs run through `runuser` with that user's home, login `PATH`,
+  `PM2_HOME`, and service environment. New project, release, backup, and shared
+  paths are given back to the SSH user. Existing app and service ownership is
+  preserved, and the path, archive, symlink, and mode checks stay in force.
+- **State.** The agent uses `SHIPDECK_OPERATOR_HOME` for
+  `~/.shipdeck/state.db`, so a root agent does not move event history to
+  `/root`. Diagnostics go to `~/.shipdeck-agent.log`.
+- **Development upload.** Root copies the user-uploaded binary into staging,
+  checks the copied SHA-256 and version, and runs only the root-owned copy. A
+  user-writable binary is never executed as root.
+
+### Verified in Podman
+
+Container `shipdeck-agent-work` at `127.0.0.1:44681`, user `deploy` and
+`shipdeploy`, with password-free sudo. The agent archive was served inside the
+container. Logs are in `.tmp/e2e/`.
+
+- First install with no agent, then reconnection.
+- Same-major `0.6.9` installed and used while the CLI was `0.7.1`.
+- Newer `1.0.0` agent refused; both versions and required major shown.
+- An invalid older version directory was removed by a later install.
+- Two simultaneous first connections both succeeded; one version directory was
+  published. The same two-connection test passed with `flock` hidden, exercising
+  the atomic directory lock and stale-owner path.
+- Interrupted download ended with exit 18 and no valid version directory.
+- Incorrect checksum, wrong binary version, and a handshake with a wrong
+  version each failed without operations.
+- The 17.6 GiB container: `/opt/shipdeck`, its parents, and the binary were
+  root-owned. `deploy` could not write, remove, or chmod the binary or its
+  directory.
+- Development upload installed a root-owned `0755` copy; no user staging
+  directory remained.
+- A user without sudo got the access error before `/opt/shipdeck/agent` was
+  created.
+- PM2 deploy and restart ran as `shipdeploy`; release files, backups, and shared
+  data were owned by `shipdeploy`. A systemd deploy succeeded. A systemd setup
+  command wrote its user as `shipdeploy` (uid 1002).
+- `server-info`, `work`, and `events` worked without a terminal.
+- Existing `~/.shipdeck/state.db` events replayed through the root agent.
+
+The current tree cannot run a real CLI-major upgrade because it is `0.7.1`.
+The `Replace` decision and its cleanup are covered by unit tests; the same
+cleanup path was exercised by removing an invalid older directory.
+
+### Checks
+
+- `cargo fmt --all -- --check`: pass.
+- `cargo check --workspace --all-targets`: pass.
+- `cargo test --workspace`: 395 tests pass (38 CLI, 48 agent, 2 agent process,
+  249 engine, 24 protocol, 34 TUI).
+- Strict Clippy with pedantic and performance warnings: pass.
+- Protocol schema regenerated and matches: pass.
+- `git diff --check`: pass.
+- `python3 tests/release_artifacts_test.py`: 6 tests pass.
+- Built-in manual `permissions` topic and tracker JavaScript syntax: pass.
+
+### Docs updated
+
+`docs/feature/agent-version-policy.md` (now implemented),
+`docs/feature/agent.md`, `docs/code/agent.md`, `docs/code/development.md`,
+`docs/feature/deployment-config.md`, `docs/feature/deployment-operations.md`,
+README, the website docs for the agent, security, server access, server layout,
+CLI, quickstart, the built-in manual, the visual spec, the progress tracker,
+and `.agents/task/agent-completion.md`.
+
+### Remaining
+
+- **Release version.** This changes the install, privilege, protocol, and
+  execution contracts, so it needs a major release. The owner must choose and
+  publish the version. Do not publish or push without that instruction.
+- **Real major upgrade.** A CLI-major-greater connection was not run because
+  the tree stays at `0.7.1`; the decision and cleanup are unit-tested and the
+  cleanup path was exercised with an invalid older directory.
+- **Not tested.** Alpine/busybox behavior, 32-bit ARM, disk full, and a real
+  GitHub release download were not run. The no-`flock` directory lock was run
+  in Podman, including two simultaneous installs.
+- **Plain SSH code.** The old internal paths remain, but a connection no longer
+  falls back to them after agent preparation or handshake failure.
+- **Command-only sudo.** The agent installer and launch need root or full
+  password-free sudo, so guided setup's `commands` mode cannot prepare or start
+  the agent. The docs now say this. Whether to remove or replace that mode is an
+  owner decision; nothing was widened silently.
+
+## Agent version rules saved — 2026-11-08
+
+The owner agreed the replacement access and compatibility policy in
+`docs/feature/agent-version-policy.md`; persistent memory links to it.
+Same-major minor/patch versions are compatible. A newer agent major refuses
+the connection and reports the required agent version change. A newer CLI major
+clears older agent installations and installs the required newer major.
+Breaking protocol or execution/file-handling contract changes require a major
+release. Agents live at root-owned `/opt/shipdeck/agent/v<version>/agent`, use
+full executable paths, and come only from GitHub. No runtime change or cleanup
+was performed. Current code still checks exact versions.
+
+## Setup requirement removed from docs — 2026-11-08
+
+Removed the required server-preparation step from the README, website entry
+pages, quickstart, and server-access guide. Removed instructions to run or
+rerun the server setup script from deployment, upgrade, troubleshooting,
+planning, and terminal manual docs. Removed the per-server requirement wording
+from the visual spec and progress page. Command references and historical
+verification records remain. No replacement setup flow or runtime changes.
+
+All nine terminal manual tests and `git diff --check` passed. Website build
+failed because the MDX tooling tried
+to create `/mnt/Projects`, which is not writable. No build configuration was
+changed. Existing unrelated work was preserved.
+
+## Agent install recipe — 2026-11-08
+
+Added `just install-agent`, which runs `cargo install --path crates/agent
+--locked` and installs the optimized binary into Cargo's bin folder. Added
+local installation and SSH connection instructions to `docs/code/development.md`.
+The development connection uses `SHIPDECK_AGENT_BINARY`; the engine uploads,
+verifies, and starts the matching Linux agent over SSH.
+
+Verified recipe parsing and command expansion with `just --list` and
+`just --dry-run install-agent`; `git diff --check` passed. No local installation
+or server connection was run. Existing unrelated changes were preserved.
+Kanzo has no project linked to this repository, so no board task was updated.
+
 ## Commit checkpoint — 2026-11-08
 
 The owner asked to commit the latest changes in focused steps. The changes

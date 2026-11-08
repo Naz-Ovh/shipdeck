@@ -161,7 +161,7 @@ The footer's `c` label reads `connect`, or `disconnect` when the selected deploy
 | `:stop` | Stops the service. Asks first. It stays stopped until it is started again, a deploy restarts it or the server reboots. |
 | `:start` | Starts the service. A PM2 app that is already online is left as it is. |
 
-While a deploy or rollback of that deployable runs, only `:logs` works. With systemd, `:stop`, `:start` and `:logs` need sudo rights of their own; on a server set up before shipdeck had them, a dialog titled `Could not stop <service>` (or start, or the log view itself) says so, with the `server-setup.sh` command to run again on the server as root. See [Server access](/docs/guides/server-access).
+While a deploy or rollback of that deployable runs, only `:logs` works. With systemd, `:stop`, `:start` and `:logs` need sudo rights of their own; on a server set up before shipdeck had them, a dialog titled `Could not stop <service>` (or start, or the log view itself) says so. See [Server access](/docs/guides/server-access).
 
 | Key | Action |
 | --- | --- |
@@ -500,7 +500,7 @@ It stays stopped until it is started again, a deploy restarts it or the server r
 
 ### Could not …
 
-Opens when `:stop`, `:start` or `:restart` fails, with the whole error, such as a missing sudo right and the `server-setup.sh` command that adds it. `⏎`, `Esc` or `q` close it.
+Opens when `:stop`, `:start` or `:restart` fails, with the whole error, such as a missing sudo right. `⏎`, `Esc` or `q` close it.
 
 ### Quit now?
 

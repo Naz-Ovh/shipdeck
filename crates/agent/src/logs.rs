@@ -101,13 +101,19 @@ fn command(request: &AgentLogsFollow) -> Result<tokio::process::Command> {
             command
         }
         AgentManager::Pm2 => {
-            let mut command = tokio::process::Command::new("pm2");
-            command
-                .arg("logs")
-                .arg(&service.service)
-                .args(["--raw", "--lines"])
-                .arg(request.lines.to_string());
-            command
+            if service.user.is_empty() {
+                bail!("the request has no execution user for PM2");
+            }
+            let login = crate::identity::resolve(&service.user)?;
+            let program = login.pm2.clone().unwrap_or_else(|| "pm2".to_string());
+            let lines = request.lines.to_string();
+            let std_command = crate::identity::command(
+                &login,
+                &program,
+                &["logs", &service.service, "--raw", "--lines", &lines],
+                &std::collections::BTreeMap::new(),
+            );
+            tokio::process::Command::from(std_command)
         }
     };
     command

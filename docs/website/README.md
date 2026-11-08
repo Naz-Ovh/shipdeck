@@ -35,11 +35,10 @@ Use `pnpm run deploy`, not `pnpm deploy`: the latter is a built-in pnpm command.
 - Unknown paths get `404.html` with a 404 status; `/docs/guides/ssh` serves `docs/guides/ssh.html`.
 ### On release
 
-`.github/workflows/docs.yml` deploys the site when a GitHub Release is published
-(`gh release create v0.3.1 --generate-notes`, or the Releases page). Pushing a tag
-alone does not deploy. Pre-releases are skipped: the Release's pre-release box, or a
-tag with a suffix such as `v0.4.0-beta.1`. The workflow checks out the release tag,
-so the live docs match that release. "Run workflow" on the Actions tab redeploys by hand.
+The generated release workflow calls the docs workflow after stable publication.
+It checks out the release commit, builds the site, and deploys to Cloudflare.
+Pre-releases are skipped. Workflow dispatch can redeploy manually.
+Do not create a GitHub Release by hand before the release workflow.
 
 It needs two repository secrets (Settings → Secrets and variables → Actions):
 

@@ -338,7 +338,7 @@ v0.3.0-9f8e7d6-20261012.091000  0.3.0    9f8e7d6  2026-10-12 09:10  31.0 MiB  un
 
 ### `server-info <DEPLOY_ROOT> <NAME>`
 
-Prints the server's real facts from the connected agent: Linux and kernel, CPU and cores, available and total memory, the disk behind `service.dir`, uptime, the agent version, and where common tools were found. It changes nothing. When the agent is unavailable it fails with a clear message.
+Prints the server's real facts from the connected agent: Linux and kernel, CPU and cores, available and total memory, the disk behind `service.dir`, uptime, the agent version, and where common tools were found. It changes nothing. When the connection cannot prepare the agent, it fails with a clear message.
 
 ### `work <DEPLOY_ROOT> <NAME> [--cleanup]`
 

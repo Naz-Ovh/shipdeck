@@ -31,8 +31,8 @@ const UPLOAD_CHUNK: usize = 256 * 1024;
 const RAW_TIMEOUT: Duration = Duration::from_secs(15);
 /// Starting the agent's two-way channel gets this long.
 const OPEN_TIMEOUT: Duration = Duration::from_secs(15);
-/// The whole optional agent startup. After it, the SSH path carries on.
-const AGENT_START_TIMEOUT: Duration = Duration::from_secs(90);
+/// The whole mandatory agent preparation, download included.
+const AGENT_START_TIMEOUT: Duration = Duration::from_secs(180);
 /// How long a timed-out remote command gets between TERM and KILL.
 const TIMEOUT_GRACE: Duration = Duration::from_secs(3);
 
@@ -491,33 +491,28 @@ impl Session {
         }
     }
 
-    /// Installs and starts the agent for this server, or records why it could
-    /// not start. A missing agent never blocks the SSH path, and the whole
-    /// optional startup has a hard deadline.
-    pub async fn start_agent(&self) {
-        let started =
-            match tokio::time::timeout(AGENT_START_TIMEOUT, crate::agent::Agent::start(self)).await
-            {
-                Ok(result) => result,
-                Err(_) => Err(anyhow!(
+    /// Prepares and starts the agent for this server. The whole startup has a
+    /// hard deadline, and any failure ends the connection instead of letting
+    /// operations run without the agreed version and privileged setup.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the account lacks sudo, a newer agent major is installed,
+    /// installation or verification fails, or the agent does not answer.
+    pub async fn start_agent(&self) -> Result<()> {
+        let started = tokio::time::timeout(AGENT_START_TIMEOUT, crate::agent::Agent::start(self))
+            .await
+            .map_err(|_| {
+                anyhow!(
                     "the agent did not start within {}s",
                     AGENT_START_TIMEOUT.as_secs()
-                )),
-            };
-        let value = match started {
-            Ok(agent) => Some(Arc::new(agent)),
-            Err(err) => {
-                eprintln!(
-                    "shipdeck: {}: the agent is unavailable: {err:#}",
-                    self.label
-                );
-                None
-            }
-        };
+                )
+            })??;
         *self
             .agent
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = value;
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::new(started));
+        Ok(())
     }
 
     /// The running agent, once [`Self::start_agent`] has finished.
@@ -658,7 +653,10 @@ impl Pool {
         if self.shell_env && target.shell_env {
             session.load_shell_env().await;
         }
-        session.start_agent().await;
+        session
+            .start_agent()
+            .await
+            .context("preparing the shipdeck agent")?;
         Ok(session)
     }
 

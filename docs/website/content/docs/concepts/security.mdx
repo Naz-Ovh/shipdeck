@@ -1,100 +1,78 @@
 ---
 title: Security model
-description: What shipdeck validates and quotes, what runs as root and what as the deploy user, and how it treats host keys and secrets.
+description: SSH trust, agent validation, privileges, secrets, and recovery limits.
 ---
 
-shipdeck runs commands on your server over SSH, some of them as root. This page lists what reaches the server, as which user, and what is checked first.
+Shipdeck runs your build commands locally and your server commands over SSH.
+Treat `deploy.yaml` as executable code. Review it before deploying.
 
-## Every value is validated or quoted
+## SSH and the agent
 
-Each server action is a short POSIX `sh` script sent as `sh -c '<script>'`. Every value from your config that reaches that shell is either checked against a strict rule at launch or quoted with single quotes (a `'` inside becomes `'\''`). Most are both.
+Known host keys must match `~/.ssh/known_hosts`. A changed key is refused.
+The terminal UI asks before trusting a new host; CLI commands require explicit
+trust. SSH host certificates, ProxyJump, and ProxyCommand are not supported.
 
-| Value | Rule | Quoted |
-| --- | --- | --- |
-| `service.dir` | absolute; only letters, digits, `.`, `_`, `-`, `/`; no `..` | yes |
-| `service.name` | only letters, digits, `.`, `_`, `@`, `-`; not ending in `.service` | yes |
-| `ssh.user`, `service.run_as` | only letters, digits, `.`, `_`, `-` | - |
-| `service.start` | one line, no backslash; the program only letters, digits, `.`, `_`, `+`, `-`, `/`, no `..` | - |
-| `service.env` | keys are variable names; values have no `"`, `\` or newline | yes |
-| `service.env_file`, `service.shared` | relative paths; only letters, digits, `.`, `_`, `+`, `-`, `/`; no `..` | yes |
-| `pipeline.health.url` | `http://` or `https://`, no quotes, spaces or newlines | yes |
-| tool names in `pipeline.preflight.requires` | a name or absolute path; only letters, digits, `.`, `_`, `+`, `-`, `/`; no `..` | yes |
-| release ids | only letters, digits, `.`, `_`, `+`, `-`, not starting with `.` | checked before every script that uses one |
+The engine installs the agent release it needs over HTTPS from GitHub, checks
+SHA-256 and the printed version, and verifies the protocol on startup. The
+checksum comes from the same release host; it is an integrity check, not an
+independent signature. The agent lives at
+`/opt/shipdeck/agent/v<version>/agent` and root owns it and every parent
+directory. It opens no port, starts through sudo, runs as root, and exits on
+disconnect. The SSH account must be root or have password-free sudo.
 
-A release id that fails the check stops the action with `refusing an unexpected release name: "<id>"`. Ids from a server listing that fail it are ignored, so a strange folder in `releases/` is never touched.
+## Files and concurrency
 
-## Server commands are shell by design
+Typed agent requests validate project and release paths. Archive handling checks
+paths, symlinks, file modes, size and entry limits, and hashes before activation.
+Uploaded data requires a one-use reservation tied to the held project lock.
 
-The one exception is the `server` commands you write in `pipeline` (for example `pipeline.setup.run.server`). They are shell on purpose: you write them, and shipdeck runs them as written, after `set -e` and a `cd` into the right folder. They run as the SSH user, never through sudo. Treat `deploy.yaml` like any other script in your repository.
+Deploy, rollback, cleanup, and service control share a project lock held by
+the connected agent. Server-command leases prevent another operation from
+overlapping a command that survived a lost agent connection.
 
-## What runs as root
+These locks coordinate Shipdeck operations. They do not lock out an unrelated
+administrator or another tool changing files or services.
 
-With a user other than `root`, only two things ever run as root:
+## Shell commands and privileges
 
-1. **`server-setup.sh`**, once, when you run it yourself. It checks every argument before it changes anything, installs the sudo rule only after `visudo` accepts it, and is fetched from a URL pinned to your shipdeck release tag. See [Server access](/docs/guides/server-access#server-setupsh).
-2. **Five commands for a deploy**, through `sudo -n` (never prompting for a password):
+The agent handles native file and service work. Installer and systemd steps
+need root. The agent never lets app or PM2 commands inherit that identity: the
+request carries the service user, and the agent starts those commands through
+`runuser` with that user's home and login `PATH`. New deployment files are
+given back to the SSH user, so existing app and service ownership is preserved.
 
-```sh
-systemctl daemon-reload
-systemctl enable my-api
-systemctl restart my-api
-install -m 0644 /opt/my-api/current/my-api.service /etc/systemd/system/my-api.service
-journalctl -u my-api -n 30 --no-pager
-```
+Your own pipeline commands are shell by design and run as written. They run as
+the deploy user, not as the root agent. They can modify databases and files
+outside the release folder. Guided setup offers `commands` or `full` access,
+validates the rule with `visudo`, and never saves the sudo password. `full`
+grants password-free sudo for every command. See
+[server access](/docs/guides/server-access).
 
-3. **Three more for the service by hand**, the TUI's `:stop`, `:start` and `:logs`, also through `sudo -n`:
-
-```sh
-systemctl stop my-api
-systemctl start my-api
-journalctl -u my-api -f -n 200 --no-pager
-```
-
-A deploy never needs the last three, so a server whose rule predates them still deploys; only those commands say to run `server-setup.sh` again. The unit is always installed from `<dir>/current/<service>.service`, so the sudo rule names one fixed path, and a rollback brings back the unit of that release.
-
-On a first deploy, if the user cannot create `service.dir` itself, shipdeck also tries `sudo -n mkdir -p` and `sudo -n chown`. That only works for users with broader sudo rights; a user made by `server-setup.sh` never needs it.
-
-<Callout type="warn" title="Logging in as root">
-When `ssh.user` is `root`, everything runs as root: file operations, your `server` commands and, unless `service.run_as` is set, the service itself.
-</Callout>
-
-## What runs as the deploy user
-
-Everything else runs over SSH as `ssh.user`, without sudo:
-
-- the preflight facts script and creating folders in `service.dir`
-- hashing the live release's files, upload, unpack (copying unchanged files from `current`, checking every file with `sha256sum -c`), `service.shared` links and the switch of `current`
-- packing backups, tidying old releases and restoring them
-- health probes (`systemctl is-active`, `systemctl show`, `curl` or `wget`)
-- your `server` commands from `pipeline`
-
-## The service
-
-The service runs as `service.run_as` (default the SSH user) under the hardened [built-in unit](/docs/reference/service-template): `NoNewPrivileges`, a read-only system (`ProtectSystem=strict`) with writes allowed only to `<dir>/shared`, no access to `/home` or `/root` (`ProtectHome`), a private `/tmp`, no devices, and protected kernel tunables, modules and control groups. A `service.template` can change any of this.
-
-## Host keys
-
-shipdeck checks every server against `~/.ssh/known_hosts`:
-
-- A known, matching key connects.
-- An unknown server shows its SHA256 fingerprint in the "New server" dialog. The connection waits there: no password or key is sent until you press `y`, and `n` ends it. The key is then saved.
-- A changed key is refused with `HOST KEY CHANGED for <host>: ...`.
-- Host certificates are refused.
-
-See [SSH and login](/docs/guides/ssh#host-keys).
+The default systemd unit restricts writes to shared data and blocks home folders.
+A custom unit can change those restrictions. PM2 runs under its configured
+service user.
 
 ## Secrets
 
-- Files named `.env*` are shipped with mode `0600`.
-- `.git` is never shipped, at any depth. `include.deploy` never takes `deploy.yaml`, `deploy.yml` or `service.template` from the deploy folder; a `project` pattern that covers the deploy folder can still pick them up.
-- Passwords and key passphrases typed in the screen are kept in memory for the run only and never written to disk. A rejected one is forgotten.
-- `--password` lands in your shell history. In zsh with `HIST_IGNORE_SPACE`, start the command with a space.
+Keep deployment `.env` files out of git. Packed environment files use private
+file modes. A private key or password passed in a CLI argument may appear in
+process listings or shell history; prefer a key file or the documented environment
+variables. Passwords and passphrases retained for a connection stay in memory.
 
-## Safe changes on the server
+Your commands control their own output. Avoid printing credentials into logs,
+release files, or custom notifications.
 
-Unpacking and restoring go through hidden `.partial` folders, `current` changes with one rename, and packing a backup or compressing an old release writes a `.part` file before renaming it. A step that fails halfway leaves no half-written release in view. A new release is checked file by file against its receipt before it is renamed into place, so files copied from the live release must match what your PC packed; the server's hashes are computed at each deploy, never read from anything stored. Copies are real copies, never hard links, so the release you would roll back to cannot change through the new one.
+## Failure and recovery
 
-## Limits
+The folder switch is atomic, but service restarts, migrations, and your custom
+commands are not one transaction. Rollback restores release files and saved
+service settings; it does not undo a migration.
 
-- There is no server-side lock. shipdeck runs one operation at a time, but two people deploying the same app at once are not prevented.
-- Values in the unit are not escaped for systemd specifiers: a `%` in `service.start` or `service.env` is read by systemd.
+A dropped connection during activation is uncertain. Reconnect, inspect the
+live release and services with `shipdeck work`, and read numbered events.
+Interrupted files stay until approved cleanup. Cleanup rechecks the reported
+paths and refuses the live release, backups, and paths outside the project.
+
+The completion review covers tested locking, archive, backup, and disconnect
+cases. Disk-full behavior has not been verified. No zero-downtime or upload
+speed guarantee is made.

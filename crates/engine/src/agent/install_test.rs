@@ -1,95 +1,79 @@
-#![cfg(target_os = "linux")]
+use super::{download_body, install_script, upload_body};
 
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
-
-use super::{private_checks, temp_dir_script};
-use crate::ssh::sh_quote;
-
-fn run(script: &str) -> Output {
-    Command::new("sh")
-        .arg("-c")
-        .arg(script)
-        .output()
-        .expect("sh runs")
-}
-
-fn scratch(name: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!(
-        "shipdeck-install-test-{}-{name}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&path);
-    std::fs::create_dir_all(&path).expect("the scratch folder");
-    path
-}
-
-fn checks_for(path: &Path) -> String {
-    format!(
-        "set -e\n{}",
-        private_checks(&sh_quote(&path.to_string_lossy()))
-    )
+#[test]
+fn the_installer_runs_as_root_inside_one_lock() {
+    let script = install_script(&download_body("x86_64-unknown-linux-gnu"), "5.2.1");
+    let root = script.find("id -u").expect("root check");
+    let lock = script.find("flock -x 9").expect("lock");
+    let download = script.find("curl -fsSL").expect("download");
+    assert!(root < lock && lock < download);
+    assert!(script.contains("umask 022"));
+    assert!(script.contains("trap cleanup EXIT"));
+    assert!(script.contains(".install.lock.d"));
+    assert!(script.contains("holds_dir_lock=yes"));
+    assert!(script.contains("secure=no"));
+    assert!(script.contains("/opt must not be writable"));
 }
 
 #[test]
-fn a_private_owned_folder_passes() {
-    let path = scratch("ok");
-    std::fs::set_permissions(&path, PermissionsExt::from_mode(0o700)).expect("mode");
-    let output = run(&checks_for(&path));
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+fn the_installer_verifies_before_publishing() {
+    let script = install_script(&download_body("x86_64-unknown-linux-gnu"), "5.2.1");
+    let checksum = script
+        .find("does not match its checksum")
+        .expect("checksum");
+    let version = script
+        .find("does not report version")
+        .expect("version check");
+    let rename = script
+        .find("mv \"$stage/publish\" \"$target\"")
+        .expect("rename");
+    assert!(checksum < version && version < rename);
+    assert!(script.contains("v5.2.1"));
+    assert!(script.contains("sha256sum"));
+    assert!(script.contains("tar -xzf"));
+}
+
+#[test]
+fn the_installer_replaces_and_cleans_versioned_directories() {
+    let script = install_script(&download_body("x86_64-unknown-linux-gnu"), "5.2.1");
+    assert!(script.contains("rm -rf -- \"$target\""));
+    assert!(script.contains("for old in \"$root\"/v*"));
+    assert!(script.contains("\"$root\"/v*) rm -rf -- \"$old\""));
+    assert!(script.contains("root='/opt/shipdeck/agent'"));
+}
+
+#[test]
+fn the_archive_paths_and_links_are_checked() {
+    let script = download_body("x86_64-unknown-linux-gnu");
+    assert!(script.contains("tar -tzf"));
+    assert!(script.contains(r"/^\// || /(^|\/)\.\.(\/|$)/"));
+    assert!(script.contains("tar -tvzf"));
+    assert!(script.contains("holds a link or special file"));
+    assert!(script.contains("find \"$stage/unpack\" -type l"));
+}
+
+#[test]
+fn the_release_asset_and_its_checksum_are_fixed() {
+    let script = download_body("x86_64-unknown-linux-gnu");
+    assert!(script.contains("https://github.com/Naz-Ovh/shipdeck/releases/download/v"));
+    assert!(script.contains("shipdeck-agent-x86_64-unknown-linux-gnu.tar.gz"));
+    assert!(script.contains("shipdeck-agent-x86_64-unknown-linux-gnu.tar.gz.sha256"));
+}
+
+#[test]
+fn a_development_binary_is_copied_before_it_is_checked_or_run() {
+    let script = install_script(
+        &upload_body("/tmp/private/agent.partial", "abc123"),
+        "5.2.1",
     );
-    std::fs::remove_dir_all(&path).expect("cleanup");
-}
-
-#[test]
-fn a_symlink_is_refused() {
-    let target = scratch("link-target");
-    std::fs::set_permissions(&target, PermissionsExt::from_mode(0o700)).expect("mode");
-    let link = target.with_extension("link");
-    let _ = std::fs::remove_file(&link);
-    std::os::unix::fs::symlink(&target, &link).expect("symlink");
-    let output = run(&checks_for(&link));
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("symlink"));
-    std::fs::remove_file(&link).expect("cleanup link");
-    std::fs::remove_dir_all(&target).expect("cleanup target");
-}
-
-#[test]
-fn a_folder_open_to_others_is_refused() {
-    let path = scratch("open");
-    std::fs::set_permissions(&path, PermissionsExt::from_mode(0o777)).expect("mode");
-    let output = run(&checks_for(&path));
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("not private"));
-    std::fs::remove_dir_all(&path).expect("cleanup");
-}
-
-#[test]
-fn temp_folders_are_unique_and_private() {
-    let first = run(&temp_dir_script());
-    let second = run(&temp_dir_script());
-    assert!(
-        first.status.success(),
-        "{}",
-        String::from_utf8_lossy(&first.stderr)
-    );
-    assert!(
-        second.status.success(),
-        "{}",
-        String::from_utf8_lossy(&second.stderr)
-    );
-    let first = String::from_utf8(first.stdout).expect("a path");
-    let second = String::from_utf8(second.stdout).expect("a path");
-    assert_ne!(first, second);
-    for folder in [&first, &second] {
-        let meta = std::fs::metadata(folder).expect("the folder exists");
-        assert_eq!(meta.permissions().mode() & 0o777, 0o700);
-        assert!(!meta.file_type().is_symlink());
-        std::fs::remove_dir_all(folder).expect("cleanup");
-    }
+    let copy = script
+        .find("install -m 0755 -o root -g root")
+        .expect("copy");
+    let hash = script
+        .find("sha256sum \"$stage/publish/agent\"")
+        .expect("hash");
+    let run = script.rfind("--version").expect("version probe");
+    assert!(copy < hash && hash < run);
+    assert!(!script.contains("\"/tmp/private/agent.partial\" --version"));
+    assert!(script.contains("checksum did not match"));
 }

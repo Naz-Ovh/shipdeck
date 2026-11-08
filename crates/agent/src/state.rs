@@ -167,18 +167,25 @@ pub(crate) async fn unconfirmed_activation(
 
 /// The state file when it already exists; nothing is created.
 fn existing_state_path() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    let path = PathBuf::from(home).join(".shipdeck").join("state.db");
+    let path = home().ok()?.join(".shipdeck").join("state.db");
     path.is_file().then_some(path)
 }
 
-fn state_path() -> Result<PathBuf> {
-    let home = std::env::var_os("HOME").context("HOME is not set")?;
+/// The deploy user's home, passed at launch, so a root agent does not move
+/// the event history to `/root`.
+fn home() -> Result<PathBuf> {
+    let home = std::env::var_os("SHIPDECK_OPERATOR_HOME")
+        .or_else(|| std::env::var_os("HOME"))
+        .context("the agent did not receive its operator home")?;
     let home = PathBuf::from(home);
     if !home.is_absolute() {
-        bail!("HOME must be absolute");
+        bail!("the agent operator home must be absolute");
     }
-    let folder = home.join(".shipdeck");
+    Ok(home)
+}
+
+fn state_path() -> Result<PathBuf> {
+    let folder = home()?.join(".shipdeck");
     let mut builder = std::fs::DirBuilder::new();
     #[cfg(unix)]
     {

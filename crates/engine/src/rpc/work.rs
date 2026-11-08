@@ -117,7 +117,7 @@ fn agent(
 ) -> Result<std::sync::Arc<crate::agent::Agent>, shipdeck_protocol::wire::ErrorObject> {
     server.session().agent().ok_or_else(|| {
         convert::failed(&anyhow::anyhow!(
-            "the server agent is not available; connect again or use SHIPDECK_AGENT_BINARY"
+            "this connection has no running agent; reconnect so shipdeck can prepare it"
         ))
     })
 }

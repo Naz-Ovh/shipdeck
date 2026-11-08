@@ -65,10 +65,14 @@ The same as text, with the transient files:
 /etc/systemd/system/my-api.service        copy of current/my-api.service
 /etc/sudoers.d/shipdeck-my-api            only if guided setup or server-setup.sh was used
 
+/opt/shipdeck/agent/
+├── v<version>/agent                      root-owned; launched by full path with sudo
+└── .install.lock                         coordinates simultaneous installs
+
 ~/.shipdeck/
-├── bin/shipdeck-agent-<version>          the agent, at the engine's version
-├── state.db                              numbered events for work and events
-└── agent.log                             the agent's own diagnostics
+└── state.db                              numbered events for work and events
+
+~/.shipdeck-agent.log                     the agent's own diagnostics
 ```
 
 `service.dir` can be any absolute path; `/opt/<app>` is the convention.
@@ -156,7 +160,7 @@ The Releases screen reads it for open releases. Preflight reads `content` from `
 
 ## Ownership and modes
 
-- Every file operation under `service.dir` runs as the SSH user, without sudo. With a non-root user, everything there belongs to that user.
+- The agent may run as root, but new files and folders under `service.dir` are given back to the SSH user. With a non-root user, everything there belongs to that user.
 - Modes come from your PC: folders `0755`, the binary `0755`, `release.json` and the unit `0644`, files whose name starts with `.env` `0600`, other files keep their local mode (`0644` from Windows, which has no Unix modes). A file copied from the live release gets the mode the new release has for it. Symlinks stay symlinks.
 - If shipdeck created `service.dir` with `sudo -n mkdir` on a first deploy, it hands it to the SSH user with `chown`. `server-setup.sh` creates it and gives it to the user too.
 - The service runs as `service.run_as`, by default the SSH user. That user must be able to read the release.

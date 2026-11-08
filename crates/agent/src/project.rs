@@ -23,6 +23,7 @@ pub(crate) async fn prepare(request: InspectWork) -> Result<AgentOk> {
             }
             Err(err) => return Err(err).with_context(|| format!("checking {name}")),
         }
+        crate::owner::apply(&path)?;
     }
     Ok(AgentOk {})
 }

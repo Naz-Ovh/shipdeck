@@ -209,8 +209,12 @@ function intro(): string {
 
 /** llms.txt: a summary and one line per page, linking to its Markdown. */
 export async function llmsIndex(): Promise<string> {
+  const overview = source.getPage([]);
   const lines = [
     intro(),
+    '',
+    ...(overview ? [await pageMarkdown(overview), ''] : []),
+    'Read the overview above first. Fetch only the topic needed for your task.',
     '',
     `The whole documentation in one file: ${link('/llms-full.txt')}`,
   ];

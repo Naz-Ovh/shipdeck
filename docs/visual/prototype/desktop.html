@@ -1070,7 +1070,7 @@ WantedBy=multi-user.target`,
 };
 const DEPLOY_YAML = {
   "my-api":
-`<span class="c"># yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.7.1/docs/schema/deploy.schema.json</span>
+`<span class="c"># yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.8.0/docs/schema/deploy.schema.json</span>
 <span class="k">name:</span> My API (prod)
 <span class="k">project:</span> ..
 
@@ -1664,7 +1664,7 @@ function yamlOf(d) {
   const n = d.name || "my-project", L = [], env = d.env.filter(e => e.k);
   const list = (key, arr, pad) => arr.length === 1 ? `${pad}${key}: ${arr[0]}` : `${pad}${key}: [${arr.join(", ")}]`;
   const root = d.root && d.root !== "./" && d.root !== "." ? "/" + d.root.replace(/^\.\//, "").replace(/\/$/, "") : "";
-  L.push("# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.7.1/docs/schema/deploy.schema.json",
+  L.push("# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.8.0/docs/schema/deploy.schema.json",
          `name: ${n}`, `project: ../../..${root}`, "", "ssh:", `  host: ${d.server}`, `  user: ${server(d.server).user}`, "", "service:", `  name: ${n}`, `  dir: ${dirOf(d)}`);
   if (d.manager === "pm2") L.push("  manager: pm2");
   if (d.start) L.push(`  start: ${d.start}`);

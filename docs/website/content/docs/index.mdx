@@ -1,80 +1,128 @@
 ---
-title: Introduction
-description: What shipdeck is, the ideas behind it, what it leaves out, and what you need to run it.
+title: Overview
+description: Understand Shipdeck and its deployment model in five minutes.
 ---
 
-shipdeck is a terminal UI that builds your app on your own machine, ships it to a Linux server over SSH, and runs it there as a systemd service. Every deploy is kept as its own release, so any earlier release can go live again from the Releases screen.
+Shipdeck builds your app on your computer, sends it to a Linux server over SSH,
+and runs it with **systemd or PM2**. Use the terminal UI for daily work, or CLI
+commands in scripts and CI. Each deployment has its own release folder, saved
+service settings, and a backup you can roll back to.
+
+It fits small servers that should run apps without compiling them. Rust, Go,
+Node.js, Python, and other stacks work through your own build and setup commands.
+One deployment can hold a single app or several monorepo apps that switch together.
+
+## Start here
+
+Install Shipdeck on Linux or macOS:
+
+```sh
+curl -LsSf https://shipdeck.naz.ovh/install.sh | sh
+shipdeck --version
+```
+
+From your repository root, create a deployment:
+
+```sh
+shipdeck init ./scripts/deploy my-api --preset rust --manager systemd --host prod
+```
+
+Each direct subfolder of a **deploy root** holds a `deploy.yaml`.
+This example creates `scripts/deploy/my-api/deploy.yaml`. Edit it to name:
+
+- Your source folder and local build command.
+- The binary or files to send, and any shared data to keep between releases.
+- The SSH host and user, server folder, service command, and health check.
+
+`prod` is an SSH alias with a user and `IdentityFile`. You can instead use an
+address and pass `--key`. The SSH user must already exist.
 
 ```sh
 shipdeck ./scripts/deploy
 ```
 
-## Who it is for
+In the terminal UI, select a deployment and press Enter. `c` connects,
+`r` opens releases, `D` inspects a release, and `:logs` follows logs.
+Select an older release and press Enter to roll back.
 
-shipdeck exists for servers too small to build on. If your VPS cannot compile your Rust service, or you would rather not install a toolchain there, shipdeck builds on your PC and sends only the result.
+The [quickstart](/docs/getting-started/quickstart) has a complete config and the
+first-deploy steps on one page.
 
-It is not tied to one language. Anything you can build locally works: a Rust or Go binary, a Node.js app with its `dist` folder, Python source with a virtualenv built on the server. The repository's `examples/` folder has a `deploy.yaml` for each of these four.
+## The deployment model
 
-It fits people who run one or a few small servers, with one or more services each, and who want repeatable deploys and quick rollback without CI, containers or an agent on the server.
+`preflight → build → pack → upload → unpack → setup → backup → switch → restart → health → done`
 
-## Core ideas
+1. **Prepare.** Check config, access, tools, and binary compatibility. Build
+   locally and pack only listed files. Files already present can be reused
+   after server-side SHA-256 checks.
+2. **Stage.** Receive and verify a new release beside the live one. Run setup
+   in that folder, then save a backup of shipped files.
+3. **Activate.** Replace the `current` symlink in one rename, restart services,
+   and check health. A failure after switching follows the rollback policy.
+4. **Keep history.** Retain unpacked releases and compressed backups.
+   Restoring a backup runs setup again. Shared files stay across releases.
 
-- **Build locally.** Your build commands run on your PC. The server only receives the finished release.
-- **Only what you list travels, and only what changed.** `pipeline.pack` names the binary and the files that go into the release. Nothing else is uploaded, and files the live release already has, checked by SHA-256 on the server, are copied there instead of sent. A release identical to the live one is not deployed without asking. See [Packing files](/docs/guides/packing-files).
-- **One `deploy.yaml` per deployable.** Each deployable is a folder under a deploy root that you pass on the command line. The file says plainly which commands run on your PC (`local`) and which on the server (`server`). See [Deploy root](/docs/guides/deploy-root).
-- **An atomic switch.** Each release lives in `releases/<id>/` on the server, and a `current` symlink points at the live one. Going live is a single rename of that symlink. systemd only ever uses `current/...` paths, so the paths it sees never change.
-- **Releases you can roll back to.** After setup, each release leaves a small backup of what it shipped in `backups/`. By default shipdeck keeps 5 releases unpacked and the backups of 15 more. Any of them can go live again; a backup is unpacked and set up again first. See [Releases](/docs/guides/releases).
-- **Config checked before start.** Every `deploy.yaml` is read before the screen opens. If any file has a mistake, shipdeck prints every problem, with file, line and a hint, and does not start. See [Config problems](/docs/reference/config-problems).
-- **Nothing to install on the server.** shipdeck logs in as the user you name in `ssh.user`. The first deploy creates the app folder and installs the systemd unit. A missing permission is named at preflight, before anything changes. An optional one-time script can create a least-privilege deploy user. See [Server access](/docs/guides/server-access).
+The filesystem switch is atomic; service restarts can cause downtime.
+Database migrations and your custom commands need their own recovery plan.
+A monorepo switches one release folder, then restarts its apps; this does not
+make several service restarts simultaneous.
 
-## The pipeline
+## The server agent and interrupted work
 
-Every deploy runs the same eleven steps, in order. Five of them (preflight, build, setup, health and done) run commands from your `deploy.yaml` on your PC, the server, or both; the others are done by shipdeck and take no settings.
+The first connection prepares a matching `shipdeck-agent`. The account needs
+root or password-free sudo. Shipdeck downloads the release from GitHub, checks
+its SHA-256 and version, and installs it as root under
+`/opt/shipdeck/agent/v<version>/agent`. It starts through the full path with
+sudo. The agent handles files, backups, service operations, project locks, and
+numbered events in the SSH user's `~/.shipdeck/state.db`. It opens no port and
+exits when the connection ends.
 
-<PipelineSteps />
+Deployments run while connected. If a connection drops, reconnect and inspect:
 
-Nothing live changes before **switch**. A failure in preflight, build, pack, upload, unpack, setup or backup stops the deploy and leaves the live release alone. **setup** runs in the new release folder while the old release still serves, which is where you install production dependencies or run migrations. **backup** then keeps what shipdeck shipped in `backups/<id>.tar.zst`, for a later rollback.
+```sh
+shipdeck work ./scripts/deploy my-api
+shipdeck events ./scripts/deploy my-api --after 0
+```
 
-If switch, restart or health fails, shipdeck shows the last journal lines and, when a release was live before, asks whether to put it back. With no answer in 30 seconds it rolls back, or at once with `pipeline.failed.rollback: auto`. A separate `failed` step can run your local commands after any failure, for example to send a notification.
+Interrupted files stay for inspection. `work --cleanup` explicitly approves
+removing the unfinished files the server reports, after a fresh check.
+If activation lost its connection, inspect the live release and service state
+before retrying. Never treat that result as a successful deploy.
 
-[The pipeline](/docs/guides/pipeline) covers each step in detail, and [How it works](/docs/concepts/how-it-works) shows what happens on the server.
-
-For scripts and CI, `shipdeck deploy`, `shipdeck rollback` and `shipdeck releases` do the same without the terminal UI, ask nothing, and report how it ended in the exit code. See [Command line](/docs/reference/cli#without-the-ui).
-
-## What it does not do
-
-shipdeck 0.3.0 keeps a narrow scope:
-
-- **No building on the server.** Builds run on your PC. Server commands are for setup work such as `npm ci --omit=dev`, not for compiling.
-- **No containers and no agent.** shipdeck talks to the server over plain SSH. Nothing of its own stays running there.
-- **Linux with systemd only.** The service is a systemd unit, managed with `systemctl` and read with `journalctl`.
-- **One host per deployable.** To deploy the same app to two servers, use two deployable folders.
-- **No SSH proxies or host certificates.** A `~/.ssh/config` alias that needs `ProxyJump` or `ProxyCommand` is refused, `Match` blocks are not read, and host certificates are refused. See [SSH and login](/docs/guides/ssh).
-- **One operation at a time.** While a deploy or rollback runs, shipdeck refuses to start another.
+If preparation or the handshake fails, the connection stops instead of using
+an incompatible agent. A still-running server command blocks another mutating
+operation. App and PM2 commands run as the configured service user, not as the
+root agent.
 
 ## What you need
 
-**On your PC**
+- **Your computer:** Linux or macOS for prebuilt binaries; Windows currently
+  needs a source build and Git for Windows. Bring your app's build tools.
+- **Server:** Linux, SSH, a supported service manager, and enough storage for
+  releases and backups. The SSH user needs write access and service permissions.
+  Agent downloads need outbound HTTPS and `curl` or `wget`; the plain SSH path
+  needs its archive, checksum, and locking tools.
+- **Limits:** One host per deployment. No SSH ProxyJump, ProxyCommand, or host
+  certificates. No built-in reverse proxy, TLS certificate management, detached
+  deployment worker, or zero-downtime guarantee.
 
-- Nothing extra for shipdeck itself on Linux and macOS: the [install script](/docs/getting-started/installation) downloads a prebuilt binary. Building it from source, as on Windows for now, needs a Rust toolchain (1.89 or newer) and a C compiler.
-- Linux, Windows or macOS. Local commands run through `sh -c`; on Windows, in Git for Windows' `sh.exe`, so [Git for Windows](/docs/getting-started/installation#on-windows) is required there.
-- Whatever your own build needs: `cargo`, `cargo zigbuild`, `go`, `npm` and so on.
-- A terminal with 24-bit colour and Unicode box-drawing characters.
-- `git` is optional, except on Windows. shipdeck uses it to put the commit in the release name and to mark releases built from uncommitted changes.
+## For coding agents
 
-**On the server**
+The installed manual matches the binary and needs no network:
 
-- Linux with systemd and an SSH server.
-- `zstd`, to unpack releases (`apt install zstd`, or `dnf install zstd`), and `sha256sum` (from coreutils), to check them.
-- `curl` or `wget`, if you set `pipeline.health.url`.
-- Either the root user, or a user with passwordless `sudo` for the five commands a deploy needs (three more to stop, start and follow the service from the TUI). [Server access](/docs/guides/server-access) lists them and shows the one-time setup script.
-- At least 100 MiB of free disk space.
+```sh
+shipdeck man index
+shipdeck man configs
+shipdeck man details agents cli.deploy service.start
+```
 
-## Next
+[llms.txt](/llms.txt) contains this overview and topic links.
+Fetch only the relevant page; [llms-full.txt](/llms-full.txt) contains the whole manual.
 
-<Cards>
-  <Card title="Installation" href="/docs/getting-started/installation" description="Install the prebuilt shipdeck, or build it with cargo, and check it runs." />
-  <Card title="Quickstart" href="/docs/getting-started/quickstart" description="From nothing to the first deploy and the first rollback." />
-  <Card title="deploy.yaml" href="/docs/reference/deploy-yaml" description="Every field, its default and its rules." />
-  <Card title="How it works" href="/docs/concepts/how-it-works" description="What happens on your PC and on the server during a deploy." />
-</Cards>
+| Next task | Read |
+| --- | --- |
+| First deployment | [Quickstart](/docs/getting-started/quickstart) |
+| Every config field | [deploy.yaml](/docs/reference/deploy-yaml) |
+| Several apps together | [Monorepos](/docs/monorepos) |
+| Permissions and setup | [Server access](/docs/guides/server-access) |
+| Flags and exit codes | [Command line](/docs/reference/cli) |
