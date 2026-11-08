@@ -15,6 +15,11 @@ fn run(lines: &[&str]) -> String {
     for line in lines {
         writeln!(stdin, "{line}").expect("write a request");
     }
+    writeln!(
+        stdin,
+        r#"{{"jsonrpc":"2.0","id":999,"method":"agent/shutdown","params":{{}}}}"#
+    )
+    .expect("write shutdown");
     drop(stdin);
     let mut out = String::new();
     child
@@ -39,10 +44,19 @@ fn an_unsupported_ask_gets_an_error_not_silence() {
 
 #[test]
 fn hello_answers_on_the_real_binary() {
-    let out = run(&[
-        r#"{"jsonrpc":"2.0","id":1,"method":"agent/hello","params":{"protocol":1,"version":"0.7.1"}}"#,
-    ]);
+    let request = format!(
+        r#"{{"jsonrpc":"2.0","id":1,"method":"agent/hello","params":{{"protocol":{},"version":"{}"}}}}"#,
+        shipdeck_protocol::message::agent::PROTOCOL,
+        env!("CARGO_PKG_VERSION")
+    );
+    let out = run(&[&request]);
     assert!(out.contains(r#""id":1"#), "{out}");
-    assert!(out.contains(r#""protocol":1"#), "{out}");
+    assert!(
+        out.contains(&format!(
+            r#""protocol":{}"#,
+            shipdeck_protocol::message::agent::PROTOCOL
+        )),
+        "{out}"
+    );
     assert!(out.contains(env!("CARGO_PKG_VERSION")), "{out}");
 }

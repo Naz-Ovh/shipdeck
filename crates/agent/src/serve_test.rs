@@ -6,7 +6,8 @@ use tokio::task::JoinHandle;
 
 use shipdeck_protocol::connection::{Connection, Error};
 use shipdeck_protocol::message::agent::{
-    AgentHello, AgentHelloResult, AgentPing, AgentShutdown, HELLO, PING, PROTOCOL, SHUTDOWN,
+    AgentBackupCreate, AgentHello, AgentHelloResult, AgentOk, AgentPing, AgentShutdown,
+    BACKUP_CREATE, HELLO, LOCK_PROJECT, PING, PROTOCOL, ProjectLock, SHUTDOWN,
 };
 use shipdeck_protocol::wire::code;
 
@@ -134,4 +135,102 @@ async fn bad_params_are_refused_but_the_agent_stays() {
         .await
         .expect("shutdown");
     let _ = server.await;
+}
+
+#[tokio::test]
+async fn a_change_needs_the_project_lock() {
+    let suffix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("shipdeck-serve-{}-{suffix}", std::process::id()));
+    std::fs::create_dir_all(root.join("releases/v1")).expect("release");
+    std::fs::create_dir_all(root.join("backups")).expect("backups");
+    let (client, server) = pair();
+    let asked = AgentBackupCreate {
+        root: root.to_string_lossy().into_owned(),
+        release: "v1".into(),
+        paths: Vec::new(),
+    };
+    let err = client
+        .request::<_, AgentOk>(BACKUP_CREATE, &asked)
+        .await
+        .expect_err("a change without the lock");
+    match err {
+        Error::Rpc(object) => assert_eq!(object.code, code::BUSY),
+        other => panic!("expected a busy error, got {other}"),
+    }
+    let _: AgentOk = client
+        .request(
+            LOCK_PROJECT,
+            &ProjectLock {
+                root: asked.root.clone(),
+                token: 1,
+            },
+        )
+        .await
+        .expect("lock");
+    client
+        .request::<_, AgentOk>(BACKUP_CREATE, &asked)
+        .await
+        .expect("a change with the lock");
+    client
+        .request::<_, AgentShutdown>(SHUTDOWN, &AgentShutdown {})
+        .await
+        .expect("shutdown");
+    let _ = server.await;
+    std::fs::remove_dir_all(root).expect("remove");
+}
+
+#[tokio::test]
+async fn upload_and_service_control_need_the_project_lock() {
+    let (client, server) = pair();
+    let root = std::env::temp_dir().join(format!(
+        "shipdeck-upload-lock-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(root.join("releases")).expect("releases");
+    let root_text = root.to_string_lossy().into_owned();
+    let upload = serde_json::json!({
+        "root": root_text,
+        "release": "v1",
+        "bytes": 1,
+        "sha256": "0".repeat(64),
+        "lock_token": 1,
+        "retry": false,
+    });
+    for (method, params) in [
+        (shipdeck_protocol::message::agent::UPLOAD_PREPARE, upload),
+        (
+            shipdeck_protocol::message::agent::SERVICE_CONTROL,
+            serde_json::json!({
+                "service": {
+                    "root": root_text,
+                    "service": "demo",
+                    "manager": "systemd",
+                    "pm2_file": "",
+                },
+                "action": "stop",
+            }),
+        ),
+    ] {
+        let err = client
+            .request::<_, Value>(method, &params)
+            .await
+            .expect_err("a change without the lock");
+        match err {
+            Error::Rpc(object) => assert_eq!(object.code, code::BUSY, "{method}"),
+            other => panic!("expected a busy error for {method}, got {other}"),
+        }
+    }
+    client
+        .request::<_, AgentShutdown>(SHUTDOWN, &AgentShutdown {})
+        .await
+        .expect("shutdown");
+    let _ = server.await;
+    std::fs::remove_dir_all(root).expect("remove");
 }
