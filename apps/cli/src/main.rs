@@ -546,15 +546,45 @@ async fn run_tui(root: PathBuf, args: LoginArgs) -> Result<ExitCode> {
         .open(&root, &wire(&login), !args.no_shell_env)
         .await?;
     let mut deployables = Vec::with_capacity(workspace.deployables.len());
+    let mut monorepos = Vec::new();
     for info in &workspace.deployables {
         let folder = PathBuf::from(&info.folder);
-        let Ok(found) = shipdeck_engine::config::Deployable::load(&folder) else {
-            bail!(
-                "{}: its shipdeck.yaml cannot be read any more",
-                folder.display()
-            );
-        };
-        deployables.push(found);
+        match shipdeck_engine::config::Deployment::load(&folder) {
+            Ok(shipdeck_engine::config::Deployment::Single(found)) => {
+                deployables.push(*found);
+            }
+            Ok(shipdeck_engine::config::Deployment::Monorepo(found)) => {
+                monorepos.push((info.slug.clone(), found.config.apps.len()));
+            }
+            Err(problems) => {
+                let base = std::env::current_dir().unwrap_or_default();
+                let color =
+                    std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+                eprint!(
+                    "{}",
+                    config::render(
+                        std::slice::from_ref(&problems),
+                        &base,
+                        color,
+                        "shipdeck did not start"
+                    )
+                );
+                return Ok(ExitCode::FAILURE);
+            }
+        }
+    }
+    for (slug, apps) in &monorepos {
+        eprintln!(
+            "{slug}: {apps}-app monorepo. The TUI cannot show monorepos yet; \
+             deploy it with `shipdeck deploy {} {slug}`.",
+            root.display()
+        );
+    }
+    if deployables.is_empty() {
+        if monorepos.is_empty() {
+            bail!("no deployables to show under {}", root.display());
+        }
+        bail!("the TUI cannot show monorepos yet; run the deploy command above");
     }
     let (connection, mut child) = engine.into_parts();
     let handle = connection.handle();

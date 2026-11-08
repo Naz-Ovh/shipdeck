@@ -1,5 +1,16 @@
 # Handoff
 
+## TUI and monorepos — 2026-11-09
+
+`shipdeck ./scripts/deploy` on a folder with several apps failed with
+`its shipdeck.yaml cannot be read any more`. The cause was not the file name:
+`run_tui` loaded every workspace project as a single `Deployable`, so a
+monorepo with `apps:` could not parse. The TUI still does not render
+monorepos. It now loads `Deployment`, prints the real config problems, and
+names a monorepo with the headless command to use:
+`shipdeck deploy <root> <name>`. A mixed workspace still shows its single
+apps. Uncommitted at the time of writing; `just verify` passed.
+
 ## Config file renamed to shipdeck.yaml — 2026-11-09
 
 Discovery, `init`, the manual, docs, examples and tests now use
