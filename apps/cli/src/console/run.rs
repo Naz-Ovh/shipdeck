@@ -2,7 +2,7 @@
 
 use std::future::Future;
 use std::process::ExitCode;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use shipdeck_protocol::connection::{Connection, Error, Handle, Incoming};
 use shipdeck_protocol::message::agent::ServerFacts;
@@ -385,8 +385,15 @@ impl Console {
         let mut interrupted = false;
         let ctrl_c = tokio::signal::ctrl_c();
         tokio::pin!(ctrl_c);
+        let mut tick = tokio::time::interval(Duration::from_secs(1));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tokio::select! {
+                _ = tick.tick() => {
+                    if let Some(line) = lines.heartbeat(Instant::now()) {
+                        eprintln!("{line}");
+                    }
+                }
                 incoming = self.connection.recv() => match incoming {
                     Some(Incoming::Event(Event::Finished(finished))) => {
                         eprintln!(

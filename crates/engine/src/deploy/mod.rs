@@ -242,6 +242,13 @@ impl<'a> Run<'a> {
                 command.trim(),
             );
             Box::pin(build::run_local(command, &dir, &env, self.report, index)).await?;
+            self.report.progress(
+                index,
+                done as u64 + 1,
+                commands.len() as u64,
+                Unit::Items,
+                command.trim(),
+            );
         }
         Ok(())
     }
@@ -273,6 +280,13 @@ impl<'a> Run<'a> {
                 command.trim(),
             );
             server.command(&place, command, &env, self.report).await?;
+            self.report.progress(
+                index,
+                done as u64 + 1,
+                commands.len() as u64,
+                Unit::Items,
+                command.trim(),
+            );
         }
         Ok(())
     }

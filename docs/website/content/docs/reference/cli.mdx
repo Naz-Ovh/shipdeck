@@ -291,13 +291,20 @@ shipdeck deploy ./scripts/deploy my-api --key ~/.ssh/id_deploy
 
 ```txt
 ━━ My API (prod) · deploy → deploy@203.0.113.10:/opt/my-api
-━━ Preflight: checking your PC and the server
+━━ [1/11] Preflight: checking your PC and the server
 › connect deploy@203.0.113.10 (key /home/me/.ssh/id_deploy)
+✔ Preflight  ...
+━━ [3/11] Pack: packing the release
+… Pack: hashing 12.3 MiB / 30.0 MiB (41%) · 2.1 MiB/s · 8s left
 ⋮
 ✔ My API (prod): v0.3.1-ab12cd3-20261014.153012 is live (1m12s)
 ```
 
-Each step prints once, when it ends; a long step also prints its progress every 5 seconds. The last line says what is live now.
+Each step prints its number and name when it starts, then its result. While a
+step runs, progress prints at most once a second: amount, percent, and for
+bytes a rate and time left. A step that says nothing for 5 seconds repeats its
+last progress with the time spent so far, so a CI log never looks stuck. The
+last line says what is live now.
 
 #### `--on-failure <rollback|keep>`
 

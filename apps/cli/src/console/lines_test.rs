@@ -60,7 +60,7 @@ fn logs_keep_their_marker() {
 }
 
 #[test]
-fn progress_prints_every_few_seconds() {
+fn progress_is_immediate_then_updates_with_rate_and_time_left() {
     let start = Instant::now();
     let steps = ["Upload".to_string()];
     let mut lines = Lines::new(&steps, Paint::plain(), start);
@@ -76,16 +76,83 @@ fn progress_prints_every_few_seconds() {
     };
     assert_eq!(
         lines.line(progress(1024), start + Duration::from_secs(1)),
+        Some("… Upload: uploading 1.0 KiB / 4.0 MiB (0%)".into())
+    );
+    let second = lines
+        .line(progress(1024 * 1024), start + Duration::from_secs(6))
+        .unwrap();
+    assert!(
+        second.starts_with("… Upload: uploading 1.0 MiB / 4.0 MiB (25%)"),
+        "{second}"
+    );
+    assert!(second.contains("/s"), "{second}");
+    assert!(second.contains("left"), "{second}");
+    assert_eq!(
+        lines.line(
+            progress(1024 * 1024 + 100 * 1024),
+            start + Duration::from_millis(6500)
+        ),
         None
     );
+    assert!(
+        lines
+            .line(
+                progress(2 * 1024 * 1024),
+                start + Duration::from_millis(7100)
+            )
+            .is_some()
+    );
+}
+
+#[test]
+fn a_step_prints_its_number_and_survives_a_silent_spell() {
+    let start = Instant::now();
+    let steps = ["Upload".to_string(), "Health".to_string()];
+    let mut lines = Lines::new(&steps, Paint::plain(), start);
+    let step = |step, state| {
+        Event::Step(OpStep {
+            op: 1,
+            step,
+            state,
+            detail: None,
+        })
+    };
+    assert_eq!(lines.line(step(0, StepState::Running), start), None);
     assert_eq!(
-        lines.line(progress(1024 * 1024), start + Duration::from_secs(6)),
-        Some("… uploading 1.0 MiB / 4.0 MiB (25%)".into())
+        lines.line(
+            Event::Log(OpLog {
+                op: 1,
+                kind: LogKind::Step,
+                text: "Upload".into(),
+            }),
+            start
+        ),
+        Some("━━ [1/2] Upload".into())
     );
     assert_eq!(
-        lines.line(progress(2 * 1024 * 1024), start + Duration::from_secs(8)),
-        None
+        lines.line(
+            Event::Progress(OpProgress {
+                op: 1,
+                step: 0,
+                done: 1024,
+                total: 4096,
+                unit: Unit::Bytes,
+                label: "uploading".into(),
+            }),
+            start + Duration::from_secs(1)
+        ),
+        Some("… Upload: uploading 1.0 KiB / 4.0 KiB (25%)".into())
     );
+    assert_eq!(lines.heartbeat(start + Duration::from_secs(2)), None);
+    let beat = lines.heartbeat(start + Duration::from_secs(7)).unwrap();
+    assert!(beat.contains("… Upload: uploading"), "{beat}");
+    assert!(beat.contains("so far"), "{beat}");
+    assert!(
+        lines
+            .line(step(0, StepState::Done), start + Duration::from_secs(8))
+            .is_some()
+    );
+    assert_eq!(lines.heartbeat(start + Duration::from_secs(20)), None);
 }
 
 #[test]
