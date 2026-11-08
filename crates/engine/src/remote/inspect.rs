@@ -83,6 +83,36 @@ impl Server {
     /// Returns an error when the release name is unsafe or the listing fails.
     pub async fn contents(&self, id: &str, source: Source) -> Result<ReleaseContents> {
         ensure_id(id)?;
+        if let Some(agent) = self.session.agent() {
+            let found = agent
+                .release_contents(&self.dir, id, source == Source::Backup)
+                .await?;
+            return Ok(ReleaseContents {
+                files: found
+                    .files
+                    .into_iter()
+                    .map(|file| FileInfo {
+                        path: file.path,
+                        kind: match file.kind {
+                            shipdeck_protocol::message::agent::AgentFileKind::Dir => FileKind::Dir,
+                            shipdeck_protocol::message::agent::AgentFileKind::File => {
+                                FileKind::File
+                            }
+                            shipdeck_protocol::message::agent::AgentFileKind::Link => {
+                                FileKind::Link
+                            }
+                        },
+                        mode: file.mode,
+                        size: file.size,
+                        target: file.target,
+                    })
+                    .collect(),
+                manifest: found
+                    .manifest
+                    .as_deref()
+                    .and_then(|text| serde_json::from_str(text).ok()),
+            });
+        }
         let script = match source {
             Source::Folder => format!(
                 "set -e
@@ -131,6 +161,15 @@ tar -I zstd -tvf backups/{id}.tar.zst",
             || path.contains('\0')
         {
             bail!("refusing an unexpected file name: {path:?}");
+        }
+        if let Some(agent) = self.session.agent() {
+            let found = agent
+                .read_release_file(&self.dir, id, source == Source::Backup, path, READ_CAP)
+                .await?;
+            return Ok(FileText {
+                text: found.text,
+                binary: found.binary,
+            });
         }
         let member = sh_quote(&format!("./{path}"));
         let script = match source {

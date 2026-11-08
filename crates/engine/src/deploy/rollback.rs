@@ -48,6 +48,7 @@ pub async fn rollback(deployable: Deployable, target: String, pool: Arc<Pool>, r
     run.version = ReleaseName::parse(&target).map(|name| name.version);
     let ended = run.rollback(&target, &pool).await;
     run.failed(&ended).await;
+    run.unlock_project().await;
     report.done(ended.outcome);
 }
 
@@ -56,7 +57,7 @@ impl Run<'_> {
         let report = self.report;
 
         self.start(Step::Connect, "checking the server");
-        let (server, entry, previous) = match connect(self.deployable, target, pool, report).await {
+        let (server, entry, previous) = match self.connect_locked(target, pool).await {
             Ok(found) => found,
             Err(err) => return self.stop(Step::Connect, &err),
         };
@@ -65,6 +66,12 @@ impl Run<'_> {
             Step::Connect,
             format!("live: {}", previous.as_deref().unwrap_or("nothing")),
         );
+        self.record(
+            &server,
+            "rollback_started",
+            format!("from {}", previous.as_deref().unwrap_or("nothing")),
+        )
+        .await;
 
         // A backup holds only what was picked: it gets its shared folders
         // and setup again.
@@ -82,11 +89,15 @@ impl Run<'_> {
                 return self.stop(Step::Unpack, &err);
             }
             self.finish(Step::Unpack, format!("from {file}"));
+            self.record(&server, "backup_restored", target).await;
             true
         } else {
             self.skip(Step::Unpack, "already unpacked");
             false
         };
+        if let Err(err) = self.check_project_lock() {
+            return self.stop(Step::Unpack, &err);
+        }
 
         if !from_backup {
             self.skip(Step::Setup, "already set up");
@@ -107,26 +118,56 @@ impl Run<'_> {
             }
         }
 
+        if let Err(err) = self.check_project_lock() {
+            return self.stop(Step::Setup, &err);
+        }
         self.start(Step::Switch, "making it the current release");
         if let Err(err) = restore(&server, target, report).await {
             return self.recover(&server, Step::Switch, err).await;
         }
         self.finish(Step::Switch, format!("current → {target}"));
+        if let Err(err) = self.check_project_lock() {
+            return self.connection_lost(Step::Switch, &err);
+        }
 
         self.start(Step::Restart, &self.config().service.name);
         if let Err(err) = super::restart_processes(&[&server], report).await {
             return self.recover(&server, Step::Restart, err).await;
         }
         self.finish(Step::Restart, "");
+        self.record(&server, "service_restarted", "").await;
+        if let Err(err) = self.check_project_lock() {
+            return self.connection_lost(Step::Restart, &err);
+        }
 
         self.start(Step::Health, "waiting for the release to settle");
         match self.health(&server).await {
-            Ok(summary) => self.finish(Step::Health, summary),
+            Ok(summary) => {
+                self.finish(Step::Health, summary);
+                self.record(&server, "health_passed", "").await;
+            }
             Err(err) => return self.recover(&server, Step::Health, err).await,
         }
 
+        if let Err(err) = self.check_project_lock() {
+            return self.connection_lost(Step::Health, &err);
+        }
         self.done(&server).await;
+        if let Err(err) = self.check_project_lock() {
+            return self.connection_lost(Step::Done, &err);
+        }
+        self.record(&server, "rollback_completed", target).await;
         Ended::ok(target)
+    }
+
+    async fn connect_locked(
+        &mut self,
+        target: &str,
+        pool: &Pool,
+    ) -> Result<(Server, ReleaseEntry, Option<String>)> {
+        let found = connect(self.deployable, target, pool, self.report).await?;
+        self.project_lock = Some(crate::agent::ProjectGuard::acquire(&found.0).await?);
+        connect(self.deployable, target, pool, self.report).await
     }
 }
 

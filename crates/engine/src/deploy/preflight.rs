@@ -37,6 +37,7 @@ pub async fn preflight_apps<'a>(
         bail!("the monorepo has no apps");
     }
     let session = pool.get(endpoint).await?;
+    let legacy_lock = session.agent().is_none();
     let mut tools = std::collections::BTreeSet::new();
     tools.extend(SERVER_TOOLS.iter().map(|(name, _)| (*name).to_string()));
     for app in apps {
@@ -49,6 +50,9 @@ pub async fn preflight_apps<'a>(
         {
             tools.insert(name);
         }
+    }
+    if legacy_lock {
+        tools.insert("flock".to_string());
     }
     let http = apps.iter().any(|app| app.pipeline.health.url.is_some());
     if http {
@@ -143,8 +147,12 @@ pub(super) async fn preflight(
             format!("{why}; server commands run without them"),
         ),
     }
+    let legacy_lock = session.agent().is_none();
     let server = Server::new(session, &config.service);
     let mut tools = deployable.required_tools();
+    if legacy_lock && !tools.iter().any(|tool| tool == "flock") {
+        tools.push("flock".into());
+    }
     for (tool, _) in SERVER_TOOLS {
         if !tools.iter().any(|t| t == tool) {
             tools.push(tool.into());

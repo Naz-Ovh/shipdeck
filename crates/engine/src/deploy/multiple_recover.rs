@@ -24,25 +24,38 @@ impl Multiple<'_> {
         {
             self.report.skip(Self::index(step), "stopped");
         }
-        let outcome = match pool.get(&self.deployment.endpoint).await {
-            Ok(session) if self.state == ReleaseState::Switching => {
-                self.recover_live(&session, failed, &error).await
+        let connection_lost = self
+            .project_lock
+            .as_ref()
+            .is_some_and(|guard| !guard.is_alive());
+        let outcome = if self.state == ReleaseState::Switching && connection_lost {
+            Outcome::RollbackFailed {
+                error: error.clone(),
+                rollback_error:
+                    "connection lost during activation; inspect the live release and services"
+                        .to_string(),
             }
-            Ok(session) => {
-                if let Err(err) = self.cleanup(&session).await {
-                    self.report.log(LogKind::Warn, format!("cleanup: {err:#}"));
+        } else {
+            match pool.get(&self.deployment.endpoint).await {
+                Ok(session) if self.state == ReleaseState::Switching => {
+                    self.recover_live(&session, failed, &error).await
                 }
-                Outcome::Failed {
+                Ok(session) => {
+                    if let Err(err) = self.cleanup(&session).await {
+                        self.report.log(LogKind::Warn, format!("cleanup: {err:#}"));
+                    }
+                    Outcome::Failed {
+                        error: error.clone(),
+                    }
+                }
+                Err(err) if self.state == ReleaseState::Switching => Outcome::RollbackFailed {
                     error: error.clone(),
-                }
+                    rollback_error: format!("reconnecting for recovery: {err:#}"),
+                },
+                Err(_) => Outcome::Failed {
+                    error: error.clone(),
+                },
             }
-            Err(err) if self.state == ReleaseState::Switching => Outcome::RollbackFailed {
-                error: error.clone(),
-                rollback_error: format!("reconnecting for recovery: {err:#}"),
-            },
-            Err(_) => Outcome::Failed {
-                error: error.clone(),
-            },
         };
         self.report
             .start(Self::index(Step::Failed), "running failed commands");
@@ -109,7 +122,10 @@ impl Multiple<'_> {
         let servers = apps::servers(&self.config, session)?;
         if let (Some(server), Some(id)) = (servers.first(), &self.release) {
             if !self.rollback && self.state == ReleaseState::Staged {
-                server.discard(id, self.report).await?;
+                self.report.log(
+                    LogKind::Warn,
+                    "unfinished release files were kept for inspection",
+                );
             } else if self.rollback && self.state == ReleaseState::Restored {
                 server.drop_open(id, self.report).await?;
             }

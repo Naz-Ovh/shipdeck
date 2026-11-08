@@ -17,12 +17,44 @@ use crate::ssh::sh_quote;
 pub enum Unpacked {
     /// `releases/<id>` holds exactly what the receipt lists.
     Verified,
-    /// These files, copied from `current` or unpacked, did not match the
-    /// receipt; nothing of the release is left on the server.
+    /// These files, copied from `current` or unpacked, did not match the receipt.
     Mismatch(Vec<String>),
 }
 
 impl Server {
+    /// Uploads a release on the agent channel when available.
+    ///
+    /// # Errors
+    /// Returns an error if the release name or upload is invalid.
+    pub async fn upload_bundle(
+        &self,
+        id: &str,
+        data: &[u8],
+        retry: bool,
+        progress: impl FnMut(u64, u64),
+    ) -> Result<()> {
+        ensure_id(id)?;
+        if let Some(agent) = self.session.agent() {
+            agent
+                .upload_release(&self.session, &self.dir, id, data, retry, progress)
+                .await
+        } else {
+            if !retry {
+                let releases = sh_quote(&format!("{}/releases", self.dir));
+                let script = format!(
+                    "for f in {releases}/.{id}.* {releases}/{id}; do if [ -e \"$f\" ] || [ -L \"$f\" ]; then echo 'unfinished files or a release already exist' >&2; exit 1; fi; done"
+                );
+                self.session
+                    .exec(&script)
+                    .await?
+                    .check("checking for unfinished release files")?;
+            }
+            self.session
+                .upload(data, &self.upload_path(id), progress)
+                .await
+        }
+    }
+
     /// The SHA-256 of each of `paths` in `current/` that is a regular file
     /// and not a link, hashed now by the server. The paths go up as a
     /// NUL-separated list, each with `./` so none reads as an option.
@@ -38,6 +70,14 @@ impl Server {
         ensure_id(id)?;
         if paths.is_empty() {
             return Ok(HashMap::new());
+        }
+        if let Some(agent) = self.session.agent() {
+            return Ok(agent
+                .hash_current(&self.dir, paths)
+                .await?
+                .hashes
+                .into_iter()
+                .collect());
         }
         let list_path = format!("{}/releases/.{id}.paths", self.dir);
         self.session
@@ -82,9 +122,30 @@ impl Server {
     ///
     /// # Errors
     /// Returns an error when the release name is unsafe or the unpack command fails.
-    pub async fn unpack(&self, id: &str, modes: &[u32], report: &Reporter) -> Result<Unpacked> {
+    pub async fn unpack(
+        &self,
+        id: &str,
+        modes: &[u32],
+        max_bytes: u64,
+        max_entries: u64,
+        report: &Reporter,
+    ) -> Result<Unpacked> {
         ensure_id(id)?;
         let what = format!("unpack into releases/{id}");
+        if let Some(agent) = self.session.agent() {
+            report.log(
+                crate::deploy::report::LogKind::Command,
+                format!("{} › {what}", self.session.label),
+            );
+            let result = agent
+                .unpack_release(&self.dir, id, modes, max_bytes, max_entries)
+                .await?;
+            return Ok(if result.verified {
+                Unpacked::Verified
+            } else {
+                Unpacked::Mismatch(result.mismatches)
+            });
+        }
         let out = self
             .exec_logged(&what, &unpack_script(&self.dir, id, modes), report)
             .await?;
@@ -162,7 +223,6 @@ pub(super) fn unpack_script(dir: &str, id: &str, modes: &[u32]) -> String {
         "set -e
 cd {releases_q}
 if [ -e {id} ]; then echo 'releases/{id} already exists' >&2; exit 1; fi
-rm -rf .{id}.partial
 mkdir .{id}.partial
 tar -I zstd -xpf .{id}.tar.zst -C .{id}.partial
 rm -f .{id}.tar.zst

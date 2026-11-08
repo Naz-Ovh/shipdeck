@@ -164,3 +164,36 @@ fn script_accepts_valid_values() {
         assert!(stderr.contains("run this as root"), "{service}: {stderr}");
     }
 }
+
+fn service(yaml: &str) -> crate::config::Service {
+    crate::config::parse(yaml).expect("config").service
+}
+
+#[test]
+fn guided_script_offers_both_kinds_of_access() {
+    let config = service(
+        "name: api\nssh:\n  host: example\nservice:\n  name: api\n  dir: /opt/api\n  start: ./api\npipeline:\n  pack:\n    files:\n      include:\n        project: [.]\n",
+    );
+    let commands = guided_script(
+        "/opt/api",
+        std::slice::from_ref(&config),
+        SetupAccess::Commands,
+    );
+    assert!(commands.contains("SHIPDECK_COMMANDS"));
+    assert!(commands.contains("systemctl restart api"));
+    assert!(!commands.contains("from shipdeck guided setup"));
+    assert!(commands.contains("installed=$missing"));
+    let full = guided_script("/opt/api", &[config], SetupAccess::Full);
+    assert!(full.contains("NOPASSWD: ALL"));
+    assert!(!full.contains("SHIPDECK_COMMANDS"));
+}
+
+#[test]
+fn guided_script_starts_pm2_at_boot() {
+    let config = service(
+        "name: web\nssh:\n  host: example\nservice:\n  name: web\n  dir: /opt/web\n  manager: pm2\n  start: node main.js\npipeline:\n  pack:\n    files:\n      include:\n        project: [.]\n",
+    );
+    let script = guided_script("/opt/web", &[config], SetupAccess::Commands);
+    assert!(script.contains("pm2 startup systemd"));
+    assert!(!script.contains("SHIPDECK_COMMANDS"));
+}

@@ -68,7 +68,7 @@ async fn place(session: &Session, path: &str, target: &str, version: &str) -> Re
 
 /// A fresh folder under tmp, made by `mktemp` and checked before use. Its
 /// name is unpredictable, so another user cannot pre-create or race it.
-async fn temp_folder(session: &Session) -> Result<String> {
+pub(super) async fn temp_folder(session: &Session) -> Result<String> {
     let output = session
         .exec_raw(&temp_dir_script())
         .await
@@ -103,7 +103,7 @@ fn private_checks(folder: &str) -> String {
 }
 
 /// Runs `<path> --version` and checks the version it prints.
-async fn probe(session: &Session, path: &str, version: &str) -> Result<()> {
+pub(super) async fn probe(session: &Session, path: &str, version: &str) -> Result<()> {
     let output = session
         .exec_raw(&format!("{} --version 2>/dev/null", sh_quote(path)))
         .await?;
@@ -114,7 +114,7 @@ fn check_probe(output: &Output, version: &str) -> Result<()> {
     if !output.success() {
         bail!("it exited with code {}", output.code);
     }
-    if !output.stdout.contains(version) {
+    if output.stdout.trim() != format!("shipdeck-agent {version}") {
         bail!("it printed {:?}", output.stdout.trim());
     }
     Ok(())

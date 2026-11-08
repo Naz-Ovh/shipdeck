@@ -96,16 +96,16 @@ impl Run<'_> {
         Ok(format!("{} · {}", count(kept, "file"), human::bytes(bytes)))
     }
 
-    /// Removes a deploy's new release before the switch; the live one is
-    /// untouched.
-    pub(super) async fn remove_new(&self, server: &Server, id: &str) {
-        let _ = server.discard(id, self.report).await;
+    /// Keeps a failed release before the switch for later inspection.
+    pub(super) fn keep_new(&self, id: &str) {
         let live = match &self.previous {
             Some(previous) => format!("; {previous} is still live"),
             None => String::new(),
         };
-        self.report
-            .log(LogKind::Info, format!("releases/{id} was removed{live}"));
+        self.report.log(
+            LogKind::Info,
+            format!("releases/{id} was kept for inspection{live}"),
+        );
     }
 }
 

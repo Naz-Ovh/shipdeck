@@ -10,8 +10,10 @@ mod operations;
 mod pump;
 mod releases;
 mod run;
+mod server_setup;
 mod service;
 mod session;
+mod work;
 mod workspace;
 
 pub use run::run;

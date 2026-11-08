@@ -50,6 +50,7 @@ pub(super) struct Multiple<'a> {
     pub step: Step,
     pub rollback: bool,
     pub state: ReleaseState,
+    pub project_lock: Option<crate::agent::ProjectGuard>,
 }
 
 impl<'a> Multiple<'a> {
@@ -68,6 +69,7 @@ impl<'a> Multiple<'a> {
             step: Step::Preflight,
             rollback,
             state: ReleaseState::Untouched,
+            project_lock: None,
         })
     }
 
@@ -87,17 +89,30 @@ impl<'a> Multiple<'a> {
         self.report.finish(Self::index(self.step), "");
     }
 
+    fn check_project_lock(&self) -> Result<()> {
+        if self
+            .project_lock
+            .as_ref()
+            .is_some_and(|guard| !guard.is_alive())
+        {
+            bail!("the connection holding the project lock was lost");
+        }
+        Ok(())
+    }
+
     /// Deploys all apps, preserving the old release until every health check passes.
     pub async fn deploy(&mut self, pool: &Pool) -> Result<Outcome> {
         self.start(Step::Preflight);
         let resolved = self.config.resolve_apps(&self.deployment.folder)?;
-        let checked =
+        let mut checked =
             preflight_apps(&resolved, &self.deployment.endpoint, pool, self.report).await?;
+        self.lock_and_refresh(&mut checked).await?;
         let first = checked.first().ok_or_else(|| anyhow::anyhow!("no apps"))?;
         self.previous.clone_from(&first.facts.current);
         let session = pool.get(&self.deployment.endpoint).await?;
         self.check_permissions(&session).await?;
         self.hooks(&session, Step::Preflight, None).await?;
+        self.check_project_lock()?;
         self.finish();
         self.start(Step::Build);
         let root = self
@@ -122,6 +137,7 @@ impl<'a> Multiple<'a> {
         self.release = Some(id.clone());
         self.report.release(&id);
         self.hooks(&session, Step::Build, None).await?;
+        self.check_project_lock()?;
         for checked in &checked {
             if let Some(binary) = &checked.app.pipeline.pack.binary {
                 super::preflight::check_binary(
@@ -136,6 +152,7 @@ impl<'a> Multiple<'a> {
         let (contents, manifest, bundle) = self
             .bundle(&resolved, &name, &first.facts, &first.server)
             .await?;
+        self.check_project_lock()?;
         if self.previous.is_some() && first.facts.content == manifest.content {
             let live = self
                 .previous
@@ -163,23 +180,46 @@ impl<'a> Multiple<'a> {
             bail!("release {id} already exists; wait one second before deploying again");
         }
         self.state = ReleaseState::Staged;
-        self.send(&first.server, &id, &bundle).await?;
+        self.send(&first.server, &id, &bundle, false).await?;
+        self.check_project_lock()?;
         self.finish();
         self.start(Step::Unpack);
         self.unpack(&first.server, &id, &contents, &manifest, &bundle)
             .await?;
         self.link(&first.server, &id).await?;
+        self.check_project_lock()?;
         self.finish();
         self.start(Step::Setup);
         self.hooks(&session, Step::Setup, None).await?;
+        self.check_project_lock()?;
         self.finish();
         self.start(Step::Backup);
         self.backup(&first.server, &id, &bundle.paths).await?;
+        self.check_project_lock()?;
         self.finish();
         self.activate(&session).await?;
         Ok(Outcome::Succeeded { release: id })
     }
 
+    /// Locks the shared project and refreshes live facts after the lock is held.
+    async fn lock_and_refresh(
+        &mut self,
+        checked: &mut [super::preflight::AppServer<'_>],
+    ) -> Result<()> {
+        let Some(first) = checked.first() else {
+            return Ok(());
+        };
+        self.project_lock = Some(crate::agent::ProjectGuard::acquire(&first.server).await?);
+        for app in checked {
+            let fresh = app.server.facts(&[]).await?;
+            app.facts.current = fresh.current;
+            app.facts.content = fresh.content;
+            app.facts.active = fresh.active;
+            app.facts.systemd = fresh.systemd;
+            app.facts.free_bytes = fresh.free_bytes;
+        }
+        Ok(())
+    }
     /// Restores a saved release, using its own apps and process managers.
     pub async fn rollback(&mut self, target: &str, pool: &Pool) -> Result<Outcome> {
         self.start(Step::Preflight);
@@ -188,6 +228,7 @@ impl<'a> Multiple<'a> {
         let server = configured
             .first()
             .ok_or_else(|| anyhow::anyhow!("no apps"))?;
+        self.project_lock = Some(crate::agent::ProjectGuard::acquire(server).await?);
         let listing = server.list().await?;
         self.previous = listing.current;
         let entry = listing
@@ -219,11 +260,13 @@ impl<'a> Multiple<'a> {
             server.restore(target, self.report).await?;
             self.link(server, target).await?;
         }
+        self.check_project_lock()?;
         self.finish();
         self.start(Step::Setup);
         if compressed {
             self.hooks(&session, Step::Setup, None).await?;
         }
+        self.check_project_lock()?;
         self.finish();
         self.report
             .skip(Self::index(Step::Backup), "existing backup");
@@ -237,17 +280,21 @@ impl<'a> Multiple<'a> {
     async fn activate(&mut self, session: &Arc<crate::ssh::Session>) -> Result<()> {
         self.start(Step::Switch);
         self.check_permissions(session).await?;
+        self.check_project_lock()?;
         self.state = ReleaseState::Switching;
         self.transition(session).await?;
+        self.check_project_lock()?;
         self.finish();
         let servers = apps::servers(&self.config, session)?;
         self.start(Step::Restart);
         for server in &servers {
             server.restart(self.report).await?;
         }
+        self.check_project_lock()?;
         self.finish();
         self.start(Step::Health);
         self.check_health(session).await?;
+        self.check_project_lock()?;
         self.finish();
         self.start(Step::Done);
         let done = async {
@@ -266,6 +313,7 @@ impl<'a> Multiple<'a> {
                     .warn(Self::index(Step::Done), super::short(&err));
             }
         }
+        self.check_project_lock()?;
         Ok(())
     }
 }
@@ -311,5 +359,12 @@ async fn execute(
         }
         Err(err) => run.recover(&pool, err).await,
     };
+    if let Some(guard) = run.project_lock.take() {
+        match tokio::time::timeout(std::time::Duration::from_secs(5), guard.release()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => report.log(LogKind::Warn, format!("project unlock: {err:#}")),
+            Err(_) => report.log(LogKind::Warn, "project unlock timed out"),
+        }
+    }
     report.done(outcome);
 }

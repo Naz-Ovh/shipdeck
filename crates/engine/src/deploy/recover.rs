@@ -42,6 +42,14 @@ impl Run<'_> {
         let report = self.report;
         report.fail(self.at(step), short(&err));
         report.log(LogKind::Error, format!("{err:#}"));
+        if server.session().is_closed()
+            || self
+                .project_lock
+                .as_ref()
+                .is_some_and(|guard| !guard.is_alive())
+        {
+            return self.connection_lost(step, &err);
+        }
         match server.journal().await {
             Ok(lines) if !lines.is_empty() => {
                 report.log(LogKind::Info, "last log lines:");
@@ -123,6 +131,20 @@ impl Run<'_> {
         };
         Ended {
             outcome,
+            failed: Some((step, error)),
+        }
+    }
+
+    pub(super) fn connection_lost(&self, step: Step, err: &anyhow::Error) -> Ended {
+        let error = format!("{err:#}");
+        self.skip_rest(step, "connection lost; inspect the server before recovery");
+        Ended {
+            outcome: Outcome::RollbackFailed {
+                error: error.clone(),
+                rollback_error:
+                    "connection lost during activation; inspect the live release and services"
+                        .to_string(),
+            },
             failed: Some((step, error)),
         }
     }

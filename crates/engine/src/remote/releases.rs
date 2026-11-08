@@ -170,12 +170,53 @@ pub(super) fn parse_listing(text: &str) -> Listing {
     listing
 }
 
+/// The engine's listing from the agent's typed one.
+fn from_agent(found: shipdeck_protocol::message::agent::AgentReleases) -> Listing {
+    let mut listing = Listing {
+        current: found.current,
+        entries: found
+            .entries
+            .into_iter()
+            .map(|entry| ReleaseEntry {
+                id: entry.id.clone(),
+                name: ReleaseName::parse(&entry.id),
+                kind: match entry.kind {
+                    shipdeck_protocol::message::agent::AgentReleaseKind::Open => Kind::Open,
+                    shipdeck_protocol::message::agent::AgentReleaseKind::Compressed => {
+                        Kind::Compressed
+                    }
+                },
+                current: entry.current,
+                size_bytes: entry.size_bytes,
+                backup: entry.backup,
+                manifest: entry
+                    .manifest
+                    .as_deref()
+                    .and_then(|text| serde_json::from_str(text).ok()),
+            })
+            .collect(),
+    };
+    for entry in &mut listing.entries {
+        entry.current = entry.kind == Kind::Open && listing.current.as_deref() == Some(&entry.id);
+    }
+    by_newest(&mut listing.entries);
+    listing
+}
+
 impl Server {
     /// The app folder's state, its current release and the service's state.
     ///
     /// # Errors
     /// Returns an error when the status commands cannot run.
     pub async fn status(&self) -> Result<Status> {
+        if let Some(agent) = self.session.agent() {
+            let status = agent.service_status(&self.agent_service()).await?;
+            return Ok(Status {
+                dir_exists: status.dir_exists,
+                current: status.current,
+                active: status.active,
+            });
+        }
         let script = format!(
             "if [ -d {dir} ]; then echo dir=yes; else echo dir=no; fi
 echo \"current=$(readlink {dir}/current 2>/dev/null)\"
@@ -210,6 +251,10 @@ echo \"active=$(systemctl is-active {svc} 2>&1 | head -n1)\"",
     /// # Errors
     /// Returns an error when the release listing command fails.
     pub async fn list(&self) -> Result<Listing> {
+        if let Some(agent) = self.session.agent() {
+            let found = agent.list_releases(&self.dir).await?;
+            return Ok(from_agent(found));
+        }
         let script = format!(
             "cd {dir} 2>/dev/null || exit 0
 printf 'current\\t%s\\n' \"$(readlink current 2>/dev/null)\"
@@ -242,6 +287,14 @@ done",
     /// Returns an error when the release name is unsafe or deletion fails.
     pub async fn drop_open(&self, id: &str, report: &Reporter) -> Result<()> {
         ensure_id(id)?;
+        if let Some(agent) = self.session.agent() {
+            report.log(
+                crate::deploy::report::LogKind::Command,
+                format!("{} › delete releases/{id}", self.session.label),
+            );
+            agent.drop_release(&self.dir, id, true, false).await?;
+            return Ok(());
+        }
         let script = format!("cd {dir} && rm -rf releases/{id}", dir = self.q_dir());
         self.run(&format!("delete releases/{id}"), &script, report)
             .await?;
@@ -254,6 +307,14 @@ done",
     /// Returns an error when the release name is unsafe or deletion fails.
     pub async fn drop_backup(&self, id: &str, report: &Reporter) -> Result<()> {
         ensure_id(id)?;
+        if let Some(agent) = self.session.agent() {
+            report.log(
+                crate::deploy::report::LogKind::Command,
+                format!("{} › delete the backup of {id}", self.session.label),
+            );
+            agent.drop_release(&self.dir, id, false, true).await?;
+            return Ok(());
+        }
         let script = format!("cd {dir} && rm -f backups/{id}.tar.zst", dir = self.q_dir());
         self.run(&format!("delete the backup of {id}"), &script, report)
             .await?;

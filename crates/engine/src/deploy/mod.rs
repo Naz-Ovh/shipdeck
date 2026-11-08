@@ -15,7 +15,9 @@ mod recover;
 pub mod report;
 mod rollback;
 mod ship;
+mod stages;
 mod steps;
+mod util;
 
 pub use multiple::{deploy_monorepo, monorepo_steps, rollback_monorepo};
 pub use preflight::{AppServer, preflight_apps};
@@ -25,7 +27,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, bail};
 
 use crate::build;
 use crate::bundle;
@@ -40,6 +42,7 @@ use backup::restore;
 use preflight::{check_build, preflight, start_path};
 use report::{LogKind, Outcome, Reporter, Unit};
 pub use steps::{Action, Step, deploy_step_names, deploy_steps};
+use util::{Throttle, count, restart_processes, short, some, switch_processes};
 
 pub async fn deploy(deployable: Deployable, pool: Arc<Pool>, report: Reporter) {
     let mut run = Run::new(
@@ -50,6 +53,7 @@ pub async fn deploy(deployable: Deployable, pool: Arc<Pool>, report: Reporter) {
     );
     let ended = Box::pin(run.deploy(&pool)).await;
     Box::pin(run.failed(&ended)).await;
+    run.unlock_project().await;
     report.done(ended.outcome);
 }
 
@@ -81,6 +85,7 @@ pub(crate) struct Run<'a> {
     version: Option<String>,
     /// The release that was live before.
     previous: Option<String>,
+    project_lock: Option<crate::agent::ProjectGuard>,
 }
 
 impl<'a> Run<'a> {
@@ -98,11 +103,35 @@ impl<'a> Run<'a> {
             release: None,
             version: None,
             previous: None,
+            project_lock: None,
         }
     }
 
     fn config(&self) -> &'a DeployConfig {
         &self.deployable.config
+    }
+
+    async fn unlock_project(&mut self) {
+        if let Some(guard) = self.project_lock.take() {
+            match tokio::time::timeout(Duration::from_secs(5), guard.release()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => self
+                    .report
+                    .log(LogKind::Warn, format!("project unlock: {err:#}")),
+                Err(_) => self.report.log(LogKind::Warn, "project unlock timed out"),
+            }
+        }
+    }
+
+    fn check_project_lock(&self) -> Result<()> {
+        if self
+            .project_lock
+            .as_ref()
+            .is_some_and(|guard| !guard.is_alive())
+        {
+            bail!("the connection holding the project lock was lost");
+        }
+        Ok(())
     }
 
     fn at(&self, step: Step) -> usize {
@@ -256,350 +285,98 @@ impl<'a> Run<'a> {
         }
     }
 
+    /// Records one step of this operation in the server's event database.
+    async fn record(&self, server: &Server, kind: &str, detail: impl Into<String>) {
+        let Some(agent) = server.session().agent() else {
+            return;
+        };
+        let operation = self.release.clone().unwrap_or_default();
+        if let Err(err) = agent
+            .record_event(server.dir(), &operation, kind, &detail.into())
+            .await
+        {
+            self.report
+                .log(LogKind::Warn, format!("event {kind}: {err:#}"));
+        }
+    }
+
     /// Runs every step, stopping at the first failure.
     async fn pipeline(&mut self, pool: &Pool) -> Result<String, Ended> {
         let (server, facts) = Box::pin(self.step_preflight(pool)).await?;
+        let result = Box::pin(self.after_preflight(&server, facts)).await;
+        match &result {
+            Ok(id) => {
+                self.record(&server, "deploy_completed", format!("current → {id}"))
+                    .await;
+            }
+            Err(ended) => {
+                if let Outcome::Unchanged { live } = &ended.outcome {
+                    self.record(&server, "deploy_unchanged", live.clone()).await;
+                } else {
+                    let why = ended
+                        .failed
+                        .as_ref()
+                        .map(|(step, error)| format!("{}: {error}", step.key()))
+                        .unwrap_or_default();
+                    self.record(&server, "deploy_failed", why).await;
+                }
+            }
+        }
+        result
+    }
+
+    /// Every deploy step after preflight and its project lock.
+    async fn after_preflight(&mut self, server: &Server, facts: Facts) -> Result<String, Ended> {
         let (name, id) = Box::pin(self.step_build(&facts)).await?;
+        self.record(server, "build_completed", format!("releases/{id}"))
+            .await;
+        self.check_project_lock()
+            .map_err(|err| self.stop(Step::Build, &err))?;
         let (manifest, contents, bundle) =
-            Box::pin(self.step_pack(&server, &name, &id, &facts)).await?;
-        Box::pin(self.step_upload(&server, &id, &bundle)).await?;
-        Box::pin(self.step_unpack(&server, &id, &contents, &manifest, &bundle)).await?;
-        Box::pin(self.step_setup(&server, &id)).await?;
-        Box::pin(self.step_backup(&server, &id, &bundle)).await?;
-        Box::pin(self.step_switch(&server, &id)).await?;
-        Box::pin(self.step_restart(&server)).await?;
-        Box::pin(self.step_health(&server)).await?;
-        Box::pin(self.done(&server)).await;
-        Ok(id)
-    }
-
-    /// Preflight: shipdeck's checks, then the server's commands, then this
-    /// machine's. Nothing is built or changed yet.
-    async fn step_preflight(&mut self, pool: &Pool) -> Result<(Server, Facts), Ended> {
-        self.start(Step::Preflight, "checking your PC and the server");
-        let index = self.at(Step::Preflight);
-        let (server, facts, summary) =
-            match preflight(self.deployable, pool, self.report, index).await {
-                Ok(found) => found,
-                Err(err) => return Err(self.stop(Step::Preflight, &err)),
-            };
-        self.previous.clone_from(&facts.current);
-        let commands = &self.config().pipeline.preflight.run;
-        if let Err(err) =
-            Box::pin(self.remote(&server, Place::AppDir, Step::Preflight, &commands.server)).await
-        {
-            return Err(self.stop(Step::Preflight, &err));
-        }
-        if let Err(err) =
-            Box::pin(self.local(Step::Preflight, Step::Preflight, None, &commands.local)).await
-        {
-            return Err(self.stop(Step::Preflight, &err));
-        }
-        // Files from the deploy folder are there before the build; project
-        // files are checked once it has run.
-        match files::walk_source(self.deployable, Source::Deploy) {
-            Ok(items) => {
-                for (path, item) in &items {
-                    if let Kind::File { size, .. } = item.kind {
-                        self.report.log(
-                            LogKind::Success,
-                            format!("deploy folder: {path} ({})", human::bytes(size)),
-                        );
-                    }
-                }
-            }
-            Err(err) => return Err(self.stop(Step::Preflight, &err)),
-        }
-        self.finish(Step::Preflight, summary);
-        Ok((server, facts))
-    }
-
-    /// Build: name the release, then run the build commands and check it.
-    async fn step_build(&mut self, facts: &Facts) -> Result<(ReleaseName, String), Ended> {
-        self.start(Step::Build, "building on your PC");
-        let (name, source) = match build::release_name(self.deployable).await {
-            Ok(found) => found,
-            Err(err) => return Err(self.stop(Step::Build, &err)),
-        };
-        let id = name.id();
-        self.release = Some(id.clone());
-        self.version = Some(name.version.clone());
-        let report = self.report;
-        report.release(&id);
-        report.log(
-            LogKind::Info,
-            format!("release {id} (version from {source})"),
-        );
-        if name.dirty {
-            report.log(
-                LogKind::Warn,
-                "the source has uncommitted changes; the release is marked dirty",
-            );
-        }
-        let started = Instant::now();
-        let build_commands = &self.config().pipeline.build.run.local;
-        if build_commands.is_empty() {
-            report.log(
-                LogKind::Info,
-                "pipeline.build.run.local is empty; shipping the files as they are",
-            );
-        } else if let Err(err) =
-            Box::pin(self.local(Step::Build, Step::Build, None, build_commands)).await
-        {
-            return Err(self.stop(Step::Build, &err.context("the build failed")));
-        }
-        let built = match check_build(self.deployable, facts, report) {
-            Ok(summary) => summary,
-            Err(err) => return Err(self.stop(Step::Build, &err)),
-        };
-        self.finish(
-            Step::Build,
-            format!("{built} · {}", human::duration(started.elapsed())),
-        );
-        Ok((name, id))
-    }
-
-    /// Pack: gather the files, stop when the live release holds the same
-    /// content, then compress.
-    async fn step_pack(
-        &mut self,
-        server: &Server,
-        name: &ReleaseName,
-        id: &str,
-        facts: &Facts,
-    ) -> Result<(Manifest, Arc<Contents>, Bundle), Ended> {
-        self.start(Step::Pack, "packing the release");
-        let index = self.at(Step::Pack);
-        let deployable = self.deployable;
-        let report = self.report;
-        let deployer = build::deployer(&deployable.project_dir()).await;
-        let mut manifest = Manifest::new(name, &deployer);
-        let gathered = async {
-            let start_path = start_path(deployable, facts);
-            let own = bundle::service_file(deployable, name, start_path.as_deref())?;
-            report.log(
-                LogKind::Info,
-                format!(
-                    "start: {}",
-                    bundle::start_line(deployable, start_path.as_deref())
-                ),
-            );
-            let (owned, reporter) = (deployable.clone(), report.clone());
-            let mut throttle = Throttle::default();
-            let contents = tokio::task::spawn_blocking(move || {
-                bundle::gather(&owned, own.as_ref(), |done, total| {
-                    if throttle.ready(done, total) {
-                        reporter.progress(index, done, total, Unit::Bytes, "hashing");
-                    }
-                })
-            })
-            .await
-            .map_err(|err| anyhow!("packing stopped: {err}"))??;
-            let fingerprint = contents.fingerprint(deployable, start_path.as_deref())?;
-            Ok::<_, anyhow::Error>((Arc::new(contents), fingerprint))
-        }
+            Box::pin(self.step_pack(server, &name, &id, &facts)).await?;
+        self.record(
+            server,
+            "pack_completed",
+            format!("{id}: {}", bundle.data.len()),
+        )
         .await;
-        let (contents, fingerprint) = match gathered {
-            Ok(found) => found,
-            Err(err) => return Err(self.stop(Step::Pack, &err)),
-        };
-        manifest.content = Some(fingerprint);
-        // A live release from before fingerprints has none: always a change.
-        if let Some(live) = facts.current.as_deref()
-            && facts.content == manifest.content
-            && !self.deploy_unchanged(live).await
-        {
-            return Err(self.unchanged(Step::Pack, live));
-        }
-        let packed = async {
-            let on_server = self
-                .on_server(server, id, &contents, facts.current.as_deref())
-                .await;
-            let bundle = self
-                .pack(&contents, &manifest, on_server, Step::Pack)
-                .await?;
-            if let Some(free) = facts.free_bytes {
-                let needed = bundle.data.len() as u64 * 2 + bundle.input_bytes;
-                if free < needed {
-                    bail!(
-                        "the server has {} free; this release needs about {}",
-                        human::bytes(free),
-                        human::bytes(needed)
-                    );
-                }
-            }
-            Ok(bundle)
-        }
-        .await;
-        let bundle = match packed {
-            Ok(bundle) => bundle,
-            Err(err) => return Err(self.stop(Step::Pack, &err)),
-        };
-        self.explain(&contents);
-        let sizes = format!(
-            "{} → {}",
-            human::bytes(bundle.input_bytes),
-            human::bytes(bundle.data.len() as u64)
-        );
-        self.finish(
-            Step::Pack,
-            if bundle.reused == 0 {
-                format!("{} · {sizes}", count(bundle.files, "file"))
-            } else {
-                format!(
-                    "{} · {} already on the server · {} to send · {sizes}",
-                    count(bundle.files, "file"),
-                    bundle.reused,
-                    bundle.sent()
-                )
-            },
-        );
-        Ok((manifest, contents, bundle))
-    }
-
-    /// Notes the files the release carries for reasons worth knowing.
-    fn explain(&self, contents: &Contents) {
-        let report = self.report;
-        for path in &contents.unused_ecosystem {
-            report.log(
-                LogKind::Warn,
-                format!(
-                    "{path} is in the release but PM2 runs {} from pm2.options; \
-                     to use your file, set pm2.ecosystem: {path} and remove pm2.options and service.start",
-                    self.config().service.pm2_file()
-                ),
-            );
-        }
-        for path in &contents.replaced {
-            report.log(
-                LogKind::Info,
-                format!("{path} from the deploy folder replaces the project's {path}"),
-            );
-        }
-    }
-
-    /// Upload: send the packed release, and clean up if it does not arrive.
-    async fn step_upload(&self, server: &Server, id: &str, bundle: &Bundle) -> Result<(), Ended> {
-        self.start(Step::Upload, "sending the release");
-        let started = Instant::now();
-        if let Err(err) = self.send(server, id, bundle, Step::Upload).await {
-            let _ = server.discard(id, self.report).await;
-            return Err(self.stop(Step::Upload, &err));
-        }
-        self.finish(
-            Step::Upload,
-            format!(
-                "{} in {}",
-                human::bytes(bundle.data.len() as u64),
-                human::duration(started.elapsed())
-            ),
-        );
-        Ok(())
-    }
-
-    /// Unpack: put the release in `releases/<id>` and link its shared folders.
-    async fn step_unpack(
-        &self,
-        server: &Server,
-        id: &str,
-        contents: &Arc<Contents>,
-        manifest: &Manifest,
-        bundle: &Bundle,
-    ) -> Result<(), Ended> {
-        self.start(Step::Unpack, &format!("unpacking into releases/{id}"));
-        let shared = &self.config().service.shared;
-        let unpacked = async {
-            let summary = self.unpack(server, id, contents, manifest, bundle).await?;
-            server.link_shared(id, shared, self.report).await?;
-            Ok::<_, anyhow::Error>(summary)
-        }
-        .await;
-        let summary = match unpacked {
-            Ok(summary) => summary,
-            Err(err) => {
-                let _ = server.discard(id, self.report).await;
-                return Err(self.stop(Step::Unpack, &err));
-            }
-        };
-        self.finish(
-            Step::Unpack,
-            if shared.is_empty() {
-                format!("releases/{id} · {summary}")
-            } else {
-                format!(
-                    "releases/{id} · {summary} · {} linked",
-                    count(shared.len(), "shared folder")
-                )
-            },
-        );
-        Ok(())
-    }
-
-    /// Setup: in the new release, while the old one still serves.
-    async fn step_setup(&self, server: &Server, id: &str) -> Result<(), Ended> {
-        if self.has_setup() {
-            self.start(Step::Setup, &format!("setting up releases/{id}"));
-            match self.set_up(server, id).await {
-                Ok(summary) => self.finish(Step::Setup, summary),
-                Err(err) => {
-                    self.remove_new(server, id).await;
-                    return Err(self.stop(Step::Setup, &err));
-                }
-            }
-        } else {
-            self.skip(Step::Setup, "nothing to run");
-        }
-        Ok(())
-    }
-
-    /// Backup: what stays of the release once its folder goes.
-    async fn step_backup(&self, server: &Server, id: &str, bundle: &Bundle) -> Result<(), Ended> {
-        if self.config().pipeline.backup.keep.compressed == 0 {
-            self.skip(Step::Backup, "keep.compressed is 0");
-        } else {
-            self.start(Step::Backup, &format!("packing backups/{id}.tar.zst"));
-            match self.back_up(server, id, &bundle.paths).await {
-                Ok(summary) => self.finish(Step::Backup, summary),
-                Err(err) => {
-                    self.remove_new(server, id).await;
-                    return Err(self.stop(Step::Backup, &err));
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Switch: point `current` at the new release and install its unit.
-    async fn step_switch(&self, server: &Server, id: &str) -> Result<(), Ended> {
-        self.start(Step::Switch, "making it the current release");
-        let switched = async { switch_processes(&[server], id, self.report).await }.await;
-        if let Err(err) = switched {
+        self.check_project_lock()
+            .map_err(|err| self.stop(Step::Pack, &err))?;
+        Box::pin(self.step_upload(server, &id, &bundle)).await?;
+        self.check_project_lock()
+            .map_err(|err| self.stop(Step::Upload, &err))?;
+        Box::pin(self.step_unpack(server, &id, &contents, &manifest, &bundle)).await?;
+        self.check_project_lock()
+            .map_err(|err| self.stop(Step::Unpack, &err))?;
+        Box::pin(self.step_setup(server, &id)).await?;
+        self.record(server, "setup_completed", format!("releases/{id}"))
+            .await;
+        self.check_project_lock()
+            .map_err(|err| self.stop(Step::Setup, &err))?;
+        Box::pin(self.step_backup(server, &id, &bundle)).await?;
+        self.record(server, "backup_completed", format!("backups/{id}.tar.zst"))
+            .await;
+        self.check_project_lock()
+            .map_err(|err| self.stop(Step::Backup, &err))?;
+        Box::pin(self.step_switch(server, &id)).await?;
+        if let Err(err) = self.check_project_lock() {
             return Err(self.recover(server, Step::Switch, err).await);
         }
-        self.finish(Step::Switch, format!("current → {id}"));
-        Ok(())
-    }
-
-    /// Restart: bring the service up on the new release.
-    async fn step_restart(&self, server: &Server) -> Result<(), Ended> {
-        self.start(Step::Restart, &self.config().service.name);
-        if let Err(err) = restart_processes(&[server], self.report).await {
+        Box::pin(self.step_restart(server)).await?;
+        self.record(server, "service_restarted", "").await;
+        if let Err(err) = self.check_project_lock() {
             return Err(self.recover(server, Step::Restart, err).await);
         }
-        self.finish(Step::Restart, "");
-        Ok(())
-    }
-
-    /// Health: wait for the service and its URL to answer.
-    async fn step_health(&self, server: &Server) -> Result<(), Ended> {
-        self.start(Step::Health, "waiting for the new release to settle");
-        match Box::pin(self.health(server)).await {
-            Ok(summary) => {
-                self.finish(Step::Health, summary);
-                Ok(())
-            }
-            Err(err) => Err(self.recover(server, Step::Health, err).await),
+        Box::pin(self.step_health(server)).await?;
+        self.record(server, "health_passed", "").await;
+        if let Err(err) = self.check_project_lock() {
+            return Err(self.recover(server, Step::Health, err).await);
         }
+        Box::pin(self.done(server)).await;
+        if let Err(err) = self.check_project_lock() {
+            return Err(self.connection_lost(Step::Done, &err));
+        }
+        Ok(id)
     }
 
     /// Asks whether to deploy a release `live` already holds. With nobody
@@ -639,88 +416,6 @@ impl<'a> Run<'a> {
                 live: live.to_string(),
             },
             failed: None,
-        }
-    }
-}
-
-/// Switches one shared release, then installs each process in that release.
-async fn switch_processes(servers: &[&Server], id: &str, report: &Reporter) -> Result<()> {
-    let first = servers
-        .first()
-        .ok_or_else(|| anyhow!("no processes to switch"))?;
-    if servers.iter().any(|server| {
-        server.dir() != first.dir() || !std::ptr::eq(server.session(), first.session())
-    }) {
-        bail!("processes must share one server and deployment folder");
-    }
-    first.switch(id, report).await?;
-    for server in servers {
-        server.install_unit(report).await?;
-    }
-    Ok(())
-}
-
-/// Restarts each process after the shared release has been switched.
-async fn restart_processes(servers: &[&Server], report: &Reporter) -> Result<()> {
-    if servers.is_empty() {
-        bail!("no processes to restart");
-    }
-    for server in servers {
-        server.restart(report).await?;
-    }
-    Ok(())
-}
-
-/// `1 command`, `3 commands`.
-fn count(n: usize, what: &str) -> String {
-    if n == 1 {
-        format!("1 {what}")
-    } else {
-        format!("{n} {what}s")
-    }
-}
-
-/// Up to five names, and how many more.
-fn some(names: &[String]) -> String {
-    match names.len() {
-        0 => "no file named".to_string(),
-        n if n <= 5 => names.join(", "),
-        n => format!("{} and {} more", names[..5].join(", "), n - 5),
-    }
-}
-
-/// The first line of an error, short enough for a step's detail column.
-fn short(err: &anyhow::Error) -> String {
-    let text = err.to_string();
-    let line = text.lines().next().unwrap_or_default();
-    if line.chars().count() > 70 {
-        format!("{}…", line.chars().take(69).collect::<String>())
-    } else {
-        line.to_string()
-    }
-}
-
-/// Lets a progress update through at most every 1% or 100 ms, and always at
-/// the end.
-#[derive(Default)]
-struct Throttle {
-    last_percent: Option<u64>,
-    last_at: Option<Instant>,
-}
-
-impl Throttle {
-    fn ready(&mut self, done: u64, total: u64) -> bool {
-        let percent = (done * 100).checked_div(total).unwrap_or(100);
-        let now = Instant::now();
-        let due = self
-            .last_at
-            .is_none_or(|at| now.duration_since(at) >= Duration::from_millis(100));
-        if done >= total || self.last_percent != Some(percent) || due {
-            self.last_percent = Some(percent);
-            self.last_at = Some(now);
-            true
-        } else {
-            false
         }
     }
 }

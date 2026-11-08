@@ -73,8 +73,7 @@ impl Run<'_> {
         );
         let mut throttle = Throttle::default();
         server
-            .session()
-            .upload(&bundle.data, &target, |sent, total| {
+            .upload_bundle(id, &bundle.data, row == Step::Unpack, |sent, total| {
                 if throttle.ready(sent, total) {
                     // Bytes per second in whole numbers: an f64 cannot hold
                     // every u64 byte count exactly. A millisecond floor keeps
@@ -109,7 +108,16 @@ impl Run<'_> {
     ) -> Result<String> {
         let report = self.report;
         let modes: Vec<u32> = bundle.reuse.keys().copied().collect();
-        let names = match server.unpack(id, &modes, report).await? {
+        let names = match server
+            .unpack(
+                id,
+                &modes,
+                bundle.input_bytes,
+                u64::try_from(bundle.paths.len())?,
+                report,
+            )
+            .await?
+        {
             Unpacked::Verified if bundle.reused == 0 => {
                 return Ok(format!("{} unpacked · verified", bundle.sent()));
             }
@@ -144,7 +152,16 @@ impl Run<'_> {
             .pack(contents, manifest, HashMap::new(), Step::Unpack)
             .await?;
         self.send(server, id, &whole, Step::Unpack).await?;
-        match server.unpack(id, &[], report).await? {
+        match server
+            .unpack(
+                id,
+                &[],
+                whole.input_bytes,
+                u64::try_from(whole.paths.len())?,
+                report,
+            )
+            .await?
+        {
             Unpacked::Verified => Ok(format!("{} unpacked · verified · sent whole", whole.sent())),
             Unpacked::Mismatch(names) => bail!(
                 "releases/{id} does not match what was packed, even sent whole: {}",

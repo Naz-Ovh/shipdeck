@@ -1,28 +1,44 @@
 //! One running agent: start it, say hello, and close it with the session.
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use shipdeck_protocol::connection::{Connection, Handle};
 use shipdeck_protocol::message::agent::{
-    AgentHello, AgentHelloResult, AgentShutdown, HELLO, PROTOCOL, SHUTDOWN,
+    AgentHello, AgentHelloResult, AgentOk, AgentShutdown, HASH_CURRENT, HELLO, HashCurrent,
+    HashCurrentResult, INSPECT_WORK, InspectWork, PREPARE_PROJECT, PROTOCOL, SERVER_FACTS,
+    SHUTDOWN, SWITCH_RELEASE, ServerFacts, ServerFactsRequest, SwitchRelease, UNPACK_RELEASE,
+    UnpackRelease, UnpackResult, WorkInspection,
 };
+use tokio::sync::Notify;
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::AbortHandle;
 
-use super::{binary, install};
+use super::{binary, development, install};
 use crate::ssh::{Session, sh_quote};
 
 /// The hello must not hold the app when the agent is already dead.
 const HELLO_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// The receivers waiting for one agent's followed logs.
+pub(super) type LogViews = Arc<Mutex<HashMap<u64, UnboundedSender<super::ops::AgentLogEvent>>>>;
+
 /// One running agent, as the rest of the engine sees it.
 pub struct Agent {
-    handle: Handle,
+    pub(super) handle: Handle,
     /// Aborting it drops the connection, which closes the SSH channel.
-    task: AbortHandle,
+    pub(super) task: AbortHandle,
     version: String,
     os: String,
     arch: String,
+    pub(super) path: String,
+    pub(super) logs: LogViews,
+    /// Set when the reader task sees the agent's stream end.
+    done: Arc<Notify>,
+    /// The token of the project lock this engine holds through the agent.
+    lock_token: Mutex<Option<u64>>,
 }
 
 impl Agent {
@@ -37,7 +53,10 @@ impl Agent {
         let home = install::home(session).await?;
         let folder = format!("{home}/.shipdeck/bin");
         let version = env!("CARGO_PKG_VERSION");
-        let path = install::install(session, &folder, target, version).await?;
+        let path = match std::env::var_os(development::BINARY_ENV) {
+            Some(local) => development::install(session, local.as_ref(), target, version).await?,
+            None => install::install(session, &folder, target, version).await?,
+        };
 
         let log = format!(
             "{}/agent.log",
@@ -52,9 +71,23 @@ impl Agent {
         let (read, write) = tokio::io::split(stream);
         let connection = Connection::start(read, write);
         let handle = connection.handle();
+        let logs: LogViews = Arc::new(Mutex::new(HashMap::new()));
+        let watched = Arc::clone(&logs);
+        let done = Arc::new(Notify::new());
+        let ended = Arc::clone(&done);
         let task = tokio::spawn(async move {
             let mut connection = connection;
-            while connection.recv().await.is_some() {}
+            while let Some(incoming) = connection.recv().await {
+                if let shipdeck_protocol::connection::Incoming::Other {
+                    id: None,
+                    method,
+                    params,
+                } = incoming
+                {
+                    super::ops::deliver_log(&watched, &method, params);
+                }
+            }
+            ended.notify_one();
         });
 
         let mut agent = Self {
@@ -63,6 +96,10 @@ impl Agent {
             version: String::new(),
             os: String::new(),
             arch: String::new(),
+            path: path.clone(),
+            logs,
+            done,
+            lock_token: Mutex::new(None),
         };
         let answer = tokio::time::timeout(HELLO_TIMEOUT, agent.hello())
             .await
@@ -98,6 +135,117 @@ impl Agent {
             .map_err(|err| anyhow!("the agent refused the hello: {err}"))
     }
 
+    /// Hashes files from the live release using the connected agent.
+    ///
+    /// # Errors
+    /// Returns an error if the agent cannot read the files or the channel closes.
+    pub async fn hash_current(&self, root: &str, paths: &[String]) -> Result<HashCurrentResult> {
+        self.handle
+            .request(
+                HASH_CURRENT,
+                &HashCurrent {
+                    root: root.to_string(),
+                    paths: paths.to_vec(),
+                },
+            )
+            .await
+            .map_err(|err| anyhow!("the agent could not hash current files: {err}"))
+    }
+
+    /// Inspects the live link and unfinished release files.
+    ///
+    /// # Errors
+    /// Returns an error if the agent cannot inspect the deployment folder.
+    pub async fn inspect_work(&self, root: &str) -> Result<WorkInspection> {
+        self.handle
+            .request(
+                INSPECT_WORK,
+                &InspectWork {
+                    root: root.to_string(),
+                },
+            )
+            .await
+            .context("inspecting unfinished work")
+    }
+
+    /// Creates the release, backup, and shared directories.
+    ///
+    /// # Errors
+    /// Returns an error if the agent cannot create a directory.
+    pub async fn prepare_project(&self, root: &str) -> Result<()> {
+        let _: AgentOk = self
+            .handle
+            .request(
+                PREPARE_PROJECT,
+                &InspectWork {
+                    root: root.to_string(),
+                },
+            )
+            .await
+            .context("preparing project directories")?;
+        Ok(())
+    }
+
+    /// Atomically points the live link to an existing release.
+    ///
+    /// # Errors
+    /// Returns an error if the switch or its event record fails.
+    pub async fn switch_release(&self, root: &str, release: &str) -> Result<()> {
+        let _: AgentOk = self
+            .handle
+            .request(
+                SWITCH_RELEASE,
+                &SwitchRelease {
+                    root: root.to_string(),
+                    release: release.to_string(),
+                },
+            )
+            .await
+            .context("switching the live release")?;
+        Ok(())
+    }
+
+    /// Unpacks and verifies a staged release with the agent.
+    ///
+    /// # Errors
+    /// Returns an error if extraction or verification cannot finish.
+    pub async fn unpack_release(
+        &self,
+        root: &str,
+        release: &str,
+        modes: &[u32],
+        max_bytes: u64,
+        max_entries: u64,
+    ) -> Result<UnpackResult> {
+        let request = UnpackRelease {
+            root: root.to_string(),
+            release: release.to_string(),
+            modes: modes.to_vec(),
+            max_bytes,
+            max_entries,
+        };
+        self.handle
+            .request(UNPACK_RELEASE, &request)
+            .await
+            .context("unpacking the release with the agent")
+    }
+
+    /// Reads current facts from the connected server.
+    ///
+    /// # Errors
+    /// Returns an error when the agent cannot read a system fact.
+    pub async fn server_facts(&self, disk_path: &str) -> Result<ServerFacts> {
+        self.handle
+            .request(
+                SERVER_FACTS,
+                &ServerFactsRequest {
+                    disk_path: disk_path.to_string(),
+                },
+            )
+            .await
+            .context("reading server information")
+    }
+
     /// Asks the agent to exit, then closes the channel. A gone or silent
     /// agent must not hold the app's exit.
     pub async fn shutdown(&self) {
@@ -107,7 +255,27 @@ impl Agent {
                 .request::<_, AgentShutdown>(SHUTDOWN, &AgentShutdown {}),
         )
         .await;
+        // The answer is written before the agent exits; wait for the stream
+        // to end so the project lock it held is free before the next run.
+        let _ = tokio::time::timeout(Duration::from_secs(2), self.done.notified()).await;
         self.task.abort();
+    }
+
+    /// Remembers or forgets the project lock token this connection holds.
+    pub(super) fn set_lock_token(&self, token: Option<u64>) {
+        *self
+            .lock_token
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = token;
+    }
+
+    /// The token of the project lock this connection holds, if any.
+    #[must_use]
+    pub(super) fn lock_token(&self) -> Option<u64> {
+        *self
+            .lock_token
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     #[must_use]

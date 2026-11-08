@@ -8,9 +8,11 @@ use std::future::Future;
 use anyhow::{Result, bail};
 
 use super::Server;
+use crate::agent::AgentLogEvent;
 use crate::config::{Manager, Service};
 use crate::setup;
 use crate::ssh::sh_quote;
+use shipdeck_protocol::message::agent::AgentServiceAction;
 
 /// Journal or PM2 lines shown before the log follows.
 const LOG_LINES: u32 = 200;
@@ -126,6 +128,15 @@ impl Server {
     /// Returns an error when sudo is not allowed, the PM2 state is unreadable,
     /// or the command fails.
     pub async fn control(&self, action: Control) -> Result<()> {
+        if let Some(agent) = self.session.agent() {
+            let action = match action {
+                Control::Stop => AgentServiceAction::Stop,
+                Control::Start => AgentServiceAction::Start,
+                Control::Restart => AgentServiceAction::Restart,
+            };
+            agent.service_control(&self.agent_service(), action).await?;
+            return Ok(());
+        }
         let script = match self.manager {
             Manager::Systemd => {
                 self.check_sudo(|service| systemctl(action, service))
@@ -158,6 +169,29 @@ impl Server {
         on_line: impl FnMut(&str),
         stop: impl Future<Output = ()>,
     ) -> Result<Option<u32>> {
+        if let Some(agent) = self.session.agent() {
+            let (view, mut events) = agent.open_log(&self.agent_service(), LOG_LINES).await?;
+            let mut on_line = on_line;
+            let mut stop = std::pin::pin!(stop);
+            loop {
+                tokio::select! {
+                    () = &mut stop => {
+                        agent.stop_log(view).await;
+                        return Ok(None);
+                    }
+                    event = events.recv() => match event {
+                        Some(AgentLogEvent::Line(line)) => on_line(&line),
+                        Some(AgentLogEvent::Ended { code, error }) => {
+                            if let Some(error) = error {
+                                bail!("{error}");
+                            }
+                            return Ok(code);
+                        }
+                        None => bail!("the agent connection ended while following the log"),
+                    },
+                }
+            }
+        }
         if self.manager == Manager::Systemd {
             self.check_sudo(journal_follow).await?;
         }

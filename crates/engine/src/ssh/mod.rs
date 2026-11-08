@@ -166,6 +166,7 @@ impl Session {
             .run_within(
                 &command,
                 Some(limit + TIMEOUT_GRACE + Duration::from_secs(2)),
+                None,
                 |_, _| {},
             )
             .await?;
@@ -254,7 +255,21 @@ impl Session {
     }
 
     async fn run(&self, command: &str, on_line: impl FnMut(Stream, &str)) -> Result<Output> {
-        self.run_within(command, None, on_line).await
+        self.run_within(command, None, None, on_line).await
+    }
+
+    /// Runs one command and writes `input` to its stdin, for a password
+    /// that must not appear in the command line.
+    ///
+    /// # Errors
+    /// Fails like [`Session::exec`], or when stdin cannot be written.
+    pub async fn exec_input(
+        &self,
+        script: &str,
+        input: Option<&[u8]>,
+        on_line: impl FnMut(Stream, &str),
+    ) -> Result<Output> {
+        self.run_within(script, None, input, on_line).await
     }
 
     /// Runs one command, optionally stopping at `limit`. The channel closes
@@ -263,6 +278,7 @@ impl Session {
         &self,
         command: &str,
         limit: Option<Duration>,
+        input: Option<&[u8]>,
         mut on_line: impl FnMut(Stream, &str),
     ) -> Result<Output> {
         let channel = self
@@ -279,6 +295,16 @@ impl Session {
                 .exec(true, command)
                 .await
                 .context("starting the remote command")?;
+            if let Some(input) = input {
+                channel
+                    .data(input)
+                    .await
+                    .context("writing to the remote command")?;
+            }
+            channel
+                .eof()
+                .await
+                .context("closing the remote command's input")?;
 
             let mut out = Lines::default();
             let mut err = Lines::default();
@@ -425,7 +451,7 @@ impl Session {
         Ok(SftpSession::new_with_config(channel.into_stream(), config).await?)
     }
 
-    async fn upload_with_cat(
+    pub(crate) async fn upload_with_cat(
         &self,
         data: &[u8],
         remote_path: &str,

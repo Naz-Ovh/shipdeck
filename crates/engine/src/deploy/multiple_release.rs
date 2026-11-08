@@ -68,11 +68,16 @@ impl Multiple<'_> {
     }
 
     /// Uploads the archive and its verification plan.
-    pub(super) async fn send(&self, server: &Server, id: &str, bundle: &Bundle) -> Result<()> {
+    pub(super) async fn send(
+        &self,
+        server: &Server,
+        id: &str,
+        bundle: &Bundle,
+        retry: bool,
+    ) -> Result<()> {
         server.prepare(self.report).await?;
         server
-            .session()
-            .upload(&bundle.data, &server.upload_path(id), |_, _| {})
+            .upload_bundle(id, &bundle.data, retry, |_, _| {})
             .await?;
         server.upload_plan(id, &bundle.receipt, &bundle.reuse).await
     }
@@ -88,7 +93,15 @@ impl Multiple<'_> {
     ) -> Result<()> {
         let modes: Vec<_> = bundle.reuse.keys().copied().collect();
         if matches!(
-            server.unpack(id, &modes, self.report).await?,
+            server
+                .unpack(
+                    id,
+                    &modes,
+                    bundle.input_bytes,
+                    u64::try_from(bundle.paths.len())?,
+                    self.report
+                )
+                .await?,
             Unpacked::Verified
         ) {
             return Ok(());
@@ -97,9 +110,17 @@ impl Multiple<'_> {
             bail!("unpacked files do not match the bundle");
         }
         let whole = bundle::pack(contents, manifest, &HashMap::new(), |_, _| {})?;
-        self.send(server, id, &whole).await?;
+        self.send(server, id, &whole, true).await?;
         if !matches!(
-            server.unpack(id, &[], self.report).await?,
+            server
+                .unpack(
+                    id,
+                    &[],
+                    whole.input_bytes,
+                    u64::try_from(whole.paths.len())?,
+                    self.report
+                )
+                .await?,
             Unpacked::Verified
         ) {
             bail!("full release verification failed");

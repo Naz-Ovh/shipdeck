@@ -3,11 +3,35 @@
 
 use serde_json::Value;
 
-use shipdeck_protocol::message::request::{ConnectionClose, Done, ServiceControl, StatusGet};
+use shipdeck_protocol::message::request::{
+    ConnectionClose, Done, ServerInfoGet, ServiceControl, StatusGet,
+};
 use shipdeck_protocol::wire::Id;
 
 use super::convert;
 use super::session::Session;
+
+/// Reads facts from the agent on a deployable's server.
+pub async fn server_info(session: &Session, id: Id, params: Value) {
+    let reply = async {
+        let asked: ServerInfoGet = convert::params(params)?;
+        let deployable = session.deployment(&asked.deployable)?;
+        let servers = session.servers(&deployable).await?;
+        let server = servers
+            .first()
+            .ok_or_else(|| convert::failed(&anyhow::anyhow!("no apps")))?;
+        let agent = server.session().agent().ok_or_else(|| {
+            convert::failed(&anyhow::anyhow!("the server agent is not available"))
+        })?;
+        let facts = agent
+            .server_facts(server.dir())
+            .await
+            .map_err(|err| convert::failed(&err))?;
+        convert::value(&facts)
+    }
+    .await;
+    session.reply(id, reply);
+}
 
 /// Reads the service's state: its folder, the release `current` points to,
 /// and whether it is running.
@@ -71,12 +95,19 @@ pub async fn control(session: &Session, id: Id, params: Value) {
         let asked: ServiceControl = convert::params(params)?;
         let deployable = session.deployment(&asked.deployable)?;
         let servers = session.servers(&deployable).await?;
+        let first = servers
+            .first()
+            .ok_or_else(|| convert::failed(&anyhow::anyhow!("no apps")))?;
+        let guard = crate::agent::ProjectGuard::acquire(first)
+            .await
+            .map_err(|err| convert::failed(&err))?;
         for server in &servers {
             server
                 .control(convert::control(asked.action))
                 .await
                 .map_err(|err| convert::failed(&err))?;
         }
+        guard.release().await.map_err(|err| convert::failed(&err))?;
         convert::value(&Done {})
     }
     .await;

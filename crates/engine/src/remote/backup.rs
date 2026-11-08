@@ -10,7 +10,7 @@ use anyhow::{Result, anyhow, bail};
 use super::{Server, ensure_id};
 use crate::config::BackupFiles;
 use crate::config::glob::{Rules, Verdict};
-use crate::deploy::report::Reporter;
+use crate::deploy::report::{LogKind, Reporter};
 use crate::ssh::sh_quote;
 
 /// One path in a release folder on the server.
@@ -110,6 +110,16 @@ impl Server {
     /// Returns an error when the release name is unsafe or the listing fails.
     pub async fn release_files(&self, id: &str) -> Result<Vec<ReleaseFile>> {
         ensure_id(id)?;
+        if let Some(agent) = self.session.agent() {
+            let files = agent.release_files(&self.dir, id).await?;
+            return Ok(files
+                .into_iter()
+                .map(|file| ReleaseFile {
+                    path: file.path,
+                    is_dir: file.is_dir,
+                })
+                .collect());
+        }
         let script = format!(
             "set -e
 cd {dir}/releases/{id}
@@ -134,6 +144,13 @@ find . ! -type d -exec printf 'f%s\\0' {{}} +",
     /// or sending the list or packing fails.
     pub async fn back_up(&self, id: &str, paths: &[String], report: &Reporter) -> Result<u64> {
         ensure_id(id)?;
+        if let Some(agent) = self.session.agent() {
+            report.log(
+                LogKind::Command,
+                format!("{} › pack backups/{id}.tar.zst", self.session.label),
+            );
+            return agent.create_backup(&self.dir, id, paths).await;
+        }
         if let Some(bad) = paths
             .iter()
             .find(|p| p.contains(char::REPLACEMENT_CHARACTER))
@@ -178,6 +195,14 @@ echo \"kb=$(du -k {done} | cut -f1)\"",
     /// Returns an error when the release name is unsafe or unpacking fails.
     pub async fn restore(&self, id: &str, report: &Reporter) -> Result<()> {
         ensure_id(id)?;
+        if let Some(agent) = self.session.agent() {
+            report.log(
+                LogKind::Command,
+                format!("{} › unpack backups/{id}.tar.zst", self.session.label),
+            );
+            agent.restore_backup(&self.dir, id).await?;
+            return Ok(());
+        }
         let script = format!(
             "set -e
 cd {dir}

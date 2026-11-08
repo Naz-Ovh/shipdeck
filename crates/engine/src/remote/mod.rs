@@ -10,6 +10,7 @@ mod control;
 mod delta;
 mod health;
 mod inspect;
+mod lease;
 mod pm2;
 mod preflight;
 mod releases;
@@ -34,6 +35,7 @@ use crate::config::{Manager, Service, release_path};
 use crate::deploy::report::{LogKind, Reporter};
 use crate::release::is_safe_id;
 use crate::ssh::{Output, Session, Stream, sh_quote};
+use shipdeck_protocol::message::agent::{AgentManager, AgentService};
 
 pub struct Server {
     session: Arc<Session>,
@@ -91,6 +93,12 @@ impl Server {
         &self.session
     }
 
+    /// Shares the connection while an operation holds its project lock.
+    #[must_use]
+    pub fn session_handle(&self) -> Arc<Session> {
+        Arc::clone(&self.session)
+    }
+
     #[must_use]
     pub fn manager(&self) -> Manager {
         self.manager
@@ -114,6 +122,22 @@ impl Server {
     #[must_use]
     pub fn upload_path(&self, id: &str) -> String {
         format!("{}/releases/.{id}.tar.zst", self.dir)
+    }
+
+    /// The service as the agent's typed requests carry it.
+    #[must_use]
+    pub fn agent_service(&self) -> AgentService {
+        AgentService {
+            root: self.dir.clone(),
+            service: self.service.clone(),
+            manager: match self.manager {
+                Manager::Systemd => AgentManager::Systemd,
+                Manager::Pm2 => AgentManager::Pm2,
+            },
+            pm2_file: self.pm2_file.clone(),
+            env: self.env.service.clone(),
+            env_file: self.env.env_file.clone(),
+        }
     }
 
     /// The commands that need root here; see [`sudo_commands`]. PM2 needs
@@ -185,13 +209,43 @@ exit 1",
     /// # Errors
     /// Returns an error when the folders cannot be created.
     pub async fn prepare(&self, report: &Reporter) -> Result<()> {
-        let dir = self.q_dir();
-        self.run(
-            "create releases/, backups/ and shared/",
-            &format!("cd {dir} && mkdir -p releases backups shared"),
-            report,
-        )
-        .await?;
+        if let Some(agent) = self.session.agent() {
+            report.log(
+                LogKind::Command,
+                format!(
+                    "{} › create releases/, backups/ and shared/",
+                    self.session.label
+                ),
+            );
+            agent.prepare_project(&self.dir).await?;
+            let inspection = agent.inspect_work(&self.dir).await?;
+            if let Some(release) = &inspection.uncertain {
+                report.log(
+                    LogKind::Warn,
+                    format!(
+                        "the switch to {release} started but was never confirmed; \
+                         check the live release and the service before deploying"
+                    ),
+                );
+            }
+            if !inspection.unfinished.is_empty() {
+                report.log(
+                    LogKind::Warn,
+                    format!(
+                        "unfinished project files: {}",
+                        inspection.unfinished.join(", ")
+                    ),
+                );
+            }
+        } else {
+            let dir = self.q_dir();
+            self.run(
+                "create releases/, backups/ and shared/",
+                &format!("cd {dir} && mkdir -p releases backups shared"),
+                report,
+            )
+            .await?;
+        }
         Ok(())
     }
 
@@ -202,6 +256,14 @@ exit 1",
     /// Returns an error when the release name is unsafe or removal fails.
     pub async fn discard(&self, id: &str, report: &Reporter) -> Result<()> {
         ensure_id(id)?;
+        if let Some(agent) = self.session.agent() {
+            report.log(
+                LogKind::Command,
+                format!("{} › remove releases/{id}", self.session.label),
+            );
+            agent.discard_release(&self.dir, id).await?;
+            return Ok(());
+        }
         let script = discard_script(&self.dir, id);
         self.run(&format!("remove releases/{id}"), &script, report)
             .await?;
@@ -215,6 +277,14 @@ exit 1",
     /// Returns an error when the release name is unsafe or the switch fails.
     pub async fn switch(&self, id: &str, report: &Reporter) -> Result<()> {
         ensure_id(id)?;
+        if let Some(agent) = self.session.agent() {
+            report.log(
+                LogKind::Command,
+                format!("{} › point current at {id}", self.session.label),
+            );
+            agent.switch_release(&self.dir, id).await?;
+            return Ok(());
+        }
         let script = format!(
             "set -e
 cd {dir}
@@ -304,6 +374,18 @@ pm2 save
         if shared.is_empty() {
             return Ok(());
         }
+        if let Some(agent) = self.session.agent() {
+            report.log(
+                LogKind::Command,
+                format!(
+                    "{} › link service.shared into the release",
+                    self.session.label
+                ),
+            );
+            let paths: Vec<String> = shared.iter().map(|entry| release_path(entry)).collect();
+            agent.link_shared(&self.dir, id, &paths).await?;
+            return Ok(());
+        }
         let mut script = format!("set -e\ncd {}\n", self.q_dir());
         for entry in shared {
             let entry = release_path(entry);
@@ -380,6 +462,10 @@ echo {done}
             }
         };
         let mut script = env_prelude(&dir, env, env_file);
+        script.push_str(&crate::remote::lease::prelude(
+            &self.dir,
+            &crate::remote::lease::new_token(),
+        ));
         // The command is shell by design: it comes from deploy.yaml, written
         // by whoever deploys, and runs as the deploy user.
         script.push_str(command);

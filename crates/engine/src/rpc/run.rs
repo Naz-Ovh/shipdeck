@@ -13,7 +13,7 @@ use shipdeck_protocol::message::request::Done;
 use shipdeck_protocol::wire::{ErrorObject, Id, code};
 
 use super::session::Session;
-use super::{convert, logs, operations, releases, service, workspace};
+use super::{convert, logs, operations, releases, server_setup, service, work, workspace};
 
 /// Serves one app until it is done. Nothing is written to stdout but the
 /// protocol's own lines.
@@ -85,6 +85,11 @@ async fn handle(session: &Arc<Session>, id: Id, method: String, params: Value) {
         method::INITIALIZE => workspace::initialize(session, id, params).await,
         method::WORKSPACE_OPEN => workspace::open(session, id, params).await,
         method::STATUS_GET => service::status(session, id, params).await,
+        method::SERVER_INFO => service::server_info(session, id, params).await,
+        method::SERVER_SETUP => server_setup::run(session, id, params).await,
+        method::WORK_GET => work::get(session, id, params).await,
+        method::WORK_CLEANUP => work::cleanup(session, id, params).await,
+        method::EVENTS_READ => work::events(session, id, params).await,
         method::CONNECTION_CLOSE => service::close(session, id, params).await,
         method::SERVICE_CONTROL => service::control(session, id, params).await,
         method::RELEASES_LIST => releases::list(session, id, params).await,

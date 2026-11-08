@@ -4,6 +4,8 @@ use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 use super::preflight::{check_pm2, check_tools, start_path};
 use super::report::{OpEvent, OpUpdate};
+use anyhow::anyhow;
+
 use super::*;
 use crate::config::ROLLBACK_ANSWER_SECS;
 use crate::config::parse;
