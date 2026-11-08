@@ -1,25 +1,5 @@
 # Handoff
 
-## Standalone version tool — 2026-11-08
-
-Removed the `bump-version` example registration from the protocol crate.
-`scripts/bump-version.rs` now compiles directly with `rustc`; `just version`
-uses a temporary binary and removes it on exit. No workspace membership,
-dependencies, or Cargo calls are needed by the version tool.
-
-The tool updates the workspace manifest, the five local lockfile entries,
-release links, and the three published schema URLs. Schema generation stays
-in `just schema` and `just protocol`. Inputs are checked before writes, and
-write failures trigger restoration with any restoration errors reported.
-Development docs include direct compilation instructions.
-
-Verified five tests in `tests/version_bump_test.py`, including the real Just
-recipe in a disposable copy without workspace crates. Tests cover dependency
-and schema-content preservation, invalid versions, missing schema files, and
-stale lockfile entries. No project version was changed by these checks.
-Workspace formatting, strict workspace Clippy with all targets, direct
-Clippy for the standalone script, and `git diff --check` also passed.
-
 ## Privileged agent install and version policy — 2026-11-08
 
 Implemented the agreed policy in `docs/feature/agent-version-policy.md`. No
@@ -857,3 +837,28 @@ The cleanup finding is fixed: limited commands run under
 the channel close is only the backstop. A real SSH check returned 124 and left
 no marker 4 s later. The review is `(done)` again. The fixes are in the working
 tree and remain uncommitted.
+
+## Flaky lock tests fixed — 2026-11-08
+
+`cargo test --workspace` failed at random in
+`transfer::tests::an_upload_ticket_stops_working_when_its_lock_is_released`,
+and sometimes in
+`locks::tests::project_lock_blocks_other_sessions_and_is_released_on_drop`.
+
+Cause: `flock` belongs to the open file description. Tests run in parallel, and
+many agent tests call `owner::apply`/`apply_tree`, which spawn `id` or `getent`.
+Between `fork` and `exec` the child copies every descriptor, so a lock released
+with `drop` still looks held for that window. Traces showed the failed probe
+inside `SPAWN_BEGIN`/`SPAWN_END` for `id`.
+
+Fix: test-only `crates/agent/src/test_support.rs::wait_until_unlocked` waits for
+the lock file to become lockable before the release assertions. No production
+code changed. Evidence: `.tmp/trace/fail.log`.
+
+Checks: 100 parallel agent-lib runs and 10 serial runs pass. Workspace tests
+(38 CLI, 48 agent, 2 agent process, 249 engine, 24 protocol, 34 TUI),
+formatting, and strict workspace Clippy pass.
+
+The production receiver has the same narrow window: an agent that spawns a
+command while it releases a project lock can make a stale upload ticket look
+valid for the fork-to-exec interval. Not changed; it needs an owner decision.

@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 use shipdeck_protocol::message::agent::UploadPrepare;
 
 use super::{prepare, private_folder, receive};
+use crate::test_support::wait_until_unlocked;
 
 #[tokio::test]
 async fn transfer_checks_length_checksum_and_one_use() {
@@ -96,6 +97,7 @@ async fn an_upload_ticket_stops_working_when_its_lock_is_released() {
     lock.try_lock().expect("hold lock");
     let ticket = prepare(&request).await.expect("reserve");
     drop(lock);
+    wait_until_unlocked(&root.join(".shipdeck.lock"));
     assert!(
         receive(&ticket.reservation, b"abc".as_slice())
             .await

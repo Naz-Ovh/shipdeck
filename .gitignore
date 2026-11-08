@@ -1,4 +1,5 @@
 /target
+/scripts/version_bump/target
 /.tmp
 
 .agents/skills/*
@@ -6,3 +7,4 @@
 
 !.agents/skills/easy-english/
 !.claude/skills/easy-english
+*__pycache__

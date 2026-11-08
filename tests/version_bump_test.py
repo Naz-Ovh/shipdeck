@@ -1,6 +1,7 @@
 """Exercise the standalone version tool against disposable repository copies."""
 
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -17,10 +18,12 @@ class VersionBumpTests(unittest.TestCase):
     def setUpClass(cls):
         cls.build = tempfile.TemporaryDirectory(prefix="shipdeck-version-build-")
         cls.addClassCleanup(cls.build.cleanup)
-        cls.binary = Path(cls.build.name) / "bump-version"
+        cls.binary = Path(cls.build.name) / "debug" / (
+            "version_bump.exe" if os.name == "nt" else "version_bump"
+        )
         subprocess.run(
-            ["rustc", "--edition=2024", "-D", "warnings",
-             str(ROOT / "scripts/bump-version.rs"), "-o", str(cls.binary)],
+            ["cargo", "build", "--quiet", "--manifest-path",
+             str(ROOT / "scripts/version_bump/Cargo.toml"), "--target-dir", cls.build.name],
             check=True,
         )
 
@@ -30,7 +33,8 @@ class VersionBumpTests(unittest.TestCase):
         self.root = Path(self.fixture.name)
         paths = [
             "Cargo.toml", "Cargo.lock", "README.md", "justfile",
-            "scripts/bump-version.rs", "docs/visual/prototype/desktop.html",
+            "scripts/version_bump/Cargo.toml", "scripts/version_bump/Cargo.lock",
+            "scripts/version_bump/src/main.rs", "docs/visual/prototype/desktop.html",
             "docs/schema/deploy.schema.json", "docs/schema/protocol.schema.json",
             "docs/website/public/deploy.schema.json",
         ]
@@ -83,6 +87,19 @@ class VersionBumpTests(unittest.TestCase):
                 self.assertNotEqual(self.run_tool(value).returncode, 0)
                 self.assertEqual(before, self.snapshot())
 
+    def test_windows_line_endings_are_preserved(self):
+        for path in self.root.rglob("*"):
+            if path.is_file():
+                path.write_bytes(path.read_bytes().replace(b"\r\n", b"\n")
+                                 .replace(b"\n", b"\r\n"))
+        result = self.run_tool(self.new)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for name in ("Cargo.toml", "Cargo.lock", "docs/schema/deploy.schema.json"):
+            content = (self.root / name).read_bytes()
+            self.assertIn(b"\r\n", content)
+            self.assertNotIn(b"\n", content.replace(b"\r\n", b""))
+            self.assertIn(self.new.encode(), content)
+
     def test_missing_schema_leaves_files_unchanged(self):
         (self.root / "docs/schema/protocol.schema.json").unlink()
         before = self.snapshot()
@@ -98,7 +115,7 @@ class VersionBumpTests(unittest.TestCase):
         self.assertNotEqual(self.run_tool(self.new).returncode, 0)
         self.assertEqual(before, self.snapshot())
 
-    def test_just_recipe_runs_without_a_cargo_workspace(self):
+    def test_just_recipe_builds_only_the_independent_tool(self):
         result = subprocess.run(["just", "--tempdir", str(self.root),
                                  "version", self.new], cwd=self.root,
                                 capture_output=True, text=True, check=False)

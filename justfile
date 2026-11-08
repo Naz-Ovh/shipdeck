@@ -61,14 +61,9 @@ doc:
 clean:
     cargo clean
 
-# Updates the workspace version and release links with a standalone Rust tool.
+# Updates the workspace version and release links with the independent Cargo tool.
 version new:
-    #!/bin/sh
-    set -eu
-    build_dir=$(mktemp -d)
-    trap 'rm -r "$build_dir"' EXIT
-    rustc --edition=2024 scripts/bump-version.rs -o "$build_dir/bump-version"
-    "$build_dir/bump-version" "$1"
+    cargo run -q --manifest-path scripts/version_bump/Cargo.toml -- "{{new}}"
 
 # Writes the JSON Schema for deploy.yaml, and the website's copy of it.
 schema:

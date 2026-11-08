@@ -1,4 +1,4 @@
-//! Update release versions without Cargo or external dependencies.
+//! Update release versions without application dependencies.
 
 use std::error::Error;
 use std::fs;
@@ -135,13 +135,13 @@ fn apply(changes: &[FileChange]) -> Result<()> {
 /// Validate every input before updating release files.
 fn bump(root: &Path, new: &str) -> Result<()> {
     let mut manifest = FileChange::read(root.join("Cargo.toml"))?;
-    let section = manifest
+    let (prefix, section) = manifest
         .original
-        .split_once("[workspace.package]\n")
-        .ok_or("Workspace package not found.")?
-        .1;
+        .split_once("[workspace.package]")
+        .ok_or("Workspace package not found.")?;
     let old = section
         .lines()
+        .take_while(|line| !line.starts_with('['))
         .find_map(|line| {
             line.strip_prefix("version = \"")
                 .and_then(|v| v.strip_suffix('"'))
@@ -167,10 +167,13 @@ fn bump(root: &Path, new: &str) -> Result<()> {
         change.updated = change.original.replace(&old_tag, &new_tag);
         changes.push(change);
     }
-    manifest.updated = manifest.original.replacen(
-        &format!("[workspace.package]\nversion = \"{old}\""),
-        &format!("[workspace.package]\nversion = \"{new}\""),
-        1,
+    manifest.updated = format!(
+        "{prefix}[workspace.package]{}",
+        section.replacen(
+            &format!("version = \"{old}\""),
+            &format!("version = \"{new}\""),
+            1,
+        )
     );
     let mut lock = FileChange::read(root.join("Cargo.lock"))?;
     lock.updated = lockfile(&lock.original, old, new)?;

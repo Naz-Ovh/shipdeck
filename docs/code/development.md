@@ -70,12 +70,12 @@ Run `just protocol` after protocol changes. The manual lives in
 Local Lefthook hooks run the version check before commits and Rust checks before
 pushes. They do not replace release verification.
 
-The version tool is `scripts/bump-version.rs`, outside the workspace. To run it
-directly, compile and run it from the repository root:
+The version tool is an independent Cargo project in `scripts/version_bump/`, outside
+the application workspace. It has no dependencies. From the repository root,
+run `just version NEW_VERSION` or:
 
 ```sh
-rustc --edition=2024 scripts/bump-version.rs -o /tmp/shipdeck-bump-version
-/tmp/shipdeck-bump-version NEW_VERSION
+cargo run --quiet --manifest-path scripts/version_bump/Cargo.toml -- NEW_VERSION
 ```
 
 ## Publish a release
@@ -84,9 +84,9 @@ rustc --edition=2024 scripts/bump-version.rs -o /tmp/shipdeck-bump-version
    Run `just verify`, build the docs, and check generated schemas.
 2. If the workspace version has not already been raised, run
    `just version NEW_VERSION`. It updates manifests, lockfile, examples, README
-   URLs, and schema URLs. The tool compiles directly with `rustc`; it has no
-   dependencies and runs no Cargo builds. Update website examples and changelog
-   notes too. Regenerate schemas separately after type changes.
+   URLs, and schema URLs. Cargo builds only the version tool. Update website
+   examples and changelog notes too. Regenerate schemas separately after type
+   changes.
 3. Run `dist plan` and `dist generate --check`. After changing dist config,
    run `dist generate` and inspect its changes. The pinned tool version is in
    [dist-workspace.toml](../../dist-workspace.toml).

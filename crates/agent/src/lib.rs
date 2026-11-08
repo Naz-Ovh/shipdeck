@@ -19,6 +19,8 @@ mod releases;
 mod serve;
 mod service;
 mod state;
+#[cfg(test)]
+mod test_support;
 mod transfer;
 mod unpack;
 mod unpack_reuse;

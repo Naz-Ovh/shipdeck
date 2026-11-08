@@ -3,6 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use shipdeck_protocol::message::agent::ProjectLock;
 
 use super::ProjectLocks;
+use crate::test_support::wait_until_unlocked;
 
 #[test]
 fn project_lock_blocks_other_sessions_and_is_released_on_drop() {
@@ -27,6 +28,7 @@ fn project_lock_blocks_other_sessions_and_is_released_on_drop() {
     assert!(first.acquire(&request).is_err());
     assert!(second.acquire(&request).is_err());
     drop(first);
+    wait_until_unlocked(&root.join(".shipdeck.lock"));
     second.acquire(&request).expect("lock after disconnect");
     second.release(&request).expect("unlock");
     assert!(second.release(&request).is_err());
