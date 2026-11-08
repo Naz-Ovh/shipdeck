@@ -123,13 +123,17 @@ start; check its build command and paths against your project:
 
 ### Without the TUI
 
-For scripts and CI, three commands do the same work with no screen. They
+For scripts and CI, these commands do the same work with no screen. They
 print progress to stderr as plain lines and never wait for an answer.
 
 ```sh
-shipdeck deploy   ./scripts/deploy my-api [my-web ...] [--on-failure rollback|keep] [--allow-unchanged]
-shipdeck rollback ./scripts/deploy my-api --to v0.3.0-9f8e7d6-20261012.091000
-shipdeck releases ./scripts/deploy my-api     # the table on stdout, newest first
+shipdeck deploy      ./scripts/deploy my-api [my-web ...] [--on-failure rollback|keep] [--allow-unchanged]
+shipdeck rollback    ./scripts/deploy my-api --to v0.3.0-9f8e7d6-20261012.091000
+shipdeck releases    ./scripts/deploy my-api     # the table on stdout, newest first
+shipdeck server-info ./scripts/deploy my-api     # Linux, CPU, memory, disk, tools
+shipdeck work        ./scripts/deploy my-api     # interrupted files and uncertain activation
+shipdeck events      ./scripts/deploy my-api     # numbered events, oldest first
+shipdeck setup       ./scripts/deploy my-api     # guided one-time server setup
 ```
 
 A deployable is named by its folder or its `name`. `deploy` takes several and
@@ -644,7 +648,52 @@ edit it. Placeholders:
 An unknown placeholder stops the deploy at Preflight; `{{binary}}` does too
 when there is no `pipeline.pack.binary`.
 
+## The agent
+
+On each connection the engine installs `shipdeck-agent` at its own version
+and starts it over SSH. It runs as `ssh.user`, opens no port, and exits when
+the connection ends. Published builds download the matching archive over
+HTTPS; development builds use the explicit `SHIPDECK_AGENT_BINARY` path, and
+a failed download never falls back to a local binary.
+
+The agent does the file and service work with typed requests: hashing reusable
+files, receiving the bundle on a separate SSH channel, safe tar/zstd
+extraction with path, link, mode, size and checksum checks, shared links,
+backups and restores, release listing and inspection, service status and
+control, live logs, project locks, and approved cleanup. Deploys still run
+while connected: prepare and verify first, activate last. `~/.shipdeck/state.db`
+keeps numbered events, and `shipdeck events` replays them.
+
+When an operation is interrupted, unfinished files stay. `shipdeck work`
+lists them and the exact service state; `--cleanup` removes only that list,
+after the check that the server still reports each path. A dropped connection
+during activation is never reported as success: reconnect and inspect the
+live release and service with `shipdeck work`.
+
+One project lock covers deploys, rollbacks, cleanup and service control on both
+paths. On the plain SSH path a monitored shell holds `flock`; losing it fails
+the run. Upload tickets are tied to the lock token, and every `deploy.yaml`
+server command writes a `.shipdeck.command` lease. A new operation refuses while
+that command is alive, so an agent disconnect cannot let two deploys overlap.
+
+The plain SSH path remains: when the agent cannot start, deploys use the
+existing shell commands, as before.
+
 ## Permissions
+
+### Guided setup
+
+`shipdeck setup` prepares a server once from the app, so nobody has to run
+`server-setup.sh` by hand. It asks for the sudo password when one is needed
+(on stdin, never saved), installs missing tools from the Linux's own
+packages, creates `service.dir`, and installs a sudoers rule checked by
+`visudo`. `--access full` grants password-free sudo for every command;
+`--access commands` (the default) grants exactly the commands shipdeck runs.
+Root needs no rule. Debian/Ubuntu and Fedora/RHEL are supported; another
+Linux is named and stopped. Servers set up the old way keep working, and the
+script stays for them.
+
+### What the user must be able to do
 
 shipdeck deploys as `ssh.user`, whoever that is. On the server, that user
 must be able to:
@@ -688,6 +737,10 @@ out.
 ├── releases/        newest `keep.open` releases, unpacked
 ├── backups/         each release's backup, `<id>.tar.zst`, for `keep.open` + `keep.compressed` releases
 └── shared/          kept across deploys; the only folder the default unit may write to
+
+~/.shipdeck/
+├── bin/             the agent, at the engine's version
+└── state.db         numbered events for work, events and replay
 ```
 
 A release id is `v<version>-<git sha>[-dirty]-<UTC yyyymmdd.hhmmss>`. Each
@@ -710,7 +763,8 @@ a backup gets them from setup again.
 | `D` | | | the release's details and every file in it, read-only; a backup is read without unpacking it |
 | `r` | open releases | open releases | refresh |
 | `s` | refresh the connected ones | | |
-| `:` | a command for the selected service: `:logs`, `:restart`, `:stop`, `:start` | | |
+| `x` | clean up the unfinished files the server reported (asks first) | | |
+| `:` | a command for the selected service: `:logs`, `:restart`, `:setup`, `:stop`, `:start` | | |
 | `G` | | follow the log again | |
 | `esc` | | back | back |
 | `tab`, `1` `2` `3` | switch screens | | |
@@ -734,12 +788,29 @@ says which there are:
 | `:restart` | Restarts the service, as a deploy's restart step does. Asks first. |
 | `:stop` | Stops it until it is started again, a deploy restarts it or the server reboots. Asks first. |
 | `:start` | Starts it; a running one is left as it is. |
+| `:setup` | Guided one-time server setup. Choose full sudo or only the commands shipdeck runs, then enter the sudo password. It never widens access without that choice. |
 
 While a deploy or rollback of that deployable runs, only `:logs` works. A
 command the server's sudo rule does not allow says so, with the
 `server-setup.sh` command that renews the rule.
 
 ## Development
+
+Run `just` or `just help` to list the project commands.
+
+```sh
+just run --help              # Shipdeck's CLI help
+just run ./scripts/deploy    # run Shipdeck with a deploy root
+just build                  # build the workspace in debug mode
+just build release          # build the workspace in release mode
+just build-release          # same release build; `just release` also works
+just run-release --help     # run the optimized CLI
+just install                # install Shipdeck into Cargo's bin folder
+just test                   # run workspace tests
+just fmt                    # format Rust code
+just verify                 # check formatting, compilation, Clippy, and tests
+just build-doc              # build the documentation website (requires pnpm)
+```
 
 ```
 apps/cli/          the flags, the engine child, and the console commands

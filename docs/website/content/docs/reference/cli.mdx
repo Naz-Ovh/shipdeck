@@ -3,7 +3,7 @@ title: Command line
 description: Every argument and flag of the shipdeck command, its errors, exit codes and what it prints.
 ---
 
-You point shipdeck at a deploy root, it checks every `deploy.yaml` under it, and then opens the terminal UI. For scripts and CI, the `deploy`, `rollback` and `releases` commands do the same work [without the UI](#without-the-ui), and `man` prints [the manual](#the-manual).
+You point shipdeck at a deploy root, it checks every `deploy.yaml` under it, and then opens the terminal UI. For scripts and CI, `deploy`, `rollback`, `releases`, `server-info`, `work`, `events` and `setup` do the same work [without the UI](#without-the-ui), and `man` prints [the manual](#the-manual).
 
 ## Synopsis
 
@@ -13,11 +13,15 @@ shipdeck init     <DEPLOY_ROOT> [NAME] [--preset <PRESET>] [--manager systemd|pm
 shipdeck deploy   <DEPLOY_ROOT> <NAME>... [--on-failure rollback|keep] [--allow-unchanged] [--trust-new-host]
 shipdeck rollback <DEPLOY_ROOT> <NAME> --to <RELEASE> [--trust-new-host]
 shipdeck releases <DEPLOY_ROOT> <NAME> [--trust-new-host]
+shipdeck server-info <DEPLOY_ROOT> <NAME> [--trust-new-host]
+shipdeck work    <DEPLOY_ROOT> <NAME> [--cleanup] [--trust-new-host]
+shipdeck events  <DEPLOY_ROOT> <NAME> [--after <N>] [--limit <N>] [--trust-new-host]
+shipdeck setup   <DEPLOY_ROOT> <NAME> [--access full|commands] [--sudo-password <VALUE>] [--trust-new-host]
 shipdeck man      [index | configs | details <KEY>...]
 shipdeck --schema
 ```
 
-`deploy`, `rollback` and `releases` take the same login options as the screen: `--key`, `--key-text`, `--password` and `--no-shell-env`, and on Windows `--gitshell-path`.
+These commands take the same login options as the screen: `--key`, `--key-text`, `--password` and `--no-shell-env`, and on Windows `--gitshell-path`.
 
 ```sh
 shipdeck ./scripts/deploy --key ~/.ssh/id_ed25519
@@ -147,12 +151,17 @@ Usage: shipdeck [OPTIONS] [DEPLOY_ROOT]
        shipdeck <COMMAND>
 
 Commands:
-  init      Create a deployable folder with a deploy.yaml from a preset; asks for what the flags leave out
-  deploy    Build and deploy one or more deployables, one after another, without the TUI
-  rollback  Switch a deployable to a release already on the server, without the TUI
-  releases  List the releases on the server, newest first
-  man       The manual, for people and coding agents: `man index` (topics), `man configs` (deploy.yaml), `man details <KEY>...`
-  help      Print this message or the help of the given subcommand(s)
+  init         Create a deployable folder with a deploy.yaml from a preset; asks for what the flags leave out
+  engine       Run as the engine: it answers the app on stdin and stdout, one message per line
+  deploy       Build and deploy one or more deployables, one after another, without the TUI
+  rollback     Switch a deployable to a release already on the server, without the TUI
+  releases     List the releases on the server, newest first
+  server-info  Show Linux, CPU, memory, disk, uptime, and installed tools on a server
+  work         Show what an interrupted operation left, and clean it up with --cleanup
+  events       Print the events saved on the server, oldest first
+  setup        Prepare a server once: packages, the project folder, and sudo access
+  man          The manual, for people and coding agents: `man index` (topics), `man configs` (deploy.yaml), `man details <KEY>...`
+  help         Print this message or the help of the given subcommand(s)
 
 Arguments:
   [DEPLOY_ROOT]  Folder whose subfolders each hold a deploy.yaml
@@ -170,8 +179,8 @@ Each folder under DEPLOY_ROOT with a deploy.yaml is one deployable.
 Login, first found: --key, --key-text, --password, SHIPDECK_SSH_KEY,
 SHIPDECK_PASSWORD; else the host's ~/.ssh/config key, then the TUI asks
 for the password. SHIPDECK_KEY_PASSPHRASE unlocks an encrypted key.
-deploy, rollback and releases run without the TUI and ask nothing.
-init creates a deployable folder; it asks for what its flags leave out.
+deploy, rollback, releases, server-info, work and events run without the TUI
+and ask nothing. setup and init ask for what their flags leave out.
 man is the full manual: `shipdeck man index`, `man configs`, `man details <KEY>...`.
 ```
 
@@ -270,7 +279,7 @@ What `init` writes passes the same checks as a launch; a problem is printed the 
 
 ## Without the UI
 
-Three commands run the same deploy, rollback and release list as the screen, for scripts and CI. They take the deploy root first, then a deployable by its folder name or its `name`. Every `deploy.yaml` under the root is checked first, as for the screen. Progress goes to stderr as plain lines, in colour only when stderr is a terminal and `NO_COLOR` is not set. Nothing waits for an answer.
+These commands run the same work as the screen, for scripts and CI. They take the deploy root first, then a deployable by its folder name or its `name`. Every `deploy.yaml` under the root is checked first, as for the screen. Progress goes to stderr as plain lines, in colour only when stderr is a terminal and `NO_COLOR` is not set. Nothing waits for an answer, except `setup` which may ask for a sudo password on a terminal.
 
 ### `deploy <DEPLOY_ROOT> <NAME>...`
 
@@ -326,6 +335,22 @@ RELEASE                         VERSION  COMMIT   BUILT (UTC)       SIZE      ST
 v0.3.1-ab12cd3-20261014.153012  0.3.1    ab12cd3  2026-10-14 15:30  31.0 MiB  live        me@laptop
 v0.3.0-9f8e7d6-20261012.091000  0.3.0    9f8e7d6  2026-10-12 09:10  31.0 MiB  unpacked    me@laptop
 ```
+
+### `server-info <DEPLOY_ROOT> <NAME>`
+
+Prints the server's real facts from the connected agent: Linux and kernel, CPU and cores, available and total memory, the disk behind `service.dir`, uptime, the agent version, and where common tools were found. It changes nothing. When the agent is unavailable it fails with a clear message.
+
+### `work <DEPLOY_ROOT> <NAME> [--cleanup]`
+
+Shows the live release, the service state, the unfinished files an interrupted operation left, a warning when activation never reached a health pass, and the newest saved events. With `--cleanup`, exactly those unfinished paths are removed after the server re-checks them; a live release, another release, a backup or an escaping path is never deleted. The flag is the approval.
+
+### `events <DEPLOY_ROOT> <NAME> [--after N] [--limit N]`
+
+Prints numbered events from `~/.shipdeck/state.db`, oldest first, with `--after N` for a cursor and `--limit` capped at 1000. Events include build, pack, upload, unpack, setup, backup, switch, restart, health, the final outcome, and rollback.
+
+### `setup <DEPLOY_ROOT> <NAME> [--access full|commands]`
+
+Guided one-time server setup. It asks for the sudo password on stdin, installs missing tools from the Linux's own packages, creates `service.dir`, and installs a `visudo`-checked sudoers rule. `--access full` grants password-free sudo for every command; `--access commands` (default) grants exactly what shipdeck runs. Root needs no rule. Debian/Ubuntu and Fedora/RHEL are supported; another Linux is named and stopped. `SHIPDECK_SUDO_PASSWORD` keeps the password out of history and `ps`.
 
 ### What the screen would ask
 

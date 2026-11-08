@@ -40,7 +40,7 @@ The same as text, with the transient files:
 ```txt
 /opt/my-api/
 ├── current -> releases/<id>              relative symlink; the only path systemd uses
-├── .current.next                         transient, during a switch
+├── .current-switch-<token>.partial       transient, during a switch
 ├── releases/
 │   ├── <id>/                             open (unpacked) releases
 │   │   ├── my-api                        the binary (0755), if pipeline.pack.binary
@@ -57,13 +57,18 @@ The same as text, with the transient files:
 │   └── .<id>.partial/                    transient: unpacking or restoring
 ├── backups/
 │   ├── <id>.tar.zst                      a release's backup, made after setup
-│   ├── .<id>.tar.zst.part                transient, while packing a backup
+│   ├── .<id>.<token>.part                transient, while packing a backup
 │   └── .<id>.files                       transient, the list of files to pack
 └── shared/
     └── uploads/                          service.shared folders, kept across releases
 
 /etc/systemd/system/my-api.service        copy of current/my-api.service
-/etc/sudoers.d/shipdeck-my-api            only if server-setup.sh was used
+/etc/sudoers.d/shipdeck-my-api            only if guided setup or server-setup.sh was used
+
+~/.shipdeck/
+├── bin/shipdeck-agent-<version>          the agent, at the engine's version
+├── state.db                              numbered events for work and events
+└── agent.log                             the agent's own diagnostics
 ```
 
 `service.dir` can be any absolute path; `/opt/<app>` is the convention.
@@ -94,12 +99,12 @@ These exist only while shipdeck is working. A name starting with a dot keeps the
 | `releases/.<id>.sha256` | The receipt: `<sha256>  ./<path>` for every file of the release, in `sha256sum`'s own format, checked with `sha256sum -c` at unpack. |
 | `releases/.<id>.reuse.<mode>` | For one mode, such as `0644`, the files unpack copies from `current` and gives that mode, NUL-separated. |
 | `releases/.<id>.checked` | The output of `sha256sum -c`, while unpack reads it. |
-| `releases/.<id>.partial/` | A release being unpacked, or a backup being restored. Renamed to `releases/<id>` once every file matches the receipt. |
-| `.current.next` | The new symlink, just before it is renamed over `current`. |
-| `backups/.<id>.tar.zst.part` | A backup being packed. Renamed to `backups/<id>.tar.zst` when complete. |
+| `releases/.<id>.<token>.partial/` | A release being unpacked, or a backup being restored. Renamed to `releases/<id>` once every file matches the receipt. |
+| `.current-switch-<token>.partial` | The new symlink, just before it is renamed over `current`. |
+| `backups/.<id>.<token>.part` | A backup being packed. Published with a hard link as `backups/<id>.tar.zst` when complete. |
 | `backups/.<id>.files` | The list of paths that go into a backup, while it is packed. |
 
-Unpack removes the files sent for a release, whether it succeeds or not, and a failed deploy removes them with the release. If a run is cut off, such a file may stay behind. shipdeck never lists it, and the next unpack of the same id removes an old `.partial` first. Nothing of them stays in a release folder.
+Unpack removes the files sent for a release when it succeeds. If a run is cut off or a check fails, the files stay for inspection. `shipdeck work` lists them, with the live release and the service's real state; `shipdeck work --cleanup` (or `x` in the TUI) removes exactly that list after the server re-checks it. No cleanup touches `current`, another release, a backup, or a path outside the project.
 
 ## Release ids
 

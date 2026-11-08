@@ -340,7 +340,7 @@
         <div class="fhead"><h3>Who talks to whom</h3></div>
         <p class="when">Every arrow is labelled with what travels on it.</p>
         <figure class="art">
-          <svg viewBox="0 0 720 380" role="img" aria-label="On your PC, the TUI, CLI and desktop app each talk to an engine over stdin and stdout. The engine holds one SSH connection per server. On the server, sshd starts the agent; the agent hands jobs to systemd and writes state.db. keepup comes later.">
+          <svg viewBox="0 0 720 380" role="img" aria-label="On your PC, the TUI, CLI and desktop app each talk to an engine over stdin and stdout. The engine holds one SSH connection per server. On the server, sshd starts the agent; the agent manages application services and writes state.db. keepup comes later.">
             <defs><marker id="mk-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ah" d="M0,0 L8,4 L0,8 z"/></marker></defs>
             <rect class="grp" x="8" y="24" width="272" height="348" rx="14"/>
             <text class="s b" x="20" y="16">Your PC</text>
@@ -378,14 +378,14 @@
             <text class="m b" x="576" y="141">shipdeck-agent</text>
             <text class="m s" x="576" y="160">installed on connect · runs as you</text>
             <path class="l" d="M530,174 V204" marker-end="url(#mk-a)"/>
-            <text class="s" x="538" y="193">jobs, sudo</text>
+            <text class="s" x="538" y="193">services, sudo</text>
             <path class="l" d="M656,174 V204" marker-end="url(#mk-a)"/>
             <text class="s" x="664" y="193">writes</text>
             <rect class="n" x="456" y="206" width="150" height="150" rx="10"/>
             <text class="b" x="468" y="226">systemd</text>
             <rect class="cg" x="466" y="236" width="130" height="24" rx="6"/><text class="sm" x="476" y="252">my-api.service</text>
-            <rect class="co" x="466" y="264" width="130" height="24" rx="6"/><text class="sm" x="476" y="280">deploy job</text>
-            <rect class="cp" x="466" y="292" width="130" height="24" rx="6"/><text class="sm" x="476" y="308">timers</text>
+            <rect class="co" x="466" y="264" width="130" height="24" rx="6"/><text class="sm" x="476" y="280">app services</text>
+            <rect class="cp" x="466" y="292" width="130" height="24" rx="6"/><text class="sm" x="476" y="308">future timers</text>
             <rect class="cp" x="466" y="320" width="130" height="24" rx="6"/><text class="sm" x="476" y="336">journal (logs)</text>
             <rect class="n" x="620" y="206" width="76" height="60" rx="10"/>
             <text class="m b" x="658" y="232">state.db</text>
@@ -395,7 +395,7 @@
             <text class="m b" x="658" y="321">keepup</text>
             <text class="m xs" x="658" y="339">later</text>
           </svg>
-          <figcaption>Each app starts its own engine. The engine keeps one SSH connection per server. On the server, sshd starts the agent, and the agent hands work to systemd. Dashed parts come later.</figcaption>
+          <figcaption>Each app starts its own engine. The engine keeps one SSH connection per server. On the server, sshd starts the agent, and the agent prepares releases directly and uses systemd for application services. Dashed parts come later.</figcaption>
         </figure>
       </article>
 
@@ -524,11 +524,12 @@
         <div class="meta"><span>each server</span><span>as your SSH user</span><span>while you are connected</span></div>
         <h4>Does</h4>
         <ul class="does">
-          <li>Does file work itself: unpack, check, link, edit, move.</li>
-          <li>Runs <code>systemctl</code>, <code>nginx</code> and <code>docker</code> directly, with sudo when needed.</li>
-          <li>Runs the server half of a deploy as a <code>systemd-run</code> job, so it finishes even if you leave.</li>
-          <li>Reads the status, the list of releases and live logs.</li>
-          <li>Writes every event into <code>state.db</code>, each with a number.</li>
+          <li>Does file work itself: hash, receive, unpack, verify, link, back up, restore and remove.</li>
+          <li>Runs <code>systemctl</code> and PM2 directly with <code>sudo -n</code> only when the user is not root; reads status, releases and live logs.</li>
+          <li>Prepares and verifies releases while connected, then activates them as the final deployment phase. Interrupted files stay until the user approves cleanup.</li>
+          <li>Uses separate SSH channels for control messages and binary uploads. Writes are bounded so a dead receiver cannot hang a deploy.</li>
+          <li>Writes every event into <code>state.db</code>, each with a number, for <code>shipdeck events</code> and reconnect inspection.</li>
+          <li>Prepares a server once with guided setup: packages, project folder, and full sudo or only the commands shipdeck runs.</li>
           <li>Runs your <code>deploy.yaml</code> server commands with <code>sh</code>.</li>
         </ul>
         <h4>Never</h4>
@@ -562,7 +563,7 @@
         <h4>Already there</h4>
         <ul class="does">
           <li><code>sshd</code>: how you log in.</li>
-          <li><code>systemd</code>: runs your project, the <code>systemd-run</code> jobs, and timers.</li>
+          <li><code>systemd</code>: runs your project. Timers belong to later features; deployments run directly in the connected agent.</li>
           <li>The journal: the raw logs.</li>
         </ul>
         <h4>Later, from packages</h4>
@@ -585,7 +586,7 @@
         <div class="fhead"><h3>A deploy, end to end</h3><span class="tag">with the agent</span><button class="play" type="button">▶ Step by step</button></div>
         <p class="when">Here the health check fails, and you answer “yes, roll back”.</p>
         <figure class="art">
-          <svg viewBox="0 0 720 392" role="img" aria-label="The desktop app asks the engine to deploy. The engine builds on your PC, uploads the changed files to the agent, and the agent starts a systemd job. The health check fails; the engine asks the app whether to roll back; the answer is yes; the agent switches back and restarts.">
+          <svg viewBox="0 0 720 392" role="img" aria-label="The desktop app asks the engine to deploy. The engine builds on your PC, uploads the changed files to the agent, and the agent prepares the release before final activation. The health check fails; the engine asks the app whether to roll back; the answer is yes; the agent switches back and restarts.">
             <defs><marker id="mk-s" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path class="ah" d="M0,0 L8,4 L0,8 z"/></marker></defs>
             <rect class="n blue" x="20" y="8" width="120" height="30" rx="8"/><text class="m b" x="80" y="28">Desktop app</text>
             <rect class="n green" x="220" y="8" width="120" height="30" rx="8"/><text class="m b" x="280" y="28">engine</text>
@@ -599,7 +600,7 @@
             <g class="msg"><path class="l" d="M80,70 H273" marker-end="url(#mk-s)"/><text class="m sm" x="176" y="64">deploy/start</text></g>
             <g class="msg"><rect class="pill" x="292" y="88" width="168" height="22" rx="6"/><text class="sm" x="300" y="103">build and pack, on your PC</text></g>
             <g class="msg"><path class="l" d="M287,130 H478" marker-end="url(#mk-s)"/><text class="m sm" x="382" y="124">upload changed files</text></g>
-            <g class="msg"><path class="l" d="M480,160 H638" marker-end="url(#mk-s)"/><text class="m sm" x="560" y="154">start the job</text></g>
+            <g class="msg"><path class="l" d="M480,160 H638" marker-end="url(#mk-s)"/><text class="m sm" x="560" y="154">activate services</text></g>
             <g class="msg"><path class="l d" d="M640,190 H482" marker-end="url(#mk-s)"/><text class="m sm" x="560" y="184">health: failed</text></g>
             <g class="msg"><path class="l d" d="M480,220 H287" marker-end="url(#mk-s)"/><text class="m sm" x="382" y="214">op/step: health failed</text></g>
             <g class="msg"><path class="l" d="M275,250 H82" marker-end="url(#mk-s)"/><text class="m sm" x="176" y="244">ask/rollback · 30 s</text></g>
@@ -617,8 +618,8 @@
         <p class="when">Each kind lives in a different place, so each one survives what it should.</p>
         <h4>While you watch</h4>
         <p>Runs inside the SSH connection, and ends when you leave. That is what you want for a log you were reading. <i>Example: a live log.</i></p>
-        <h4>Must finish without you</h4>
-        <p>Handed to systemd with <code>systemd-run</code>. systemd runs it as its own job and keeps its output in the journal. When you come back, the engine asks how it ended and shows the log. <i>Example: the server half of a deploy, a backup, a migration.</i></p>
+        <h4>Deployment preparation and activation</h4>
+        <p>The connected agent prepares and verifies files, then activates the release. No background deploy job. A disconnect during preparation leaves the live release unchanged. Inspect interrupted activation on reconnect. Unfinished files stay until you approve cleanup.</p>
         <h4>Nobody connected, ever</h4>
         <p>A systemd service or timer, written once. systemd keeps it running, or starts it on time, like cron. <i>Example: your project, nightly backups, certificate renewal.</i></p>
       </article>
@@ -643,14 +644,14 @@
           <div>
             <h4>On the server</h4>
             <ul class="plain">
-              <li>The deploy job keeps running under systemd.</li>
-              <li>Its log stays in the journal.</li>
-              <li>Its events go into <code>state.db</code>.</li>
+              <li>No background deploy continues after disconnection.</li>
+              <li>Your deployed applications keep running under their manager.</li>
+              <li>Saved events remain in <code>state.db</code>. Unfinished files await approved cleanup.</li>
               <li>The agent exits when the connection ends.</li>
             </ul>
           </div>
         </div>
-        <div class="note"><b>When you come back</b><p>The engine connects, starts the agent (and installs it if needed), asks for the events it missed, and shows how the deploy ended.</p></div>
+        <div class="note"><b>When you come back</b><p>The engine connects, starts the agent (and installs it if needed), reads saved events and inspects actual release state. An interrupted activation stays uncertain until checked.</p></div>
       </article>
 
       <article class="frame" id="catchup" data-zoom data-n="#13" data-t="Catching up">
@@ -930,7 +931,7 @@ server-setup.sh                <span class="c">a public URL of its own: it stays
             <tr><td>Many at once</td><td><span class="ok">✓</span>One SSH channel each, up to 10 by default.</td><td><span class="ok">✓</span>Any number in one channel.</td><td><span class="ok">✓</span>Any number in one channel.</td></tr>
             <tr><td>Speed per action</td><td><span class="mid">~</span>A channel and a process per command.</td><td><span class="ok">✓</span>One network round trip.</td><td><span class="ok">✓</span>One network round trip.</td></tr>
             <tr class="grp"><td colspan="4">When you are not there</td></tr>
-            <tr><td>Work that must finish</td><td><span class="mid">~</span><code>systemd-run</code> with a shell script.</td><td><span class="ok">✓</span><code>systemd-run</code> with the agent itself.</td><td><span class="ok">✓</span>The agent does it.</td></tr>
+            <tr><td>Deployment lifetime</td><td>Connected SSH steps.</td><td>Connected agent; prepare first, activate last.</td><td>Can support detached work; not chosen for deployments.</td></tr>
             <tr><td>Alerts with your laptop off</td><td><span class="mid">~</span>Timers running scripts.</td><td><span class="mid">~</span>Timers running the agent.</td><td><span class="ok">✓</span>Built in.</td></tr>
             <tr><td>Reach without SSH</td><td><span class="no">✕</span>No.</td><td><span class="no">✕</span>No.</td><td><span class="ok">✓</span>Possible.</td></tr>
             <tr class="grp"><td colspan="4">For us</td></tr>
@@ -943,9 +944,9 @@ server-setup.sh                <span class="c">a public URL of its own: it stays
       <article class="frame" id="road" data-zoom data-n="#24" data-t="One road, not three choices">
         <div class="fhead"><h3>One road, not three choices</h3></div>
         <div class="road">
-          <div class="stop"><b>Today</b><small>No agent. Deploys over SSH with shell scripts. They keep working the whole way.</small></div>
+          <div class="stop"><b>Legacy path</b><small>Deploys over SSH with shell scripts. They keep working whenever the agent cannot start.</small></div>
           <div class="arr">→</div>
-          <div class="stop pick"><b>Phase 3</b><small>The on-demand agent. New features are written in it; old scripts move into it one by one.</small></div>
+          <div class="stop pick"><b>Agent, built</b><small>The on-demand agent does file, service, backup, release and log work with typed requests; old scripts remain the fallback.</small></div>
           <div class="arr">→</div>
           <div class="stop later"><b>Later, if needed</b><small>keepup: a separate, optional program for the always-on part.</small></div>
         </div>
@@ -982,7 +983,7 @@ server-setup.sh                <span class="c">a public URL of its own: it stays
 ├── backups/&lt;id&gt;.tar.zst     <span class="c">one backup per release (20 in all)</span>
 └── shared/                  <span class="c">kept across releases (uploads, …)</span>
 
-~/.shipdeck/                 <span class="c">later, for the agent</span>
+~/.shipdeck/                 <span class="c">the agent's own state</span>
 ├── bin/                     <span class="c">the agent, at the engine's version</span>
 └── state.db                 <span class="c">every event, numbered</span></pre>
         <div class="note"><b>A contract</b><p>The release ids and the <code>current</code>, <code>releases</code>, <code>backups</code> and <code>shared</code> layout are a contract with servers already deployed to. They change only on purpose.</p></div>
@@ -992,7 +993,7 @@ server-setup.sh                <span class="c">a public URL of its own: it stays
         <div class="fhead"><h3>Which Linux</h3></div>
         <ul class="plain">
           <li>Plain deploys install nothing. They work on any Linux with systemd or PM2.</li>
-          <li>What the agent installs later (nginx, Docker) comes from the Linux's own packages, or Docker's official ones.</li>
+          <li>Guided setup installs what shipdeck itself needs (tar, zstd, coreutils, curl, sudo) from the Linux's own packages. What later features install (nginx, Docker) comes from the same package source.</li>
           <li>Recommended order: Debian and Ubuntu first, then Rocky, Alma and Fedora (<a href="../../project-progress.html#p4b1">p4b1</a>).</li>
           <li>The agent reads <code>/etc/os-release</code>, and names a Linux it does not support yet, at setup.</li>
         </ul>
@@ -1266,7 +1267,6 @@ server-setup.sh                <span class="c">a public URL of its own: it stays
           <li>Windows builds in releases (<a href="../../project-progress.html#p2d2">p2d2</a>).</li>
           <li>Code signing (<a href="../../project-progress.html#p2d3">p2d3</a>).</li>
           <li>The .NET SDK for contributors (<a href="../../project-progress.html#p2d4">p2d4</a>).</li>
-          <li>How the agent gets root (<a href="../../project-progress.html#p3d1">p3d1</a>).</li>
           <li>Plain deploys without the agent (<a href="../../project-progress.html#p3d2">p3d2</a>).</li>
         </ul>
         <h4>Later, when their phase starts</h4>

@@ -237,8 +237,8 @@
       <h2>Up next</h2>
       <ol>
         <li>Monorepo deployment is built and verified through SSH in Podman: shared releases, saved app settings, rollback, controls, and logs (<a href="#p1d3">p1d3</a>). Nginx and oxmgr remain future work.</li>
-        <li>The agent now starts on the server (<a href="#p3a1">p3a1</a>, <a href="#p3a2">p3a2</a>). When shipdeck connects, the server downloads the matching build and the engine asks it to say hello. The agent does no work yet. Moving file steps into it is next (<a href="#p3a3">p3a3</a>).</li>
-        <li>Owner: answer the open decisions marked <b>waiting</b>: four for the desktop app (<a href="#p2d1">p2d1</a> to <a href="#p2d4">p2d4</a>) and two for the agent (<a href="#p3d1">p3d1</a>, <a href="#p3d2">p3d2</a>). None of them blocks the engine work. To see only them, pick “Next, and waiting for you” in the filter.</li>
+        <li>Agent completion is built and verified. All ten findings in the <a href="../docs/review/agent-completion-review.md">agent completion review</a> are fixed, including upload and service-control locking, the lost plain-SSH lock channel, command leases after an agent disconnect, and failed backup publish. The monorepo SSH suite and the failure tests passed. What remains is a release carrying the four <code>shipdeck-agent-*</code> archives and the owner's decision on plain deploys (<a href="#p3d2">p3d2</a>). Follow the <a href="../.agents/task/agent-completion.md">agent completion plan</a> and the handoff.</li>
+        <li>Owner: answer the remaining decisions marked <b>waiting</b>: four for the desktop app (<a href="#p2d1">p2d1</a> to <a href="#p2d4">p2d4</a>) and the long-term plain SSH policy (<a href="#p3d2">p3d2</a>).</li>
         <li>Owner: five changes since version 0.6.1 are built but not released. They are Windows support (<a href="#p0f2">p0f2</a>), release details with <kbd>D</kbd> (<a href="#p0b3">p0b3</a>), wrapped log lines (<a href="#p0e3">p0e3</a>), the check for Windows line endings (<a href="#p0c4">p0c4</a>), and the end of support for pre-0.6 releases (<a href="#p0c5">p0c5</a>). Try them, then say when to make a release.</li>
         <li>Owner: look at the spec page, <a href="visual/Plan/spec.html">spec.html</a> (<a href="#p1a1">p1a1</a>), and say yes or what to change. All the older planning pages are merged into it.</li>
         <li>Owner: click through the desktop mockup, <a href="visual/prototype/desktop.html">desktop.html</a> (<a href="#p2a1">p2a1</a>), and say yes or what to change. This is the second take: everything starts from a server. The bar at the bottom of the page switches the theme and the network, shows the first run, picks how the next deploy ends, and opens each dialog.</li>
@@ -265,7 +265,7 @@
 </div>
 
 <script>
-const UPDATED = "2026-11-07";
+const UPDATED = "2026-11-08";
 // Status rules: never start a "planned" step without the owner's go. Only the owner moves a step to "done".
 // Each phase: { n, title, short (for the road at a glance), c (its colour), blurb, subs }.
 // Each item: [id, title, status, date, body (HTML), references (optional)].
@@ -499,35 +499,35 @@ const PLAN = [
    blurb: "A small helper program, <code>shipdeck-agent</code>. The engine installs it on the server when it connects, the way VS Code does; the server downloads it over HTTPS. It runs only while you are connected, as your SSH user, and uses sudo when it needs root. It works with files and services directly, instead of through shell scripts.", subs: [
   { title: "The agent", items: [
    ["p3a1", "Installed and updated on connect", "built", "2026-11-06",
-    "<p>The server downloads the agent into <code>~/.shipdeck/bin</code> at the same version as the engine, so the two always match. Nothing crosses SSH but control messages. The agent starts over SSH and exits when you leave. Nothing listens on a public port.</p><p>Two cases to handle: a home folder that does not allow running programs (noexec), and 32-bit ARM servers, which need their own build.</p>",
+    "<p>The server downloads the agent into <code>~/.shipdeck/bin</code> at the same version as the engine. Published builds download over HTTPS. An explicit development binary can be uploaded with <code>SHIPDECK_AGENT_BINARY</code>; it is not a download fallback. The agent starts over SSH and exits when you leave. Nothing listens on a public port.</p><p>A noexec home uses a private temporary folder. 32-bit ARM needs its own build.</p>",
     ""],
    ["p3a2", "The same messages as the engine", "built", "2026-11-06",
     "<p>The engine and the agent speak the same JSON-RPC, over the SSH connection. That means clear requests and live events, instead of shell scripts and reading their output.</p>",
     "<a href=\"#p1b1\">p1b1</a>"],
-   ["p3a3", "Files, natively", "planned", "",
-    "<p>Read, edit, move and delete files on the server with Rust code, not with shell commands.</p>",
-    ""],
-   ["p3a4", "Deploys that survive a closed laptop", "planned", "",
-    "<p>The server half of a deploy runs as a <code>systemd-run</code> job. If your laptop sleeps or the connection drops, the deploy keeps going, and its log stays in the journal. When you connect again, you see where it is.</p>",
-    ""],
+   ["p3a3", "Files, natively", "built", "2026-11-08",
+    "<p>The agent hashes reusable files, receives bundles on a separate SSH channel with bounded writes, unpacks and verifies them natively, links shared folders, packs and restores backups, lists and reads releases, and removes exactly the paths cleanup was allowed to remove.</p><p>Interrupted uploads and partial files were tested in Podman; a dead receiver now fails in seconds instead of hanging. The old SSH path still runs when the agent is unavailable.</p>",
+    "<a href="../docs/feature/agent.md">feature: agent</a>"],
+   ["p3a4", "Final activation and interrupted-work inspection", "built", "2026-11-08",
+    "<p>Deploys run while connected, with no background job. Prepare and verify first; activate last. A disconnect during preparation leaves the live release unchanged. On reconnect, <code>shipdeck work</code> and the TUI show the actual live release, service state, unfinished paths, and an activation that never reached a health pass. Cleanup needs the explicit <code>--cleanup</code> flag or the TUI's <code>x</code>, and the server re-checks every path.</p><p>A dropped activation connection exited 5 in Podman and was inspected on reconnect; no success was guessed.</p>",
+    "<a href="../docs/feature/agent.md">feature: agent</a>"],
   ]},
   { title: "Memory on the server", items: [
-   ["p3b1", "state.db: every event, numbered", "planned", "",
-    "<p>A small SQLite file on the server, <code>~/.shipdeck/state.db</code>, records every event with a number. When you connect again, the engine asks for everything after the last number it saw. Nothing is lost while you were away.</p>",
-    ""],
+   ["p3b1", "state.db: every event, numbered", "built", "2026-11-08",
+    "<p><code>~/.shipdeck/state.db</code> records numbered events for build, pack, upload, unpack, setup, backup, switch, restart, health, the final outcome, and rollback. <code>shipdeck events --after N</code> replays a page; the TUI shows the newest events with <code>work</code>. The activation check uses the same records.</p>",
+    "<a href="../docs/feature/agent.md">feature: agent</a>"],
   ]},
   { title: "Server setup", items: [
-   ["p3c1", "Set up a server from the app, once", "planned", "",
-    "<p>One guided setup per server, from the app, when you add the server. shipdeck asks for root once (a sudo or root password). Then it prepares the server by itself: zstd, a place for projects in <code>/opt</code>, and the right to do its own tasks as root. This replaces running <code>server-setup.sh</code> by hand for each project.</p><p><b>The owner's rule (2026-10-31):</b> after this setup, nobody runs a command on the server again, not even to add a project. shipdeck makes each project's folder and service by itself.</p><p>Servers set up the old way keep working. shipdeck offers to bring them to the new setup, once.</p>",
+   ["p3c1", "Set up a server from the app, once", "built", "2026-11-08",
+    "<p>One guided setup per server, from the CLI or the TUI (<code>:setup</code>). It asks for the sudo password on stdin, installs missing tools from the Linux's packages, creates the project folder, and installs a <code>visudo</code>-checked rule. <code>--access full</code> grants password-free sudo for every command; <code>--access commands</code> grants exactly what shipdeck runs. Root needs no rule.</p><p>Tested in Podman with a non-root user: a deploy without setup failed before touching the live release; guided setup worked in both access modes; the deploy then succeeded. Debian/Ubuntu and Fedora/RHEL are supported; another Linux is named and stopped. Servers set up the old way keep working.</p>",
     "docs/plan.md, “Still open” · <a href=\"#p2a1\">p2a1</a> · <code>server-setup.sh</code>"],
-   ["p3c2", "A Servers page", "planned", "",
-    "<p>For each server: the Linux version, CPU, memory, disk, uptime, and what is installed.</p>",
+   ["p3c2", "Server facts in CLI and TUI", "built", "2026-11-08",
+    "<p><code>shipdeck server-info</code> prints the Linux and kernel, CPU and cores, memory, the disk behind the project folder, uptime, agent version, and where common tools were found. The TUI shows the same facts in the selected deployable's <code>Server</code> section after connecting. Missing PATH is reported rather than guessed, and filesystem errors are errors.</p>",
     ""],
   ]},
   { title: "Decisions for the owner", items: [
-   ["p3d1", "Decide: how the agent gets root", "waiting", "",
-    "<p>Most work runs as your SSH user. Some work needs root, like nginx and Docker.</p><p><b>Recommended:</b> use sudo, and ask for the password once per connection. <b>The other choice:</b> at setup, allow those commands without a password.</p><p>Both keep the owner's rule from <a href=\"#p3c1\">p3c1</a>: after the one-time setup, nobody runs a command on the server. Adding a project needs root, to install its service. With the first choice, shipdeck asks for the password once per connection. With the second, it asks for nothing after setup.</p>",
-    ""],
+   ["p3d1", "Agent root access", "built", "2026-11-08",
+    "<p>The owner chose full sudo setup or a password-bypass option. Guided setup implements both: <code>--access full</code> and <code>--access commands</code>, with the sudoers rule checked by <code>visudo</code> before installation. Both were tested in Podman; access is never widened without that choice.</p>",
+    "<a href=\"#p3c1\">p3c1</a>"],
    ["p3d2", "Decide: plain deploys without the agent", "waiting", "",
     "<p><b>Recommended:</b> yes. Servers you deploy to today keep working exactly as they do now, over SSH and sudo. Only domains, databases, ready-made apps and mail need the agent.</p>",
     ""],

@@ -40,7 +40,7 @@ Toasts:
 | `An operation is using this connection` | You press `c` to disconnect while a deploy or rollback uses that connection. |
 | `That release is already live` | You press `⏎` on the live release. |
 | `shipdeck did not create that folder, so it will not switch to it` | You press `⏎` on a folder marked `not ours`. |
-| `Not a command: :<text>. Try :logs, :restart, :stop or :start` | You run a command the `:` line does not know. |
+| `Not a command: :<text>. Try :logs, :restart, :setup, :stop or :start` | You run a command the `:` line does not know. |
 | `<folder> is being deployed; only :logs works until it ends` | You run `:stop`, `:start` or `:restart` while that deployable deploys or rolls back. |
 | `Stopping <service>…`, then `<service>: stopped` | `:stop` runs, then is done (`Starting`, `Restarting` alike). |
 | `Wait for the last command to finish` | You run a second `:stop`, `:start` or `:restart` on a deployable before the first is done. |
@@ -126,6 +126,8 @@ The live summary is one of:
 The panel on the right shows the selected deployable, read from its `deploy.yaml`:
 
 - **TARGET:** `ssh` (with `→ <address:port>  ~/.ssh/config` when the host is an alias), `login`, `folder`, `service` with its state, `runs as`, `start` (the full `ExecStart`), and `live`.
+- **SERVER:** once connected through the agent: Linux and kernel, CPU and cores, free and total memory, the disk behind the folder, uptime, and the agent version.
+- **WORK:** when there is something to say: the service's real state, unfinished files (`x` cleans them), an activation that never reached a health pass, and the newest saved events.
 - **PIPELINE:** one row per configured step item: the commands of each step, with `local`, `server` or `check` beside them, the `pack` lists (`binary`, `project`, `deploy`, `leaves`), what the `backup` `takes` and `leaves` (or a faint `none: keep.compressed is 0`), how `health` waits, and the `failed` `policy`: `asks, then rolls back after 30s` or `rolls back at once`.
 - **POLICY:** `keeps` (`5 unpacked + 15 compressed`, from `pipeline.backup.keep`), `shared` and `env file` when set, and `unit`: `service.template` when that file is in the deploy folder, else `built-in template`.
 
@@ -138,6 +140,7 @@ With no deployables, the screen shows `No deployables yet` and where shipdeck lo
 | `r` | Open Releases for the selected deployable. |
 | `c` | Connect the selected deployable and read its live status. When it is connected, disconnect it instead. |
 | `s` | Refresh the live status of the deployables that are connected. |
+| `x` | Clean up the unfinished files the server reported. Asks first; the live release and other releases are never touched. |
 | `:` | Open the command line for the selected deployable's service. |
 
 The footer's `c` label reads `connect`, or `disconnect` when the selected deployable is connected. Disconnecting closes the SSH session, and deployables on the same `user@host:port` share it, so they all show `not connected`. `c` will not disconnect while a deploy or rollback uses that connection, and while the deployable is still connecting it only says `Still connecting`.
@@ -154,6 +157,7 @@ The footer's `c` label reads `connect`, or `disconnect` when the selected deploy
 | --- | --- |
 | `:logs` | Opens the [log view](#logs). Works at any time. |
 | `:restart` | Restarts the service the way a deploy's Restart step does. Asks first. |
+| `:setup` | Guided one-time server setup: choose full sudo or only the commands shipdeck runs, then enter the sudo password. |
 | `:stop` | Stops the service. Asks first. It stays stopped until it is started again, a deploy restarts it or the server reboots. |
 | `:start` | Starts the service. A PM2 app that is already online is left as it is. |
 

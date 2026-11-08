@@ -1,6 +1,394 @@
 # Handoff
 
+## Commit checkpoint — 2026-11-08
+
+The owner asked to commit the latest changes in focused steps. The changes
+are grouped as protocol and schema, native agent operations, engine integration,
+CLI/TUI controls, development recipes, and documentation with review records.
+This checkpoint supersedes the older notes saying the tree is uncommitted.
+No version change, push, or release publication is part of this task.
+
+Fresh checks passed before committing: formatting, workspace compilation with
+all targets, all 374 tests, strict pedantic/performance Clippy, and
+`git diff --check`. Cargo was unavailable inside the sandbox; the Rust checks
+ran outside it. SSH scenarios, schema generation, and release checks were not
+rerun in this session; their earlier evidence and limits remain below.
+
+## Follow-up review fixed — 2026-11-08
+
+`docs/review/agent-completion-review.md` was extended with findings 7–10 after
+the first six were fixed. All ten are now fixed and the review is `(done)`.
+
+- **7, upload and service control.** `UPLOAD_PREPARE` and `SERVICE_CONTROL` now
+  need the project lock. The upload carries the lock token; the receiver refuses
+  a ticket when the lock is free or belongs to another token, and re-checks
+  during the stream. `service/control` holds the lock for the whole change.
+- **8, lost legacy lock channel.** The plain SSH lock shell is monitored. If its
+  channel ends, `is_alive` fails and release reports shutdown or timeout errors.
+- **9, commands outliving the agent lock.** Every `deploy.yaml` server command
+  writes a `.shipdeck.command` lease with its shell PID and a token. A new
+  deploy, rollback, cleanup or service control refuses while that command is
+  alive; a stale lease is removed. This keeps a disconnected agent from letting
+  a second operation overlap a command that is still running.
+- **10, failed backup publish.** A non-duplicate publish error keeps the packed
+  `.part` file and reports its path.
+
+Verified after these fixes:
+
+- Two new Podman failure tests. Killing the plain SSH lock shell during a
+  deploy made it fail with "the connection holding the project lock was lost"
+  and left the live release unchanged. Killing the agent during a long setup
+  command made the next deploy say "a server command is still running for this
+  project"; after the command ended, a later deploy succeeded.
+- Unit tests cover an upload and a service control without the lock, a ticket
+  after its lock is released, a kept backup part on a failed publish, and the
+  mutation guard.
+- The existing monorepo SSH suite passed after all lock and lease changes:
+  deploy, unchanged, manager/app changes, shared data, retention, compressed
+  backup rollback, failed restore, setup failure, partial activation recovery,
+  custom PM2 backups, done warnings, and RPC controls/logs.
+- Final sequence: formatting, workspace check, all tests (38 CLI, 43 agent,
+  two agent process, 233 engine, 24 protocol, 34 TUI), strict Clippy, schema,
+  `git diff --check`, and `dist generate --check`.
+
+Remaining: publish a release with the four `shipdeck-agent-*` archives after the
+owner picks the version; disk-full, 32-bit ARM and an actual GitHub release were
+not tested. Upload speed still has no measured gain over SFTP or direct SSH.
+
+## Agent completion continued — 2026-11-08
+
+This section supersedes the stopping point below. The agent is now built and
+verified for the tested single-app paths. The working tree is still
+uncommitted; no commits were made. All older uncommitted work was preserved.
+
+### What was finished
+
+- **Compilation.** `apps/cli/src/console/run.rs` now uses the typed
+  `ServerInfoGet`, `ReleasesList`, `WorkGet`, `EventsRead` and `ServerSetup`
+  requests. No runtime dependency was added; `serde_json` remains a
+  dev-dependency for tests. The protocol schema was regenerated.
+- **Native agent operations.** Service status/control, release listing,
+  release contents and file reads, release drops, live logs with stop,
+  shared links, native backup create/restore, approved cleanup, failed-release
+  discard, recent-event reads, and unconfirmed-activation detection.
+- **Event recording and replay.** Build, pack, upload, unpack, setup, backup,
+  switch, restart, health, final outcome and rollback events are numbered in
+  `~/.shipdeck/state.db`. `shipdeck events --after N` replays a page; `work`
+  shows the newest page.
+- **Interrupted work.** `shipdeck work` shows the live release, service state,
+  unfinished paths, recent events and an activation that never reached a
+  health pass. `--cleanup` (or `x` in the TUI) is the approval; the server
+  re-checks the list and refuses live releases, other releases, backups, and
+  escaping paths.
+- **Server facts.** `shipdeck server-info` and the TUI Server section show
+  Linux, kernel, CPU, memory, disk, uptime, tools and agent version.
+- **Guided setup.** CLI `shipdeck setup` and TUI `:setup` install missing
+  tools, create the project folder, and install a `visudo`-checked sudoers
+  rule. `--access full` grants password-free sudo for everything;
+  `--access commands` grants only what shipdeck runs. The password travels on
+  stdin and is never saved. Debian/Ubuntu and Fedora/RHEL are supported.
+- **Review fixes.** All six findings in
+  `docs/review/agent-completion-review.md` are fixed and the review is
+  `(done)`: unique exclusive backup files, live-release checks before removal,
+  real-directory checks, a shared project lock on the plain SSH path via
+  `flock`, event database errors surfaced, and an 8 KiB bounded log reader.
+  The agent also refuses project mutations unless the same connection holds
+  the project lock, and `work --cleanup` takes that lock first.
+
+### Verified after the final changes
+
+- `cargo fmt --all -- --check`, `cargo check --workspace --all-targets`,
+  `cargo test --workspace` (all pass), strict pedantic/performance Clippy,
+  protocol schema regeneration, `dist plan`, `dist generate --check`, and
+  `git diff --check`. Logs: `.tmp/final-check.log`, `.tmp/final-test.log`,
+  `.tmp/final-clippy.log`, and `.tmp/final-schema.log`.
+- `shipdeck releases` on a fresh project with the agent prints
+  `no releases on the server yet` and exits 0, as the plain SSH path did.
+- Podman SSH (`127.0.0.1:44681`, key `.tmp/ssh/id_ed25519`): first and repeat
+  single-app deploys; open and compressed rollback; shared-folder persistence;
+  unchanged exit 6; native release list/contents/file reads; service
+  stop/start; agent-followed logs with stop; guided setup for a non-root user
+  in `commands` and `full` modes; a deploy without setup failing before the
+  live release changed; interrupted upload with a bounded failure and kept
+  partial; approved cleanup leaving the live release alone; a dropped
+  activation connection exiting 5, then inspected with `work`; and mixed
+  agent/legacy concurrency refusal in both directions.
+- Plain SSH fallback with `SHIPDECK_AGENT_BINARY` pointing at a missing file:
+  the deploy completed and held the `flock` project lock.
+- The existing monorepo SSH suite passed after the lock, mutation-guard and
+  path changes:
+  `python3 tests/monorepo_ssh.py --container shipdeck-agent-work --port 44681
+  --key .tmp/ssh/id_ed25519`, with `SHIPDECK_AGENT_BINARY` set. It covered
+  deploy, unchanged, manager/app changes, shared data, retention, backup
+  rollback, failed restore, setup failure, partial activation recovery,
+  custom PM2 backups, done warnings, and RPC controls/logs. The printed test
+  folder lived in the command's temporary `/tmp`, so its log was not kept.
+- Release agent (`target/release/shipdeck-agent`, 5,738,456 bytes, 5.47 MiB on
+  this machine): `--version`, `agent/hello`, `agent/ping`, `agent/shutdown` on
+  the owner's VPS in an isolated `/tmp` folder. The folder was removed. No
+  existing deployment, privilege, or Shipdeck state was changed.
+
+Test logs and scripts are under `.tmp/e2e/` (ignored), including
+`interrupted.log`, `drop.log`, `final-agent-deploy.log`,
+`final-legacy-deploy.log`, `agent-first3.log`, `legacy-second3.log`,
+`legacy-hold.log`, and `rpc.py`. The container `shipdeck-agent-work` still
+runs at `127.0.0.1:44681` with root and `shipdeploy` (password
+`ShipDeckTest!42`) for tests. `/opt/shipdeck-e2e`, `/opt/shipdeck-interrupt`,
+`/opt/shipdeck-drop` and `/opt/shipdeck-user-e2e` are disposable test state.
+The interrupted partial left in `/opt/shipdeck-interrupt` was kept on purpose.
+
+### Remaining
+
+- **Release.** Version stays 0.7.1 in this tree. A published release must carry
+  the four `shipdeck-agent-*` archives; `dist plan` lists them. Decide the
+  version and publish before claiming a public release.
+- **Plain SSH policy.** p3d2 is still the owner's decision. The legacy path
+  now takes the project lock but still uses shell commands.
+- **Not tested.** Disk-full behavior, an actual GitHub release publication,
+  and 32-bit ARM. Upload speed has no proven gain over SFTP/direct SSH.
+- **Privileges.** Guided setup changes privileges only through the explicit
+  `--access` choice. It was not run on the owner's VPS.
+
+## Code review checkpoint — 2026-11-08
+
+The tree changed after the agent-completion handoff below. It now compiles.
+`cargo check --workspace --all-targets`, `cargo test --workspace`, formatting,
+strict Clippy, and `git diff --check` passed in this review. The full Podman SSH
+suite was not rerun on this tree.
+
+Read `docs/review/agent-completion-review.md` before further agent work. It has
+six open findings: backup partial overwrite, deletion of a live release,
+incomplete project locking, cleanup through linked project directories, hidden
+event-read errors, and unbounded log-line reads. Fix and test these before
+calling the agent production ready. The earlier compile-failure and 802-line
+notes below describe an older tree; `deploy/mod.rs` is now 775 lines.
+
+## Agent completion handoff — 2026-11-08
+
+The owner asked to hand this work to another agent. Stop implementation here.
+The working tree is uncommitted. Read `.agents/task/agent-completion.md` first.
+This section supersedes older notes below, including the old claims that
+SQLite approval and the sudo choice are still open.
+
+### First: restore compilation
+
+The latest change started `server/info` and the CLI `server-info` command.
+`cargo check --workspace --all-targets` currently fails: `apps/cli/src/console/run.rs`
+uses `serde_json` in normal code, but `apps/cli/Cargo.toml` lists it only under
+`[dev-dependencies]`. Fix this without silently adding an unapproved project
+dependency: either use typed requests and answers without that new runtime
+dependency, or obtain the owner's approval before promoting the existing crate.
+The new `ServerFacts`/`ServerInfoGet` schema entries have not yet been written
+to `docs/schema/protocol.schema.json`. Regenerate the schema after the CLI fix.
+The facts code in `crates/agent/src/facts.rs` and the engine RPC were not yet
+tested end to end. TUI server facts are not implemented. Review the `df`
+parsing, missing PATH handling, and filesystem errors on supported Linux hosts.
+
+`crates/engine/src/deploy/mod.rs` is 802 lines after these changes, above the
+project's 800-line hard cap. Split by responsibility before final verification.
+Run `cargo fmt --all -- --check`, the workspace tests, strict Clippy, schema
+checks, and the Podman scenarios again after fixing the current work.
+
+### Owner decisions and boundaries
+
+- Continue until the agent is genuinely usable in production. Do not stop at a
+  partial milestone. The owner explicitly asked another agent to continue.
+- No `systemd-run`, detached deployment worker, scheduling, or public agent
+  port. The agent runs over SSH as the connected user and exits on disconnect.
+- Prepare and verify before activation. A dropped connection can leave files;
+  do not clean interrupted work without the owner's approval. If activation
+  was interrupted, inspect the actual live release and services.
+- Preserve single-app and monorepo deployment, existing reuse, rollback, and
+  the plain SSH path while the agent is developed. Whether plain SSH should
+  remain supported in the long term is still undecided.
+- The owner selected full sudo setup or a password-bypass option for guided
+  setup. This is not implemented yet. Do not silently change a live server's
+  privileges; the user explicitly allowed VPS tests without breaking anything.
+- The owner approved `rusqlite` 0.41.1 with defaults disabled and bundled
+  SQLite, plus the existing workspace `tar` and `zstd` crates for the agent.
+  Ask before adding any other dependency. A small isolated tar/zstd size test
+  added about 204 KiB, but it is not a measurement of the finished agent.
+- Published builds download the matching agent. Development mode uses the
+  explicitly selected `SHIPDECK_AGENT_BINARY`; it is not a download fallback.
+
+### Work in the tree
+
+- Explicit development upload checks ELF CPU, uploaded SHA-256, exact agent
+  version, and the agent protocol. Agent protocol is now 2. Version remains
+  0.7.1; assess release versioning and cached older binaries before publishing.
+- A dedicated SSH channel sends release bytes to the same agent in receiver
+  mode. It uses a private one-use reservation, bounded buffers, declared size,
+  checksum, and a confirmation. Partial files remain after failure. First
+  attempts refuse existing unfinished artifacts; the same operation may retry
+  a full upload after a reuse mismatch.
+- Agent-native hashing, project directory preparation, atomic current-link
+  switching, and tar/zstd extraction are connected to single-app and monorepo
+  deployment. Extraction checks paths, symlinks, file modes, byte and entry
+  limits, checksums, and reuse. It keeps failed staging for inspection.
+  Service management, shared links, backups, and other operations still use
+  existing SSH commands; native file and service work is incomplete.
+- Project locks are held by the connected agent using OS file locks. Tokens
+  prevent a cancelled request from unlocking another operation. Both deploy
+  shapes and rollbacks acquire locks and refresh live facts. The engine checks
+  the lock during the pipeline and reports uncertain activation on a lost
+  connection. Locks only cover cooperating agent sessions; the legacy SSH path
+  does not participate. A command already running over SSH may outlive a lost
+  control channel. Test and resolve this before claiming production safety.
+- `~/.shipdeck/state.db` stores numbered events with SQLite. Upload start and
+  verification, unpack start/result, and switch start/completion are stored.
+  Bounded event replay exists at the agent/engine layer. Full deployment event
+  recording, client replay, and uncertain-state recovery are still missing.
+- Agent inspection reports the live symlink and unfinished files. Preparation
+  warns about them. There is no complete reconnect view or approved cleanup
+  flow yet. Check all legacy rollback and checksum-mismatch cleanup paths
+  against the owner's rule before finishing.
+- The CLI `releases` command previously hung when a new host key was asked
+  during its request. It now handles questions while waiting. The subsequent
+  incomplete generic request refactor is part of the compile failure above.
+
+### Verified and not verified
+
+- Latest `cargo test -p shipdeck-agent --lib`: 17 passed, including archive,
+  SQLite, locks, and facts parser tests. Latest workspace `cargo check` failed
+  as described above. Do not report current workspace tests or Clippy as
+  passing; they passed before later changes, not on this exact tree.
+- The full monorepo Podman deployment/rollback suite passed with native
+  extraction: `/tmp/shipdeck-monorepo-e2e-e8uxmk31/commands.log`. It started
+  before the latest retry, event, and server-info changes; rerun it.
+- `/tmp/shipdeck-agent-work/concurrent_deploy.py` passed: one deployment
+  succeeded and a concurrent one was refused. `ssh_lock_test.py` checked two
+  SSH agents, wrong tokens, and release on disconnect. `interruption.py`
+  checked a truncated upload, replay refusal, and an unchanged live link.
+  `cancel_agent.py` checked a blocked SQLite request ends on disconnect.
+- The disposable container `shipdeck-agent-work` is running on
+  `127.0.0.1:44681`; key: `/tmp/shipdeck-agent-work/id_ed25519`. Check before
+  reuse. Podman requires an escalated command in this environment. The owner
+  authorized Podman testing. It contains test projects and processes.
+- The owner allowed `ssh mia_namecheap` only without breaking existing
+  deployments. It is root on Ubuntu 26.04.1 LTS, Linux x86-64. A private temp
+  folder held a test binary and upload measurements; all those completed test
+  files and the folder were removed. No existing deployment or Shipdeck state
+  was changed. Do not perform deployment or privileged setup on that VPS.
+- VPS transfer trials used one connection and 8 MiB, with a server checksum:
+  SFTP 36.7–49.2 s, direct SSH 35.7–59.4 s, command RTT 699–756 ms. The agent
+  receiver was not measured on that VPS. The separate local Podman benchmark
+  did not show an agent speed gain. Do not claim faster uploads without better
+  evidence. Logs and sources: `/tmp/shipdeck-agent-work/`.
+
+### Remaining work
+
+1. Fix the current compile failure and schema; then finish and verify server
+   facts in the CLI and TUI. Update the docs and tracker.
+2. Finish agent-native file operations, shared links, backups, service controls,
+   releases, and logs. Audit archive extraction and cancellation, including
+   concurrent sessions, filesystem races, symlinks, disk full, and retries.
+3. Implement complete numbered event recording and reconnect replay; inspect
+   uncertain activation and provide cleanup only after explicit user approval.
+4. Build guided setup and the approved full sudo/password-bypass option. Test
+   fresh and existing Ubuntu/Debian servers in Podman; do not modify the VPS.
+5. Verify both deployment shapes, dropped SSH during upload, preparation and
+   activation, user-approved cleanup, permission failures, and release assets.
+   Measure actual binary size and any upload gains. Run the final required
+   checks and update the plan, tracker, feature docs, visual spec and handoff.
+
+Other uncommitted work predates agent implementation, including README and
+justfile install recipes and the Cargo.lock crypto-bigint update. Preserve it;
+do not reset or discard unrelated changes. No commits were made in this run.
+
 Current checkpoint: 2026-11-07.
+
+## Agent SQLite dependency review — 2026-11-07
+
+Also compared libsql 0.10.0 with defaults disabled and core only: 69 Linux
+normal/build package-version pairs, 24 absent from the current lockfile.
+Minimal bundled rusqlite resolves 11 total and five new pairs. libsql supplies
+an async-shaped local/remote API but also links its own native libSQL engine.
+Comparison added to the review; no project dependency added. Choice remains open.
+
+The owner paused SQLite dependency approval to check size and dependency cost.
+Review: docs/review/agent-sqlite-dependency-review.md. Isolated offline trees
+for rusqlite 0.41.1, with defaults disabled, add five workspace package names
+with or without bundled: rusqlite, libsqlite3-sys, both fallible iterators,
+and vcpkg. Bundled compiler helpers already exist elsewhere in the workspace.
+Only smallvec is already in the agent tree. No binary-size measurement or
+project dependency addition was made. Evidence is under
+/tmp/shipdeck-rusqlite-review-qqkxzryw/. Approval remains pending.
+The owner selected an unrestricted sudo/password-bypass setup option for
+future server operations. This supersedes the earlier narrow-permissions
+recommendation; implementation and testing are still pending.
+Agent work began before the dependency question: local development binary
+upload changes are uncommitted in engine/agent/development.rs and its callers.
+The earlier test run was interrupted; do not report those checks as passed.
+
+## Agent working plan — 2026-11-07
+
+Start future agent work at .agents/task/agent-completion.md. Its A1–A11 table
+tracks implementation and verification. No implementation started this session.
+The owner's newer decisions supersede older durable-job notes below: no
+systemd-run or detached deploy worker; prepare first, activate last; leave
+interrupted files until cleanup is approved. Reconnect must inspect an
+activation whose result is uncertain. Development mode explicitly uploads a
+matching local agent; never use it as a failed-download fallback.
+The proposed data channel runs the same binary in a short-lived receiver mode,
+separate from control JSON. Receiver coordination and upload benchmarks are
+still design work. Updated agent guide, tracker scope, and visual spec.
+
+## Agent completion scope review — 2026-11-07
+
+The owner reported an agent connection failure on a VPS and asked what would
+be built to complete the agent. Checked the current agent loop, engine startup,
+installer, release configuration, Phase 3 tracker, and agreed visual spec.
+The binary exists but serves only hello, ping, and shutdown. Remaining work
+includes native file operations, durable deploy jobs, numbered SQLite events,
+server setup, server information, engine/client integration, and release checks.
+The existing handoff records missing agent assets in v0.7.1. Current code still
+requests that tag. Live release verification failed: gh could not connect to
+api.github.com, and the web tool could not access the release API. The exact
+VPS failure remains unconfirmed without its error output. No runtime code changed.
+Root permissions remain an owner decision. Desktop Servers UI belongs to the
+desktop work; agent/server RPC support belongs to agent completion. Nginx,
+databases, Docker apps, mail, and keepup remain separate feature phases.
+
+## Yanked cryptography dependency — 2026-11-07
+
+The install warning came from crypto-bigint 0.7.5 pinned in Cargo.lock.
+Its changelog cites security fixes and later API changes as yank reasons.
+RustSec RUSTSEC-2026-0387 describes timing variability fixed in >=0.7.6:
+https://rustsec.org/advisories/RUSTSEC-2026-0387.
+Updated only crypto-bigint to 0.7.10 and its required ctutils to 0.4.8 with
+`cargo update -p crypto-bigint --precise 0.7.10`. Kept --locked in recipes.
+
+Formatting, workspace/all-target compilation, strict Clippy, and diff checks
+passed. CLI tests (37), engine tests (228), and agent library tests (6) passed.
+Full workspace testing remains limited by cached absolute paths from the old
+/mnt/Projects checkout: two agent process tests cannot spawn their binary;
+the protocol schema test reads its old manifest path and gets no file.
+No application source or manifest changed. No global reinstall was run.
+Additional test output: /tmp/shipdeck-crypto-update-tests.log.
+
+## Local install recipe — 2026-11-07
+
+Added `just install`: `cargo install --path apps/cli --locked`. It builds the
+local CLI in release mode and installs it into Cargo's configured bin folder,
+usually ~/.cargo/bin. README development examples include the command.
+Verified recipe parsing, dry-run output, justfile formatting, and diff checks.
+The installation itself was not run; the request was to add the recipe.
+
+## Justfile essentials — 2026-11-07
+
+Added safe default help, debug/release run recipes, workspace builds with a
+profile argument, build-release/release shortcuts, check, test, fmt, fmt-check,
+strict lint, verify, API docs, clean, and a website build recipe. Existing schema,
+protocol, version, and website commands remain. README development examples
+describe the new commands. Arguments use quoted shell positional parameters.
+
+Verified: default help, real `just run --help`, justfile formatting, diff checks,
+nine isolated argument-forwarding checks, workspace formatting, compilation,
+and strict pedantic/performance Clippy. `just test` reaches existing agent
+process tests, but both fail to spawn their compiled-in binary path with
+ENOENT. The CLI's 37 tests and agent library's six tests pass before this
+failure. The full workspace suite therefore did not pass. No application code
+or dependencies changed; no release build or website deployment was run.
 
 Two efforts are merged on `main`: the server agent (`p3a1`, `p3a2`) and the
 completed monorepo deployment. The agent notes are under `## Agent` below.
