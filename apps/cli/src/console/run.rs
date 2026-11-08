@@ -1,15 +1,19 @@
 //! One command run against the engine: what it asks, and what it says.
 
+use std::future::Future;
 use std::process::ExitCode;
 use std::time::Instant;
 
-use shipdeck_protocol::connection::{Connection, Handle, Incoming};
+use shipdeck_protocol::connection::{Connection, Error, Handle, Incoming};
+use shipdeck_protocol::message::agent::ServerFacts;
 use shipdeck_protocol::message::ask::{Ask, SecretAnswer};
 use shipdeck_protocol::message::common::{DeployableInfo, OnFailure, Outcome};
 use shipdeck_protocol::message::event::Event;
 use shipdeck_protocol::message::method;
 use shipdeck_protocol::message::request::{
-    DeployStart, OperationStarted, ReleasesList, ReleasesListResult, RollbackStart,
+    DeployStart, EventsRead, EventsReadResult, OperationStarted, ReleasesList, ReleasesListResult,
+    RollbackStart, ServerInfoGet, ServerSetup, SetupAccess, SetupReport, WorkCleanup,
+    WorkCleanupResult, WorkGet, WorkReport,
 };
 use shipdeck_protocol::wire::Id;
 
@@ -127,12 +131,12 @@ impl Console {
             Ok(found) => found.clone(),
             Err(err) => return self.fail(&err),
         };
+        let handle = self.connection.handle();
         let asked = ReleasesList {
             deployable: project.slug.clone(),
         };
         let listing = self
-            .connection
-            .request::<_, ReleasesListResult>(method::RELEASES_LIST, &asked)
+            .settle(handle.request::<_, ReleasesListResult>(method::RELEASES_LIST, &asked))
             .await;
         match listing {
             Ok(listing) if listing.entries.is_empty() => {
@@ -144,6 +148,225 @@ impl Console {
                 ExitCode::SUCCESS
             }
             Err(err) => self.fail(&err.reason()),
+        }
+    }
+
+    /// Shows the selected server's current system information.
+    pub async fn server_info(&mut self, projects: &[DeployableInfo], name: &str) -> ExitCode {
+        let project = match find(projects, name) {
+            Ok(found) => found,
+            Err(err) => return self.fail(&err),
+        };
+        let handle = self.connection.handle();
+        let asked = ServerInfoGet {
+            deployable: project.slug.clone(),
+        };
+        let result = self
+            .settle(handle.request::<_, ServerFacts>(method::SERVER_INFO, &asked))
+            .await;
+        let facts = match result {
+            Ok(facts) => facts,
+            Err(err) => return self.fail(&err.reason()),
+        };
+        println!("System: {} · kernel {}", facts.os, facts.kernel);
+        println!("CPU: {} · {} available cores", facts.arch, facts.cpu_count);
+        println!(
+            "Memory: {} available of {}",
+            shipdeck_engine::human::bytes(facts.memory_available),
+            shipdeck_engine::human::bytes(facts.memory_total)
+        );
+        println!(
+            "Disk ({}): {} available of {}",
+            facts.disk_path,
+            shipdeck_engine::human::bytes(facts.disk_available),
+            shipdeck_engine::human::bytes(facts.disk_total)
+        );
+        println!(
+            "Uptime: {}",
+            shipdeck_engine::human::duration(std::time::Duration::from_secs(facts.uptime_seconds))
+        );
+        println!("Agent: {}", facts.agent_version);
+        for (tool, path) in facts.tools {
+            println!("{tool}: {}", path.as_deref().unwrap_or("not found"));
+        }
+        for note in facts.notes {
+            eprintln!("{note}");
+        }
+        ExitCode::SUCCESS
+    }
+
+    /// Shows what an interrupted operation left, and removes it with
+    /// `--cleanup`, which is the approval.
+    pub async fn work(
+        &mut self,
+        projects: &[DeployableInfo],
+        name: &str,
+        cleanup: bool,
+    ) -> ExitCode {
+        let project = match find(projects, name) {
+            Ok(found) => found,
+            Err(err) => return self.fail(&err),
+        };
+        let handle = self.connection.handle();
+        let asked = WorkGet {
+            deployable: project.slug.clone(),
+        };
+        let report = match self
+            .settle(handle.request::<_, WorkReport>(method::WORK_GET, &asked))
+            .await
+        {
+            Ok(report) => report,
+            Err(err) => return self.fail(&err.reason()),
+        };
+        println!(
+            "Current: {}",
+            report.current.as_deref().unwrap_or("nothing is live")
+        );
+        if let Some(active) = &report.active {
+            println!("Service: {active}");
+        }
+        if let Some(release) = &report.uncertain {
+            eprintln!(
+                "Warning: activation of {release} was never confirmed; the live release and \
+                 service above are the server's real state, not a guess"
+            );
+        }
+        if report.unfinished.is_empty() {
+            println!("Unfinished files: none");
+        } else {
+            println!("Unfinished files:");
+            for artifact in &report.unfinished {
+                println!("  {artifact}");
+            }
+        }
+        if !report.events.is_empty() {
+            println!("Recent events:");
+            for event in &report.events {
+                println!(
+                    "  #{} {} {} {} {}",
+                    event.sequence, event.created_at, event.operation, event.kind, event.detail
+                );
+            }
+        }
+        if !cleanup {
+            return ExitCode::SUCCESS;
+        }
+        if report.unfinished.is_empty() {
+            println!("Nothing to clean up");
+            return ExitCode::SUCCESS;
+        }
+        let asked = WorkCleanup {
+            deployable: project.slug.clone(),
+            artifacts: report.unfinished,
+        };
+        match self
+            .settle(handle.request::<_, WorkCleanupResult>(method::WORK_CLEANUP, &asked))
+            .await
+        {
+            Ok(result) => {
+                for artifact in result.removed {
+                    println!("removed {artifact}");
+                }
+                ExitCode::SUCCESS
+            }
+            Err(err) => self.fail(&err.reason()),
+        }
+    }
+
+    /// Prints the events saved on the server, oldest first.
+    pub async fn events(
+        &mut self,
+        projects: &[DeployableInfo],
+        name: &str,
+        after: i64,
+        limit: u32,
+    ) -> ExitCode {
+        let project = match find(projects, name) {
+            Ok(found) => found,
+            Err(err) => return self.fail(&err),
+        };
+        let handle = self.connection.handle();
+        let asked = EventsRead {
+            deployable: project.slug.clone(),
+            sequence: after,
+            limit,
+        };
+        match self
+            .settle(handle.request::<_, EventsReadResult>(method::EVENTS_READ, &asked))
+            .await
+        {
+            Ok(result) if result.events.is_empty() => {
+                eprintln!("no events after {after}");
+                ExitCode::SUCCESS
+            }
+            Ok(result) => {
+                for event in result.events {
+                    println!(
+                        "#{} {} {} {} {}",
+                        event.sequence, event.created_at, event.operation, event.kind, event.detail
+                    );
+                }
+                ExitCode::SUCCESS
+            }
+            Err(err) => self.fail(&err.reason()),
+        }
+    }
+
+    /// Prepares a server once, through guided setup.
+    pub async fn setup(
+        &mut self,
+        projects: &[DeployableInfo],
+        name: &str,
+        access: SetupAccess,
+        sudo_password: Option<String>,
+    ) -> ExitCode {
+        let project = match find(projects, name) {
+            Ok(found) => found,
+            Err(err) => return self.fail(&err),
+        };
+        let handle = self.connection.handle();
+        let asked = ServerSetup {
+            deployable: project.slug.clone(),
+            access,
+            sudo_password,
+        };
+        match self
+            .settle(handle.request::<_, SetupReport>(method::SERVER_SETUP, &asked))
+            .await
+        {
+            Ok(report) => {
+                println!("System: {}", report.os);
+                println!("User: {}", report.user);
+                println!("Folder: {}", report.dir);
+                println!("Access: {}", report.access);
+                if !report.installed.is_empty() {
+                    println!("Installed: {}", report.installed.join(", "));
+                }
+                for note in report.notes {
+                    eprintln!("{note}");
+                }
+                ExitCode::SUCCESS
+            }
+            Err(err) => self.fail(&err.reason()),
+        }
+    }
+
+    /// Waits for one typed request, answering login questions meanwhile.
+    async fn settle<F, T>(&mut self, request: F) -> Result<T, Error>
+    where
+        F: Future<Output = Result<T, Error>>,
+    {
+        let handle = self.connection.handle();
+        tokio::pin!(request);
+        loop {
+            tokio::select! {
+                result = &mut request => return result,
+                incoming = self.connection.recv() => match incoming {
+                    Some(Incoming::Ask { id, ask }) => answer(&handle, self.paint, self.choices, id, ask),
+                    Some(_) => {}
+                    None => return request.await,
+                }
+            }
         }
     }
 

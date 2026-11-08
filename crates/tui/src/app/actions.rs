@@ -5,10 +5,12 @@ use std::collections::VecDeque;
 
 use ratatui::widgets::TableState;
 
+use shipdeck_protocol::message::agent::ServerFacts;
 use shipdeck_protocol::message::method;
 use shipdeck_protocol::message::request::{
     ConnectionClose, DeployStart, Done, LogsFollow, LogsFollowResult, LogsStop, OperationStarted,
-    ReleasesList, ReleasesListResult, RollbackStart, ServiceControl, StatusGet, StatusGetResult,
+    ReleasesList, ReleasesListResult, RollbackStart, ServerSetup, ServiceControl, SetupAccess,
+    SetupReport, StatusGet, StatusGetResult, WorkCleanup, WorkCleanupResult, WorkGet, WorkReport,
 };
 
 use shipdeck_engine::remote::{Control, log_command};
@@ -92,6 +94,95 @@ impl App {
                 .map(convert::status)
                 .map_err(|err| err.reason());
             let _ = tx.send(Fetched::Status { index, result });
+        });
+        self.refresh_facts(index);
+        self.refresh_work(index);
+    }
+
+    /// Reads the server's Linux, CPU, memory, disk and tools.
+    pub(super) fn refresh_facts(&mut self, index: usize) {
+        let Some(deployable) = self.deployables.get(index).cloned() else {
+            return;
+        };
+        let (engine, tx) = (self.engine.clone(), self.fetched.clone());
+        tokio::spawn(async move {
+            let asked = shipdeck_protocol::message::request::ServerInfoGet {
+                deployable: deployable.slug.clone(),
+            };
+            let result = engine
+                .request::<_, ServerFacts>(method::SERVER_INFO, &asked)
+                .await
+                .map_err(|err| err.reason());
+            let _ = tx.send(Fetched::Facts { index, result });
+        });
+    }
+
+    /// Reads the live release, unfinished files, and recent events.
+    pub(super) fn refresh_work(&mut self, index: usize) {
+        let Some(deployable) = self.deployables.get(index).cloned() else {
+            return;
+        };
+        let (engine, tx) = (self.engine.clone(), self.fetched.clone());
+        tokio::spawn(async move {
+            let asked = WorkGet {
+                deployable: deployable.slug.clone(),
+            };
+            let result = engine
+                .request::<_, WorkReport>(method::WORK_GET, &asked)
+                .await
+                .map_err(|err| err.reason());
+            let _ = tx.send(Fetched::Work { index, result });
+        });
+    }
+
+    /// Removes the reported unfinished files the user approved.
+    pub(super) fn cleanup_work(&mut self, index: usize, artifacts: Vec<String>) {
+        let Some(deployable) = self.deployables.get(index).cloned() else {
+            return;
+        };
+        let (engine, tx) = (self.engine.clone(), self.fetched.clone());
+        tokio::spawn(async move {
+            let asked = WorkCleanup {
+                deployable: deployable.slug.clone(),
+                artifacts,
+            };
+            let result = engine
+                .request::<_, WorkCleanupResult>(method::WORK_CLEANUP, &asked)
+                .await
+                .map(|result| result.removed)
+                .map_err(|err| err.reason());
+            let _ = tx.send(Fetched::Cleaned { index, result });
+        });
+    }
+
+    /// Runs guided setup with the chosen access and the sudo password.
+    pub(super) fn start_setup(
+        &mut self,
+        index: usize,
+        access: SetupAccess,
+        password: Option<String>,
+    ) {
+        if self.setting_up.contains(&index) {
+            self.notify("Guided setup is already running", Tone::Warn);
+            return;
+        }
+        let Some(deployable) = self.deployables.get(index).cloned() else {
+            return;
+        };
+        self.setting_up.push(index);
+        self.notify("Preparing the server…", Tone::Info);
+        let (engine, tx) = (self.engine.clone(), self.fetched.clone());
+        tokio::spawn(async move {
+            let asked = ServerSetup {
+                deployable: deployable.slug.clone(),
+                access,
+                sudo_password: password,
+            };
+            let result = engine
+                .request::<_, SetupReport>(method::SERVER_SETUP, &asked)
+                .await
+                .map_err(|err| err.reason());
+            let _ = tx.send(Fetched::SetupDone { index, result });
         });
     }
 

@@ -14,10 +14,11 @@ use tokio::sync::mpsc::unbounded_channel;
 use shipdeck_engine::config::{self, Discovery, Manager};
 use shipdeck_engine::init::Preset;
 use shipdeck_engine::ssh::Login;
-use shipdeck_protocol::message::Problem;
+use shipdeck_protocol::message::{DeployableInfo, Problem};
 
 use console::{Choices, Console};
 use shipdeck_protocol::message::common::{Login as ProtocolLogin, OnFailure};
+use shipdeck_protocol::message::request::SetupAccess;
 
 mod console;
 mod engine;
@@ -154,6 +155,65 @@ enum ServerCommand {
         #[command(flatten)]
         ssh: SshArgs,
     },
+    /// Show Linux, CPU, memory, disk, uptime, and installed tools on a server
+    ServerInfo {
+        /// Folder whose subfolders each hold a deploy.yaml
+        #[arg(value_name = "DEPLOY_ROOT")]
+        root: PathBuf,
+        /// The deployable, by folder name or `name`
+        #[arg(value_name = "NAME")]
+        name: String,
+        #[command(flatten)]
+        ssh: SshArgs,
+    },
+    /// Show what an interrupted operation left, and clean it up with --cleanup
+    Work {
+        /// Folder whose subfolders each hold a deploy.yaml
+        #[arg(value_name = "DEPLOY_ROOT")]
+        root: PathBuf,
+        /// The deployable, by folder name or `name`
+        #[arg(value_name = "NAME")]
+        name: String,
+        /// Remove the unfinished files this command lists; this flag is the approval
+        #[arg(long)]
+        cleanup: bool,
+        #[command(flatten)]
+        ssh: SshArgs,
+    },
+    /// Print the events saved on the server, oldest first
+    Events {
+        /// Folder whose subfolders each hold a deploy.yaml
+        #[arg(value_name = "DEPLOY_ROOT")]
+        root: PathBuf,
+        /// The deployable, by folder name or `name`
+        #[arg(value_name = "NAME")]
+        name: String,
+        /// Only events with a larger sequence number
+        #[arg(long, default_value_t = 0)]
+        after: i64,
+        /// At most this many events
+        #[arg(long, default_value_t = 200)]
+        limit: u32,
+        #[command(flatten)]
+        ssh: SshArgs,
+    },
+    /// Prepare a server once: packages, the project folder, and sudo access
+    Setup {
+        /// Folder whose subfolders each hold a deploy.yaml
+        #[arg(value_name = "DEPLOY_ROOT")]
+        root: PathBuf,
+        /// The deployable, by folder name or `name`
+        #[arg(value_name = "NAME")]
+        name: String,
+        /// Password-free sudo for every command, or only the ones shipdeck runs
+        #[arg(long, value_enum)]
+        access: Option<AccessArg>,
+        /// The sudo password for this run; `SHIPDECK_SUDO_PASSWORD` keeps it out of history
+        #[arg(long, value_name = "PASSWORD")]
+        sudo_password: Option<String>,
+        #[command(flatten)]
+        ssh: SshArgs,
+    },
 }
 
 #[derive(Args)]
@@ -185,6 +245,24 @@ struct InitArgs {
     /// Your source folder [default: the current folder]
     #[arg(long, value_name = "PATH")]
     project: Option<PathBuf>,
+}
+
+/// `--access`, as the flag parser knows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum AccessArg {
+    /// Password-free sudo for every command
+    Full,
+    /// Password-free sudo for exactly the commands shipdeck runs
+    Commands,
+}
+
+impl From<AccessArg> for SetupAccess {
+    fn from(arg: AccessArg) -> Self {
+        match arg {
+            AccessArg::Full => SetupAccess::Full,
+            AccessArg::Commands => SetupAccess::Commands,
+        }
+    }
 }
 
 /// `--on-failure`, as the flag parser knows it.
@@ -267,7 +345,11 @@ async fn main() -> Result<ExitCode> {
     let (root, ssh) = match &command {
         ServerCommand::Deploy { root, ssh, .. }
         | ServerCommand::Rollback { root, ssh, .. }
-        | ServerCommand::Releases { root, ssh, .. } => (root.as_path(), ssh),
+        | ServerCommand::Releases { root, ssh, .. }
+        | ServerCommand::ServerInfo { root, ssh, .. }
+        | ServerCommand::Work { root, ssh, .. }
+        | ServerCommand::Events { root, ssh, .. }
+        | ServerCommand::Setup { root, ssh, .. } => (root.as_path(), ssh),
     };
     let shell_env = !ssh.login.no_shell_env;
     let gitshell = gitshell(&ssh.login);
@@ -282,6 +364,17 @@ async fn main() -> Result<ExitCode> {
     if !workspace.problems.is_empty() {
         return Ok(problems(&workspace.problems));
     }
+    let setup = match &command {
+        ServerCommand::Setup {
+            access,
+            sudo_password,
+            ..
+        } => Some((
+            setup_access(*access)?,
+            setup_password(sudo_password.clone())?,
+        )),
+        _ => None,
+    };
     let (on_failure, allow_unchanged) = match &command {
         ServerCommand::Deploy {
             on_failure,
@@ -299,18 +392,80 @@ async fn main() -> Result<ExitCode> {
             on_failure,
         },
     );
-    let code = match command {
-        ServerCommand::Deploy { names, .. } => console.deploy(&workspace.deployables, &names).await,
-        ServerCommand::Rollback { name, to, .. } => {
-            console.rollback(&workspace.deployables, &name, to).await
-        }
-        ServerCommand::Releases { name, .. } => {
-            console.releases(&workspace.deployables, &name).await
-        }
-    };
+    let code = run_command(&mut console, command, &workspace.deployables, setup).await;
     console.close().await;
     let _ = child.wait().await;
     Ok(code)
+}
+
+/// Runs the one command that was chosen.
+async fn run_command(
+    console: &mut Console,
+    command: ServerCommand,
+    projects: &[DeployableInfo],
+    setup: Option<(SetupAccess, Option<String>)>,
+) -> ExitCode {
+    match command {
+        ServerCommand::Deploy { names, .. } => console.deploy(projects, &names).await,
+        ServerCommand::Rollback { name, to, .. } => console.rollback(projects, &name, to).await,
+        ServerCommand::Releases { name, .. } => console.releases(projects, &name).await,
+        ServerCommand::ServerInfo { name, .. } => console.server_info(projects, &name).await,
+        ServerCommand::Work { name, cleanup, .. } => console.work(projects, &name, cleanup).await,
+        ServerCommand::Events {
+            name, after, limit, ..
+        } => console.events(projects, &name, after, limit).await,
+        ServerCommand::Setup { name, .. } => {
+            let Some((access, password)) = setup else {
+                unreachable!("setup answers were read above");
+            };
+            console.setup(projects, &name, access, password).await
+        }
+    }
+}
+
+/// `--access`, or the question when there is someone to ask.
+fn setup_access(given: Option<AccessArg>) -> Result<SetupAccess> {
+    if let Some(given) = given {
+        return Ok(given.into());
+    }
+    if !init::can_ask() {
+        return Ok(SetupAccess::Commands);
+    }
+    let chosen = inquire::Select::new(
+        "Sudo access:",
+        vec![
+            "Commands only (password-free sudo for what shipdeck runs)",
+            "Full sudo (password-free sudo for every command)",
+        ],
+    )
+    .prompt()
+    .map_err(|err| anyhow::anyhow!("no access chosen: {err}"))?;
+    Ok(if chosen.starts_with("Full") {
+        SetupAccess::Full
+    } else {
+        SetupAccess::Commands
+    })
+}
+
+/// `--sudo-password`, `SHIPDECK_SUDO_PASSWORD`, or the hidden question.
+fn setup_password(given: Option<String>) -> Result<Option<String>> {
+    if given.is_some() {
+        return Ok(given);
+    }
+    if let Some(password) = std::env::var("SHIPDECK_SUDO_PASSWORD")
+        .ok()
+        .filter(|password| !password.is_empty())
+    {
+        return Ok(Some(password));
+    }
+    if !init::can_ask() {
+        return Ok(None);
+    }
+    let password = inquire::Password::new("Sudo password (blank when sudo needs none):")
+        .without_confirmation()
+        .prompt()
+        .map_err(|err| anyhow::anyhow!("no sudo password entered: {err}"))?;
+    Ok((!password.is_empty()).then_some(password))
 }
 
 /// The login as the protocol carries it: the same four ways in.

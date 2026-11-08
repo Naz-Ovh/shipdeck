@@ -5,9 +5,11 @@ use std::time::{Duration, Instant};
 
 use super::{
     App, Asked, Fetch, Fetched, LOG_LIMIT, Live, LogsState, Modal, OpId, OpKind, Operation, Screen,
+    Tone,
 };
 use shipdeck_engine::deploy::report::{OpEvent, OpUpdate};
 use shipdeck_engine::ssh::Question;
+use shipdeck_protocol::message::request::SetupReport;
 
 impl App {
     pub fn on_fetched(&mut self, fetched: Fetched) {
@@ -98,6 +100,18 @@ impl App {
                     });
                 }
             }
+            Fetched::Facts { index, result } => {
+                if let Some(slot) = self.facts.get_mut(index) {
+                    *slot = result.ok();
+                }
+            }
+            Fetched::Work { index, result } => {
+                if let Some(slot) = self.work.get_mut(index) {
+                    *slot = result.ok();
+                }
+            }
+            Fetched::Cleaned { index, result } => self.on_cleaned(index, result),
+            Fetched::SetupDone { index, result } => self.on_setup_done(index, result),
         }
     }
 
@@ -172,6 +186,45 @@ impl App {
             {
                 self.fetch_releases(index);
             }
+        }
+    }
+
+    fn on_cleaned(&mut self, index: usize, result: Result<Vec<String>, String>) {
+        match result {
+            Ok(removed) if removed.is_empty() => {
+                self.notify("Nothing left to clean up", Tone::Info);
+            }
+            Ok(removed) => {
+                self.notify(
+                    format!("Removed {} unfinished file(s)", removed.len()),
+                    Tone::Info,
+                );
+            }
+            Err(err) => self.modals.push_back(Modal::Notice {
+                title: "Could not clean up".to_string(),
+                text: err,
+            }),
+        }
+        self.refresh_work(index);
+    }
+
+    fn on_setup_done(&mut self, index: usize, result: Result<SetupReport, String>) {
+        self.setting_up.retain(|i| *i != index);
+        match result {
+            Ok(report) => {
+                self.notify(
+                    format!("{} is ready: {}", report.dir, report.access),
+                    Tone::Info,
+                );
+                for note in report.notes {
+                    self.notify(note, Tone::Warn);
+                }
+                self.refresh_status(index);
+            }
+            Err(err) => self.modals.push_back(Modal::Notice {
+                title: "Guided setup failed".to_string(),
+                text: err,
+            }),
         }
     }
 

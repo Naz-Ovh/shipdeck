@@ -124,6 +124,11 @@ pub fn footer(frame: &mut Frame, area: Rect, app: &App) {
         Some(Modal::Secret { .. }) => &[("⏎", "submit"), ("esc", "cancel"), ("ctrl+u", "clear")],
         Some(Modal::AskRollback { .. }) => &[("y", "roll back now"), ("n", "keep it live")],
         Some(Modal::AskUnchanged { .. }) => &[("y", "deploy anyway"), ("n", "stop here")],
+        Some(Modal::ConfirmCleanup { .. }) => &[("y", "remove"), ("n", "keep")],
+        Some(Modal::SetupAccess { .. }) => {
+            &[("f", "full sudo"), ("c", "commands"), ("esc", "cancel")]
+        }
+        Some(Modal::SetupPassword { .. }) => &[("⏎", "continue"), ("esc", "cancel")],
         Some(Modal::Notice { .. }) => &[("⏎", "close")],
         Some(_) => &[("y", "yes"), ("n", "no")],
         None if app.logs.is_some() => &[
@@ -138,6 +143,7 @@ pub fn footer(frame: &mut Frame, area: Rect, app: &App) {
                 ("c", connect),
                 ("⏎", "deploy"),
                 ("r", "releases"),
+                ("x", "clean up"),
                 ("s", "refresh"),
                 (":", "commands"),
                 ("tab", "screens"),

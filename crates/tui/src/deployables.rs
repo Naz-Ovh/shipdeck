@@ -9,11 +9,14 @@ use ratatui::widgets::{HighlightSpacing, List, ListItem, Paragraph, Wrap};
 
 use shipdeck_engine::bundle;
 use shipdeck_engine::config::{Commands, DeployConfig, Deployable, ROLLBACK_ANSWER_SECS, Rollback};
+use shipdeck_engine::human;
 use shipdeck_engine::release::ReleaseName;
 use shipdeck_engine::ssh::Login;
+use shipdeck_protocol::message::agent::ServerFacts;
+use shipdeck_protocol::message::request::WorkReport;
 
 use super::app::{App, Live};
-use super::theme::{self, ACCENT, ERR, MUTED, OK, SURFACE, TEXT, VIOLET};
+use super::theme::{self, ACCENT, ERR, MUTED, OK, SURFACE, TEXT, VIOLET, WARN};
 
 pub fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     if app.deployables.is_empty() {
@@ -46,6 +49,8 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
             &app.live[index],
             &app.login,
             app.tick,
+            app.facts[index].as_ref(),
+            app.work[index].as_ref(),
         );
     }
 }
@@ -115,6 +120,7 @@ fn live_summary(live: &Live, tick: u64) -> Vec<Span<'static>> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn details(
     frame: &mut Frame,
     area: Rect,
@@ -122,6 +128,8 @@ fn details(
     live: &Live,
     login: &Login,
     tick: u64,
+    facts: Option<&ServerFacts>,
+    work: Option<&WorkReport>,
 ) {
     let config = &deployable.config;
     let service = &config.service;
@@ -195,6 +203,8 @@ fn details(
     );
     field(&mut lines, "live", live_summary(live, tick));
 
+    server_section(&mut lines, facts);
+    work_section(&mut lines, work);
     pipeline_section(&mut lines, config);
     policy_section(&mut lines, config, deployable);
 
@@ -204,6 +214,122 @@ fn details(
             .block(theme::panel(deployable.slug.clone(), false)),
         area,
     );
+}
+
+/// The server's own numbers, once the agent has answered.
+fn server_section(lines: &mut Vec<Line<'static>>, facts: Option<&ServerFacts>) {
+    let Some(facts) = facts else {
+        return;
+    };
+    section(lines, "Server");
+    field(
+        lines,
+        "system",
+        vec![Span::styled(
+            format!("{} · kernel {}", facts.os, facts.kernel),
+            theme::text(),
+        )],
+    );
+    field(
+        lines,
+        "cpu",
+        vec![Span::styled(
+            format!("{} · {} cores", facts.arch, facts.cpu_count),
+            theme::text(),
+        )],
+    );
+    field(
+        lines,
+        "memory",
+        vec![Span::styled(
+            format!(
+                "{} free of {}",
+                human::bytes(facts.memory_available),
+                human::bytes(facts.memory_total)
+            ),
+            theme::text(),
+        )],
+    );
+    field(
+        lines,
+        "disk",
+        vec![Span::styled(
+            format!(
+                "{} free of {} ({})",
+                human::bytes(facts.disk_available),
+                human::bytes(facts.disk_total),
+                facts.disk_path
+            ),
+            theme::text(),
+        )],
+    );
+    field(
+        lines,
+        "uptime",
+        vec![Span::styled(
+            human::duration(std::time::Duration::from_secs(facts.uptime_seconds)),
+            theme::text(),
+        )],
+    );
+    field(
+        lines,
+        "agent",
+        vec![Span::styled(facts.agent_version.clone(), theme::text())],
+    );
+}
+
+/// Unfinished files, an unconfirmed switch, and the newest saved events.
+fn work_section(lines: &mut Vec<Line<'static>>, work: Option<&WorkReport>) {
+    let Some(work) = work else {
+        return;
+    };
+    if work.unfinished.is_empty() && work.uncertain.is_none() && work.events.is_empty() {
+        return;
+    }
+    section(lines, "Work");
+    if let Some(active) = &work.active {
+        field(
+            lines,
+            "service",
+            vec![Span::styled(
+                active.clone(),
+                Style::new().fg(theme::service_color(active)),
+            )],
+        );
+    }
+    if let Some(release) = &work.uncertain {
+        field(
+            lines,
+            "uncertain",
+            vec![Span::styled(
+                format!("activation of {release} was never confirmed"),
+                Style::new().fg(WARN),
+            )],
+        );
+    }
+    if !work.unfinished.is_empty() {
+        field(
+            lines,
+            "unfinished",
+            vec![Span::styled(
+                format!("{} file(s) · x cleans up", work.unfinished.len()),
+                Style::new().fg(WARN),
+            )],
+        );
+    }
+    for event in work.events.iter().rev().take(5).rev() {
+        field(
+            lines,
+            "event",
+            vec![Span::styled(
+                format!(
+                    "#{} {} {} {}",
+                    event.sequence, event.created_at, event.kind, event.detail
+                ),
+                theme::faint(),
+            )],
+        );
+    }
 }
 
 /// Pipeline rows: each step, where it runs and what it does.

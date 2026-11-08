@@ -29,9 +29,8 @@ pub(crate) fn summary(paint: Paint, name: &str, outcome: &Outcome, took: Duratio
         Outcome::Kept { release, .. } => {
             paint.warn(&format!("▲ {name}: {release} failed and stays live"))
         }
-        Outcome::RollbackFailed { .. } => paint.error(&format!(
-            "✘ {name}: the new release failed and putting the old one back failed too; \
-             check the server now"
+        Outcome::RollbackFailed { rollback_error, .. } => paint.error(&format!(
+            "✘ {name}: rollback failed: {rollback_error}; check the server now"
         )),
         Outcome::Unchanged { live } => paint.warn(&format!(
             "▲ {name}: nothing changed since {live}, so nothing was deployed; \

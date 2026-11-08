@@ -128,6 +128,30 @@ impl FakeEngine {
 }
 
 #[tokio::test]
+async fn release_listing_answers_host_key_questions() {
+    let mut options = choices();
+    options.trust_new_host = true;
+    let (mut console, mut engine) = FakeEngine::pair(options);
+    let script = tokio::spawn(async move {
+        let asked = engine.next().await;
+        assert_eq!(asked["method"], "releases/list");
+        engine
+            .send(json!({"jsonrpc":"2.0", "id":42, "method":"ask/trust_host",
+            "params":{"host":"example", "algorithm":"ssh-ed25519", "fingerprint":"test"}}))
+            .await;
+        let answer = engine.next().await;
+        assert_eq!(answer["id"], 42);
+        assert_eq!(answer["result"], true);
+        engine
+            .answer(&asked, json!({"current":null,"entries":[]}))
+            .await;
+    });
+    let projects = [deployable("api", "My API")];
+    assert_eq!(console.releases(&projects, "api").await, ExitCode::SUCCESS);
+    script.await.expect("fake engine");
+}
+
+#[tokio::test]
 async fn a_deploy_says_how_it_ended() {
     let (mut console, mut engine) = FakeEngine::pair(choices());
     let script = tokio::spawn(async move {

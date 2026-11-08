@@ -15,6 +15,8 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 
 use shipdeck_protocol::connection::Handle;
+use shipdeck_protocol::message::agent::ServerFacts;
+use shipdeck_protocol::message::request::{SetupAccess, SetupReport, WorkReport};
 
 use shipdeck_engine::config::{Deployable, Discovery};
 use shipdeck_engine::deploy::report::{
@@ -102,6 +104,26 @@ pub enum Fetched {
     LogsEnded {
         view: u64,
         result: Result<Option<u32>, String>,
+    },
+    /// The server's Linux, CPU, memory, disk and tools.
+    Facts {
+        index: usize,
+        result: Result<ServerFacts, String>,
+    },
+    /// What an interrupted operation left on the server.
+    Work {
+        index: usize,
+        result: Result<WorkReport, String>,
+    },
+    /// The unfinished files the user approved were removed.
+    Cleaned {
+        index: usize,
+        result: Result<Vec<String>, String>,
+    },
+    /// Guided setup finished.
+    SetupDone {
+        index: usize,
+        result: Result<SetupReport, String>,
     },
 }
 
@@ -378,6 +400,21 @@ pub enum Modal {
         deployable: usize,
         action: Control,
     },
+    /// `x`: remove the unfinished files the server reported.
+    ConfirmCleanup {
+        deployable: usize,
+        artifacts: Vec<String>,
+    },
+    /// `:setup`: full sudo or only the commands shipdeck runs.
+    SetupAccess {
+        deployable: usize,
+    },
+    /// The sudo password, asked once for guided setup.
+    SetupPassword {
+        deployable: usize,
+        access: SetupAccess,
+        input: String,
+    },
     /// Something that needs reading, such as why a command failed.
     Notice {
         title: String,
@@ -438,6 +475,12 @@ pub struct App {
     pub logs: Option<LogsView>,
     /// Deployables a `:stop`, `:start` or `:restart` is running for.
     pub controlling: Vec<usize>,
+    /// The last server facts each deployable reported.
+    pub facts: Vec<Option<ServerFacts>>,
+    /// What each server last said about unfinished work.
+    pub work: Vec<Option<WorkReport>>,
+    /// Deployables guided setup is running for.
+    pub setting_up: Vec<usize>,
     pub modals: VecDeque<Modal>,
     pub toast: Option<Toast>,
     pub tick: u64,
@@ -478,6 +521,9 @@ impl App {
             command: None,
             logs: None,
             controlling: Vec::new(),
+            facts: vec![None; count],
+            work: vec![None; count],
+            setting_up: Vec::new(),
             modals: VecDeque::new(),
             toast: None,
             tick: 0,

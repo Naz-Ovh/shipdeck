@@ -19,6 +19,10 @@
     - { key: cli.deploy, brief: "`shipdeck deploy`: headless deploy" }
     - { key: cli.rollback, brief: "`shipdeck rollback`: headless rollback" }
     - { key: cli.releases, brief: "`shipdeck releases`: list releases (read-only)" }
+    - { key: cli.server-info, brief: "`shipdeck server-info`: Linux, CPU, memory, disk, tools" }
+    - { key: cli.work, brief: "`shipdeck work`: interrupted files, uncertain activation, cleanup" }
+    - { key: cli.events, brief: "`shipdeck events`: numbered server events" }
+    - { key: cli.setup, brief: "`shipdeck setup`: guided one-time server setup" }
     - { key: cli.init, brief: "`shipdeck init`: new deployable from a preset" }
     - { key: cli.schema, brief: "`--schema` and editor completion" }
     - { key: cli.man, brief: "`shipdeck man`: this manual" }

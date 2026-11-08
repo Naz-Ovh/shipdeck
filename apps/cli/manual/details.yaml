@@ -47,9 +47,9 @@ overview:
     There are two ways to drive it, over the same engine:
     - the TUI, `shipdeck <ROOT>`: interactive, shows every step live and asks before anything
       risky;
-    - headless commands for scripts, CI and agents: `deploy`, `rollback` and `releases`. They
-      print plain lines, never wait for an answer, and end with an exit code that says what
-      happened.
+    - headless commands for scripts, CI and agents: `deploy`, `rollback`, `releases`,
+      `server-info`, `work`, `events` and `setup`. They print plain lines, never wait for an
+      answer, and end with an exit code that says what happened.
 
     What shipdeck does not do: install runtimes on the server (preflight checks they are there),
     deploy one deployable to several hosts (make one deployable per host), go through jump hosts,
@@ -116,8 +116,13 @@ agents:
 
     Commands that are safe for an agent, because they never prompt:
       shipdeck releases <ROOT> <NAME>            read-only: checks every config, logs in, lists
+      shipdeck server-info <ROOT> <NAME>         read-only: the server's real facts
+      shipdeck work <ROOT> <NAME> [--cleanup]    interrupted files; --cleanup is the approval
+      shipdeck events <ROOT> <NAME> [--after N]  numbered events, for a cursor
       shipdeck deploy <ROOT> <NAME>...           builds and deploys; rolls back on failure
       shipdeck rollback <ROOT> <NAME> --to <ID>  makes a release already on the server live
+      shipdeck setup <ROOT> <NAME> [--access full|commands]
+                                                 prepares the server once; needs sudo
       shipdeck init <ROOT> <NAME> --preset P --host H [--user U] [--project DIR]
       shipdeck --schema, shipdeck man ...        no login at all
     Progress goes to stderr as plain lines; the releases table goes to stdout. When stderr is not
@@ -212,6 +217,10 @@ cli:
       shipdeck deploy <ROOT> <NAME>... [--on-failure rollback|keep] [--allow-unchanged] [SSH]
       shipdeck rollback <ROOT> <NAME> --to <RELEASE> [SSH]
       shipdeck releases <ROOT> <NAME> [SSH]
+      shipdeck server-info <ROOT> <NAME> [SSH]
+      shipdeck work <ROOT> <NAME> [--cleanup] [SSH]
+      shipdeck events <ROOT> <NAME> [--after N] [--limit N] [SSH]
+      shipdeck setup <ROOT> <NAME> [--access full|commands] [--sudo-password VALUE] [SSH]
       shipdeck engine                                          the engine an app talks to
       shipdeck init <ROOT> [NAME] [--preset P] [--manager systemd|pm2] [--host H] [--user U]
                     [--project PATH]
@@ -411,6 +420,87 @@ cli.releases:
 
     Columns are separated by two or more spaces and no cell holds two in a row, so split on that:
       shipdeck releases ./deploy my-api | awk -F '  +' 'NR > 1 { print $1, $6 }'
+
+cli.server-info:
+  see: [cli.work, cli.deploy, permissions]
+  text: |
+      shipdeck server-info <ROOT> <NAME> [LOGIN] [--no-shell-env] [--trust-new-host]
+
+      Logs in and asks the connected agent for the server's real facts: the Linux name and kernel,
+      CPU architecture and available cores, available and total memory, the filesystem behind
+      service.dir, uptime, the agent's version, and where common tools were found (curl, docker,
+      node, pm2, sha256sum, sudo, systemctl, tar, wget, zstd). It changes nothing. It fails with a
+      clear message when the agent is not available on that server.
+
+      The disk numbers come from `df` on the folder that exists, walking up from service.dir when
+      the folder is not there yet. PATH is read as the agent sees it; when PATH is unset the output
+      says the tools were not checked instead of guessing.
+
+cli.work:
+  see: [cli.server-info, cli.events, releases]
+  text: |
+      shipdeck work <ROOT> <NAME> [--cleanup] [LOGIN] [--no-shell-env] [--trust-new-host]
+
+      Shows what an interrupted operation left, without changing anything:
+      - Current: the release `current` points to, or that nothing is live;
+      - Service: the service's real state (active, inactive, failed, ...);
+      - Unfinished files: the exact paths the server reports, such as a partial upload or an
+      unfinished restore;
+      - Warning: when the last activation event was a switch or restart with no health pass after
+      it. The live release and service above are the server's own answer, never a guess;
+      - Recent events: the newest saved events for this project, oldest first.
+
+      With --cleanup, exactly the unfinished paths just listed are removed. The flag is the
+      approval: the engine first asks the agent for the current list and refuses any path it did
+      not report, so a live release, another release, a backup, or a path outside the project is
+      never deleted. Without --cleanup nothing is touched.
+
+      Run it after a dropped connection, and before deploying again. A deploy that stops before the
+      switch leaves the live release alone but keeps its unfinished files.
+
+cli.events:
+  see: [cli.work, cli.server-info]
+  text: |
+      shipdeck events <ROOT> <NAME> [--after N] [--limit N] [LOGIN] [--no-shell-env] [--trust-new-host]
+
+      Prints the numbered events saved on the server in `~/.shipdeck/state.db`, oldest first:
+      #12 2026-11-08 10:14:22 v1.4.0-ab12cd3-... switch_completed
+      Every event has a sequence number, a UTC time, the release or operation it belongs to, a
+      kind, and optional detail. `--after N` prints only events with a larger number, so a script
+      can keep a cursor and see only what is new. `--limit` caps the page at 1000; the default is
+      200. It reads only.
+
+      Events a deploy saves include build_completed, pack_completed, upload_started,
+      upload_verified, unpack_started, unpack_verified, setup_completed, backup_completed,
+      switch_started, switch_completed, service_restarted, health_passed, and one final
+      deploy_completed, deploy_failed, deploy_unchanged, rollback_started, backup_restored, or
+      rollback_completed.
+
+cli.setup:
+  see: [permissions, server-setup, cli.work]
+  text: |
+      shipdeck setup <ROOT> <NAME> [--access full|commands] [--sudo-password VALUE]
+                     [LOGIN] [--no-shell-env] [--trust-new-host]
+
+      Prepares a server once, from the app, so no command has to be run on it by hand. It logs in
+      as ssh.user, asks for the sudo password when one is needed (on stdin, never saved), then:
+      - detects Debian/Ubuntu or Fedora/RHEL from /etc/os-release, and stops for another Linux;
+      - installs the tools shipdeck needs when they are missing: zstd, tar, sha256sum and install
+      (coreutils), curl, sudo, and systemctl for systemd apps;
+      - creates service.dir and gives it to ssh.user;
+      - installs a checked sudoers rule: with --access full, password-free sudo for every command;
+      with --access commands, password-free sudo for exactly the commands shipdeck runs (see
+      permissions). Root needs no rule;
+      - with PM2, starts that user's PM2 at boot when it can.
+
+      --access defaults to commands. On a terminal without --access, shipdeck asks which one you
+      want. --sudo-password is for scripts; SHIPDECK_SUDO_PASSWORD keeps it out of the shell
+      history and `ps`. If ssh.user cannot use sudo and no password is given, setup stops before
+      changing anything.
+
+      Running it again is safe: packages already present are skipped, the folder is kept, and the
+      sudoers rule is replaced with the chosen access. It changes privileges only as the explicit
+      --access choice says; it never silently widens them.
 
 cli.init:
   see: [presets, config]
@@ -1533,9 +1623,9 @@ permissions:
 server-setup:
   see: [permissions, pm2]
   text: |
-    server-setup.sh sets up one app's deploy user on a server. It is optional: shipdeck also works
-    as root, or as any user you give the rights yourself. Run it once, as root; shipdeck itself
-    never runs it.
+    server-setup.sh sets up one app's deploy user on a server. It is optional: `shipdeck setup`
+    does the same guided work from the app, and shipdeck also works as root. Run the script once,
+    as root; shipdeck itself never runs it.
       curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v<version>/server-setup.sh \
         | bash -s -- --user deploy --dir /opt/my-api --service my-api \
             --key "$(cat ~/.ssh/id_ed25519.pub)"         # --manager pm2 for a PM2 app

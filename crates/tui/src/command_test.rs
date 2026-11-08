@@ -15,7 +15,7 @@ fn an_unknown_command_says_which_there_are() {
     let err = parse("reboot").unwrap_err();
     assert_eq!(
         err,
-        "Not a command: :reboot. Try :logs, :restart, :stop or :start"
+        "Not a command: :reboot. Try :logs, :restart, :setup, :stop or :start"
     );
     // Only whole names: `st` could be two of them.
     assert!(parse("st").is_err());
