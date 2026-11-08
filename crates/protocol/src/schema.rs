@@ -6,13 +6,25 @@ use schemars::generate::SchemaSettings;
 use serde_json::{Map, Value, json};
 
 use crate::message::{
-    AgentHello, AgentHelloResult, AgentPing, AgentShutdown, AskRollback, AskSecret, AskTrustHost,
-    AskUnchanged, ConnectionClose, DeployStart, DeployableInfo, Done, FileInfo, Initialize,
-    InitializeResult, LogsEnded, LogsFollow, LogsFollowResult, LogsLine, LogsStop, Manifest,
-    OpFinished, OpLog, OpProgress, OpRelease, OpStep, OperationStarted, Problem, ReleaseContents,
+    AgentBackupCreate, AgentBackupCreated, AgentBackupRestore, AgentCleaned, AgentCleanupWork,
+    AgentDiscard, AgentDropRequest, AgentEvent, AgentEventAppend, AgentEventSaved, AgentEvents,
+    AgentEventsAfter, AgentEventsRecent, AgentFileInfo, AgentFileKind, AgentHello,
+    AgentHelloResult, AgentLinkShared, AgentLogLine, AgentLogsEnded, AgentLogsFollow,
+    AgentLogsStop, AgentLogsView, AgentManager, AgentOk, AgentPing, AgentRelease,
+    AgentReleaseContents, AgentReleaseContentsRequest, AgentReleaseFile, AgentReleaseFiles,
+    AgentReleaseFilesRequest, AgentReleaseKind, AgentReleaseRead, AgentReleaseReadRequest,
+    AgentReleases, AgentReleasesRequest, AgentService, AgentServiceAction, AgentServiceControl,
+    AgentShutdown, AgentStatus, AskRollback, AskSecret, AskTrustHost, AskUnchanged,
+    ConnectionClose, DeployStart, DeployableInfo, Done, EventsRead, EventsReadResult, FileInfo,
+    HashCurrent, HashCurrentResult, Initialize, InitializeResult, InspectWork, LogsEnded,
+    LogsFollow, LogsFollowResult, LogsLine, LogsStop, Manifest, OpFinished, OpLog, OpProgress,
+    OpRelease, OpStep, OperationStarted, Problem, ProjectLock, ReleaseContents,
     ReleaseContentsResult, ReleaseInfo, ReleaseName, ReleaseReadFile, ReleaseReadFileResult,
-    ReleasesList, ReleasesListResult, RollbackStart, SecretAnswer, ServiceControl, StatusGet,
-    StatusGetResult, WorkspaceOpen, WorkspaceOpenResult,
+    ReleasesList, ReleasesListResult, RollbackStart, SecretAnswer, ServerFacts, ServerFactsRequest,
+    ServerInfoGet, ServerSetup, ServiceControl, SetupAccess, SetupReport, StatusGet,
+    StatusGetResult, SwitchRelease, UnpackRelease, UnpackResult, UploadPrepare, UploadReservation,
+    WorkCleanup, WorkCleanupResult, WorkGet, WorkInspection, WorkReport, WorkspaceOpen,
+    WorkspaceOpenResult,
 };
 
 /// The file in the shipdeck repository, published with each release.
@@ -63,11 +75,93 @@ pub fn generate() -> Value {
 
 /// Each message and its param or result type, by the name the schema uses.
 fn messages() -> Vec<(&'static str, Value)> {
+    let mut messages = agent_messages();
+    messages.extend(app_messages());
+    messages
+}
+
+/// The agent's words, sent over its own SSH channel.
+fn agent_messages() -> Vec<(&'static str, Value)> {
     vec![
         ("AgentHello", schema_for::<AgentHello>()),
+        ("AgentOk", schema_for::<AgentOk>()),
+        ("ProjectLock", schema_for::<ProjectLock>()),
+        ("UnpackRelease", schema_for::<UnpackRelease>()),
+        ("UnpackResult", schema_for::<UnpackResult>()),
+        ("ServerFacts", schema_for::<ServerFacts>()),
+        ("ServerFactsRequest", schema_for::<ServerFactsRequest>()),
+        ("ServerInfoGet", schema_for::<ServerInfoGet>()),
+        ("ServerSetup", schema_for::<ServerSetup>()),
+        ("SetupAccess", schema_for::<SetupAccess>()),
+        ("SetupReport", schema_for::<SetupReport>()),
+        ("WorkGet", schema_for::<WorkGet>()),
+        ("WorkReport", schema_for::<WorkReport>()),
+        ("WorkCleanup", schema_for::<WorkCleanup>()),
+        ("WorkCleanupResult", schema_for::<WorkCleanupResult>()),
+        ("EventsRead", schema_for::<EventsRead>()),
+        ("EventsReadResult", schema_for::<EventsReadResult>()),
+        ("AgentService", schema_for::<AgentService>()),
+        ("AgentManager", schema_for::<AgentManager>()),
+        ("AgentStatus", schema_for::<AgentStatus>()),
+        ("AgentServiceAction", schema_for::<AgentServiceAction>()),
+        ("AgentServiceControl", schema_for::<AgentServiceControl>()),
+        ("AgentReleases", schema_for::<AgentReleases>()),
+        ("AgentReleasesRequest", schema_for::<AgentReleasesRequest>()),
+        ("AgentRelease", schema_for::<AgentRelease>()),
+        ("AgentReleaseKind", schema_for::<AgentReleaseKind>()),
+        ("AgentLinkShared", schema_for::<AgentLinkShared>()),
+        ("AgentReleaseFile", schema_for::<AgentReleaseFile>()),
+        (
+            "AgentReleaseFilesRequest",
+            schema_for::<AgentReleaseFilesRequest>(),
+        ),
+        ("AgentReleaseFiles", schema_for::<AgentReleaseFiles>()),
+        ("AgentBackupCreate", schema_for::<AgentBackupCreate>()),
+        ("AgentBackupCreated", schema_for::<AgentBackupCreated>()),
+        ("AgentBackupRestore", schema_for::<AgentBackupRestore>()),
+        ("AgentLogsFollow", schema_for::<AgentLogsFollow>()),
+        ("AgentLogsView", schema_for::<AgentLogsView>()),
+        ("AgentLogsStop", schema_for::<AgentLogsStop>()),
+        ("AgentLogLine", schema_for::<AgentLogLine>()),
+        ("AgentLogsEnded", schema_for::<AgentLogsEnded>()),
+        ("AgentCleanupWork", schema_for::<AgentCleanupWork>()),
+        ("AgentCleaned", schema_for::<AgentCleaned>()),
+        ("AgentDiscard", schema_for::<AgentDiscard>()),
+        ("AgentEventsRecent", schema_for::<AgentEventsRecent>()),
+        ("AgentFileInfo", schema_for::<AgentFileInfo>()),
+        ("AgentFileKind", schema_for::<AgentFileKind>()),
+        (
+            "AgentReleaseContentsRequest",
+            schema_for::<AgentReleaseContentsRequest>(),
+        ),
+        ("AgentReleaseContents", schema_for::<AgentReleaseContents>()),
+        (
+            "AgentReleaseReadRequest",
+            schema_for::<AgentReleaseReadRequest>(),
+        ),
+        ("AgentReleaseRead", schema_for::<AgentReleaseRead>()),
+        ("AgentDropRequest", schema_for::<AgentDropRequest>()),
+        ("SwitchRelease", schema_for::<SwitchRelease>()),
+        ("AgentEvent", schema_for::<AgentEvent>()),
+        ("AgentEventAppend", schema_for::<AgentEventAppend>()),
+        ("AgentEventSaved", schema_for::<AgentEventSaved>()),
+        ("AgentEvents", schema_for::<AgentEvents>()),
+        ("AgentEventsAfter", schema_for::<AgentEventsAfter>()),
         ("AgentHelloResult", schema_for::<AgentHelloResult>()),
         ("AgentPing", schema_for::<AgentPing>()),
         ("AgentShutdown", schema_for::<AgentShutdown>()),
+        ("HashCurrent", schema_for::<HashCurrent>()),
+        ("HashCurrentResult", schema_for::<HashCurrentResult>()),
+        ("InspectWork", schema_for::<InspectWork>()),
+        ("WorkInspection", schema_for::<WorkInspection>()),
+        ("UploadPrepare", schema_for::<UploadPrepare>()),
+        ("UploadReservation", schema_for::<UploadReservation>()),
+    ]
+}
+
+/// The app protocol's words, sent between an app and the engine.
+fn app_messages() -> Vec<(&'static str, Value)> {
+    vec![
         ("Initialize", schema_for::<Initialize>()),
         ("InitializeResult", schema_for::<InitializeResult>()),
         ("Done", schema_for::<Done>()),

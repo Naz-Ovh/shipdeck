@@ -11,6 +11,322 @@
       ],
       "type": "string"
     },
+    "AgentBackupCreate": {
+      "description": "`agent/backup_create`: pack these paths of a release.",
+      "properties": {
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "release": {
+          "type": "string"
+        },
+        "root": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "release",
+        "paths"
+      ],
+      "title": "AgentBackupCreate",
+      "type": "object"
+    },
+    "AgentBackupCreated": {
+      "description": "The size of the backup that was written.",
+      "properties": {
+        "bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "bytes"
+      ],
+      "title": "AgentBackupCreated",
+      "type": "object"
+    },
+    "AgentBackupRestore": {
+      "description": "`agent/backup_restore`: unpack a release's backup beside it.",
+      "properties": {
+        "release": {
+          "type": "string"
+        },
+        "root": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "release"
+      ],
+      "title": "AgentBackupRestore",
+      "type": "object"
+    },
+    "AgentCleaned": {
+      "description": "What the approved cleanup removed.",
+      "properties": {
+        "removed": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "removed"
+      ],
+      "title": "AgentCleaned",
+      "type": "object"
+    },
+    "AgentCleanupWork": {
+      "description": "Remove exactly these unfinished files, which the owner approved.",
+      "properties": {
+        "artifacts": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "root": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "artifacts"
+      ],
+      "title": "AgentCleanupWork",
+      "type": "object"
+    },
+    "AgentDiscard": {
+      "description": "Remove a failed release and the files sent to make it.",
+      "properties": {
+        "release": {
+          "type": "string"
+        },
+        "root": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "release"
+      ],
+      "title": "AgentDiscard",
+      "type": "object"
+    },
+    "AgentDropRequest": {
+      "description": "`agent/release_drop`: remove one opened release or one backup.",
+      "properties": {
+        "backup": {
+          "description": "Remove `backups/<release>.tar.zst`.",
+          "type": "boolean"
+        },
+        "open": {
+          "description": "Remove `releases/<release>`.",
+          "type": "boolean"
+        },
+        "release": {
+          "type": "string"
+        },
+        "root": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "release",
+        "open",
+        "backup"
+      ],
+      "title": "AgentDropRequest",
+      "type": "object"
+    },
+    "AgentEvent": {
+      "description": "A numbered, persisted event.",
+      "properties": {
+        "created_at": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "sequence": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sequence",
+        "project",
+        "operation",
+        "kind",
+        "detail",
+        "created_at"
+      ],
+      "title": "AgentEvent",
+      "type": "object"
+    },
+    "AgentEventAppend": {
+      "description": "One event to save for a project and operation.",
+      "properties": {
+        "detail": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "project",
+        "operation",
+        "kind",
+        "detail"
+      ],
+      "title": "AgentEventAppend",
+      "type": "object"
+    },
+    "AgentEventSaved": {
+      "description": "The saved event number.",
+      "properties": {
+        "sequence": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sequence"
+      ],
+      "title": "AgentEventSaved",
+      "type": "object"
+    },
+    "AgentEvents": {
+      "description": "One page of saved events, in sequence order.",
+      "properties": {
+        "events": {
+          "items": {
+            "$ref": "#/definitions/AgentEvent"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "events"
+      ],
+      "title": "AgentEvents",
+      "type": "object"
+    },
+    "AgentEventsAfter": {
+      "description": "Read a bounded page of events after a sequence number.",
+      "properties": {
+        "limit": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "project": {
+          "description": "Only this project's events; all projects when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sequence": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sequence",
+        "limit"
+      ],
+      "title": "AgentEventsAfter",
+      "type": "object"
+    },
+    "AgentEventsRecent": {
+      "description": "Recent events for one project.",
+      "properties": {
+        "limit": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "project": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "project",
+        "limit"
+      ],
+      "title": "AgentEventsRecent",
+      "type": "object"
+    },
+    "AgentFileInfo": {
+      "description": "One path inside a release, as the release screen shows it.",
+      "properties": {
+        "kind": {
+          "$ref": "#/definitions/AgentFileKind"
+        },
+        "mode": {
+          "description": "As `ls -l` shows it, such as `-rw-r--r--`.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Relative to the release, `/`-separated.",
+          "type": "string"
+        },
+        "size": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "target": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "kind",
+        "mode",
+        "size"
+      ],
+      "title": "AgentFileInfo",
+      "type": "object"
+    },
+    "AgentFileKind": {
+      "description": "What one path inside a release is.",
+      "enum": [
+        "dir",
+        "file",
+        "link"
+      ],
+      "title": "AgentFileKind",
+      "type": "string"
+    },
     "AgentHello": {
       "description": "`agent/hello`: what the engine says about itself.",
       "properties": {
@@ -63,14 +379,474 @@
       "title": "AgentHelloResult",
       "type": "object"
     },
+    "AgentLinkShared": {
+      "description": "`agent/link_shared`: link service.shared folders into a release.",
+      "properties": {
+        "release": {
+          "type": "string"
+        },
+        "root": {
+          "type": "string"
+        },
+        "shared": {
+          "description": "Relative paths inside the release.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "root",
+        "release",
+        "shared"
+      ],
+      "title": "AgentLinkShared",
+      "type": "object"
+    },
+    "AgentLogLine": {
+      "description": "One line of a followed log.",
+      "properties": {
+        "line": {
+          "type": "string"
+        },
+        "view": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "view",
+        "line"
+      ],
+      "title": "AgentLogLine",
+      "type": "object"
+    },
+    "AgentLogsEnded": {
+      "description": "A followed log ended on its own or because it was stopped.",
+      "properties": {
+        "code": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "view": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "view"
+      ],
+      "title": "AgentLogsEnded",
+      "type": "object"
+    },
+    "AgentLogsFollow": {
+      "description": "`agent/logs_follow`: the service's log, from its last lines.",
+      "properties": {
+        "lines": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "service": {
+          "$ref": "#/definitions/AgentService"
+        }
+      },
+      "required": [
+        "service",
+        "lines"
+      ],
+      "title": "AgentLogsFollow",
+      "type": "object"
+    },
+    "AgentLogsStop": {
+      "description": "Stop following the log with this id.",
+      "properties": {
+        "view": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "view"
+      ],
+      "title": "AgentLogsStop",
+      "type": "object"
+    },
+    "AgentLogsView": {
+      "description": "The agent's id for one followed log.",
+      "properties": {
+        "view": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "view"
+      ],
+      "title": "AgentLogsView",
+      "type": "object"
+    },
+    "AgentManager": {
+      "description": "What keeps a service running.",
+      "enum": [
+        "systemd",
+        "pm2"
+      ],
+      "title": "AgentManager",
+      "type": "string"
+    },
+    "AgentOk": {
+      "description": "An operation finished successfully.",
+      "title": "AgentOk",
+      "type": "object"
+    },
     "AgentPing": {
       "description": "`agent/ping`: nothing to say.",
       "title": "AgentPing",
       "type": "object"
     },
+    "AgentRelease": {
+      "description": "One release on the server, as the agent sees it.",
+      "properties": {
+        "backup": {
+          "description": "Whether `backups/<id>.tar.zst` holds it.",
+          "type": "boolean"
+        },
+        "current": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/definitions/AgentReleaseKind"
+        },
+        "manifest": {
+          "description": "The text of `release.json`, when the folder has one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "size_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "current",
+        "backup"
+      ],
+      "title": "AgentRelease",
+      "type": "object"
+    },
+    "AgentReleaseContents": {
+      "description": "Every path of one release, and its `release.json` when read from a backup.",
+      "properties": {
+        "files": {
+          "items": {
+            "$ref": "#/definitions/AgentFileInfo"
+          },
+          "type": "array"
+        },
+        "manifest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "files"
+      ],
+      "title": "AgentReleaseContents",
+      "type": "object"
+    },
+    "AgentReleaseContentsRequest": {
+      "description": "`agent/release_contents`: list a release folder or its backup.",
+      "properties": {
+        "backup": {
+          "description": "Read `backups/<release>.tar.zst` instead of `releases/<release>`.",
+          "type": "boolean"
+        },
+        "release": {
+          "type": "string"
+        },
+        "root": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "release",
+        "backup"
+      ],
+      "title": "AgentReleaseContentsRequest",
+      "type": "object"
+    },
+    "AgentReleaseFile": {
+      "description": "One path inside a release.",
+      "properties": {
+        "is_dir": {
+          "type": "boolean"
+        },
+        "path": {
+          "description": "Relative to the release, `/`-separated.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "is_dir"
+      ],
+      "title": "AgentReleaseFile",
+      "type": "object"
+    },
+    "AgentReleaseFiles": {
+      "description": "Every path of a release, without following links.",
+      "properties": {
+        "files": {
+          "items": {
+            "$ref": "#/definitions/AgentReleaseFile"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "files"
+      ],
+      "title": "AgentReleaseFiles",
+      "type": "object"
+    },
+    "AgentReleaseFilesRequest": {
+      "description": "What the agent list of release files depends on.",
+      "properties": {
+        "release": {
+          "type": "string"
+        },
+        "root": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "release"
+      ],
+      "title": "AgentReleaseFilesRequest",
+      "type": "object"
+    },
+    "AgentReleaseKind": {
+      "description": "How a release is kept.",
+      "enum": [
+        "open",
+        "compressed"
+      ],
+      "title": "AgentReleaseKind",
+      "type": "string"
+    },
+    "AgentReleaseRead": {
+      "description": "The start of one file, as text when it is text.",
+      "properties": {
+        "binary": {
+          "type": "boolean"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "binary"
+      ],
+      "title": "AgentReleaseRead",
+      "type": "object"
+    },
+    "AgentReleaseReadRequest": {
+      "description": "`agent/release_read_file`: the start of one file.",
+      "properties": {
+        "backup": {
+          "type": "boolean"
+        },
+        "cap": {
+          "description": "Stop after this many bytes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "path": {
+          "description": "Relative to the release, `/`-separated.",
+          "type": "string"
+        },
+        "release": {
+          "type": "string"
+        },
+        "root": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "release",
+        "backup",
+        "path",
+        "cap"
+      ],
+      "title": "AgentReleaseReadRequest",
+      "type": "object"
+    },
+    "AgentReleases": {
+      "description": "Every release and backup in one deployment folder.",
+      "properties": {
+        "current": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "entries": {
+          "items": {
+            "$ref": "#/definitions/AgentRelease"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "entries"
+      ],
+      "title": "AgentReleases",
+      "type": "object"
+    },
+    "AgentReleasesRequest": {
+      "description": "`agent/releases_list`: one deployment folder.",
+      "properties": {
+        "root": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "root"
+      ],
+      "title": "AgentReleasesRequest",
+      "type": "object"
+    },
+    "AgentService": {
+      "description": "One service on one deployment, as the agent runs it.",
+      "properties": {
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "The environment the app starts with.",
+          "type": "object"
+        },
+        "env_file": {
+          "description": "A file with more environment, relative to the release.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "manager": {
+          "$ref": "#/definitions/AgentManager"
+        },
+        "pm2_file": {
+          "description": "The PM2 ecosystem file, relative to the release; unused with systemd.",
+          "type": "string"
+        },
+        "root": {
+          "description": "Absolute deployment directory containing `current`.",
+          "type": "string"
+        },
+        "service": {
+          "description": "The systemd unit or PM2 app.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "service",
+        "manager",
+        "pm2_file"
+      ],
+      "title": "AgentService",
+      "type": "object"
+    },
+    "AgentServiceAction": {
+      "description": "What to do to the service.",
+      "enum": [
+        "stop",
+        "start",
+        "restart"
+      ],
+      "title": "AgentServiceAction",
+      "type": "string"
+    },
+    "AgentServiceControl": {
+      "description": "`agent/service_control`: one change to the service.",
+      "properties": {
+        "action": {
+          "$ref": "#/definitions/AgentServiceAction"
+        },
+        "service": {
+          "$ref": "#/definitions/AgentService"
+        }
+      },
+      "required": [
+        "service",
+        "action"
+      ],
+      "title": "AgentServiceControl",
+      "type": "object"
+    },
     "AgentShutdown": {
       "description": "`agent/shutdown`: nothing to say; the request itself is the message.",
       "title": "AgentShutdown",
+      "type": "object"
+    },
+    "AgentStatus": {
+      "description": "The service's live state.",
+      "properties": {
+        "active": {
+          "description": "`active`, `failed`, `missing` and the words systemd and PM2 share.",
+          "type": "string"
+        },
+        "current": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dir_exists": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "dir_exists",
+        "active"
+      ],
+      "title": "AgentStatus",
       "type": "object"
     },
     "AskRollback": {
@@ -271,6 +1047,48 @@
       "title": "Done",
       "type": "object"
     },
+    "EventsRead": {
+      "description": "`events/read`: replay saved events after a sequence number.",
+      "properties": {
+        "deployable": {
+          "type": "string"
+        },
+        "limit": {
+          "description": "At most this many; the engine caps it.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sequence": {
+          "description": "Return events whose sequence is greater than this.",
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "deployable",
+        "sequence",
+        "limit"
+      ],
+      "title": "EventsRead",
+      "type": "object"
+    },
+    "EventsReadResult": {
+      "description": "One page of saved events, in sequence order.",
+      "properties": {
+        "events": {
+          "items": {
+            "$ref": "#/definitions/AgentEvent"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "events"
+      ],
+      "title": "EventsReadResult",
+      "type": "object"
+    },
     "FileInfo": {
       "description": "One path in a release.",
       "properties": {
@@ -315,6 +1133,44 @@
         "link"
       ],
       "type": "string"
+    },
+    "HashCurrent": {
+      "description": "Files to compare with the current release.",
+      "properties": {
+        "paths": {
+          "description": "Relative file paths within the release.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "root": {
+          "description": "Absolute deployment directory containing `current`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "paths"
+      ],
+      "title": "HashCurrent",
+      "type": "object"
+    },
+    "HashCurrentResult": {
+      "description": "SHA-256 hashes for files that exist and are safe to reuse.",
+      "properties": {
+        "hashes": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "hashes"
+      ],
+      "title": "HashCurrentResult",
+      "type": "object"
     },
     "Initialize": {
       "description": "`initialize`: agree on the protocol version and what this engine can do.",
@@ -363,6 +1219,19 @@
         "shipdeck"
       ],
       "title": "InitializeResult",
+      "type": "object"
+    },
+    "InspectWork": {
+      "description": "The deployment directory to inspect.",
+      "properties": {
+        "root": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "root"
+      ],
+      "title": "InspectWork",
       "type": "object"
     },
     "LogKind": {
@@ -933,6 +1802,25 @@
       "title": "Problem",
       "type": "object"
     },
+    "ProjectLock": {
+      "description": "A project lock and the caller's unique token for this session.",
+      "properties": {
+        "root": {
+          "type": "string"
+        },
+        "token": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "root",
+        "token"
+      ],
+      "title": "ProjectLock",
+      "type": "object"
+    },
     "ReleaseContents": {
       "description": "`release/contents`: what one release holds.",
       "properties": {
@@ -1203,6 +2091,139 @@
       "title": "SecretAnswer",
       "type": "object"
     },
+    "ServerFacts": {
+      "description": "Current Linux system information; byte counts are in bytes.",
+      "properties": {
+        "agent_version": {
+          "type": "string"
+        },
+        "arch": {
+          "type": "string"
+        },
+        "cpu_count": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "disk_available": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "disk_path": {
+          "description": "The existing path whose filesystem was measured.",
+          "type": "string"
+        },
+        "disk_total": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kernel": {
+          "type": "string"
+        },
+        "memory_available": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "memory_total": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "notes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "os": {
+          "type": "string"
+        },
+        "tools": {
+          "additionalProperties": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type": "object"
+        },
+        "uptime_seconds": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "os",
+        "kernel",
+        "arch",
+        "cpu_count",
+        "memory_total",
+        "memory_available",
+        "disk_total",
+        "disk_available",
+        "disk_path",
+        "uptime_seconds",
+        "tools",
+        "notes",
+        "agent_version"
+      ],
+      "title": "ServerFacts",
+      "type": "object"
+    },
+    "ServerFactsRequest": {
+      "description": "The absolute path whose filesystem should be measured.",
+      "properties": {
+        "disk_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "disk_path"
+      ],
+      "title": "ServerFactsRequest",
+      "type": "object"
+    },
+    "ServerInfoGet": {
+      "description": "`server/info`: facts about the server for one deployable.",
+      "properties": {
+        "deployable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "deployable"
+      ],
+      "title": "ServerInfoGet",
+      "type": "object"
+    },
+    "ServerSetup": {
+      "description": "`server/setup`: prepare a server once, from the app.",
+      "properties": {
+        "access": {
+          "$ref": "#/definitions/SetupAccess"
+        },
+        "deployable": {
+          "type": "string"
+        },
+        "sudo_password": {
+          "description": "The user's sudo password, for this run only. It is never saved.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "deployable",
+        "access"
+      ],
+      "title": "ServerSetup",
+      "type": "object"
+    },
     "ServiceControl": {
       "description": "`service/control`: start, stop or restart the service.",
       "properties": {
@@ -1218,6 +2239,63 @@
         "action"
       ],
       "title": "ServiceControl",
+      "type": "object"
+    },
+    "SetupAccess": {
+      "description": "What guided setup may grant on the server.",
+      "oneOf": [
+        {
+          "const": "full",
+          "description": "Password-free sudo for every command.",
+          "type": "string"
+        },
+        {
+          "const": "commands",
+          "description": "Password-free sudo for exactly the commands shipdeck runs.",
+          "type": "string"
+        }
+      ],
+      "title": "SetupAccess"
+    },
+    "SetupReport": {
+      "description": "What guided setup did.",
+      "properties": {
+        "access": {
+          "description": "`root`, `full sudo` or `commands`.",
+          "type": "string"
+        },
+        "dir": {
+          "type": "string"
+        },
+        "installed": {
+          "default": [],
+          "description": "Packages this run installed.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "notes": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "os": {
+          "type": "string"
+        },
+        "user": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "os",
+        "user",
+        "dir",
+        "access"
+      ],
+      "title": "SetupReport",
       "type": "object"
     },
     "StatusGet": {
@@ -1279,6 +2357,23 @@
         }
       ]
     },
+    "SwitchRelease": {
+      "description": "The root and release name for a live switch.",
+      "properties": {
+        "release": {
+          "type": "string"
+        },
+        "root": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "release"
+      ],
+      "title": "SwitchRelease",
+      "type": "object"
+    },
     "Unit": {
       "description": "What a progress count measures.",
       "enum": [
@@ -1287,6 +2382,240 @@
         "seconds"
       ],
       "type": "string"
+    },
+    "UnpackRelease": {
+      "description": "The uploaded bundle and its reuse lists.",
+      "properties": {
+        "max_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_entries": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "modes": {
+          "items": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "release": {
+          "type": "string"
+        },
+        "root": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "release",
+        "modes",
+        "max_bytes",
+        "max_entries"
+      ],
+      "title": "UnpackRelease",
+      "type": "object"
+    },
+    "UnpackResult": {
+      "description": "The result of checking all files in a release.",
+      "properties": {
+        "mismatches": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "verified": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "verified",
+        "mismatches"
+      ],
+      "title": "UnpackResult",
+      "type": "object"
+    },
+    "UploadPrepare": {
+      "description": "A compressed release to receive.",
+      "properties": {
+        "bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "lock_token": {
+          "description": "The project lock this upload belongs to.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "release": {
+          "type": "string"
+        },
+        "retry": {
+          "default": false,
+          "description": "True only when retrying this same operation after a reuse mismatch.",
+          "type": "boolean"
+        },
+        "root": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "release",
+        "bytes",
+        "sha256",
+        "lock_token"
+      ],
+      "title": "UploadPrepare",
+      "type": "object"
+    },
+    "UploadReservation": {
+      "description": "A private one-use reservation for the receiver.",
+      "properties": {
+        "reservation": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "reservation"
+      ],
+      "title": "UploadReservation",
+      "type": "object"
+    },
+    "WorkCleanup": {
+      "description": "`work/cleanup`: remove unfinished files after the user approved them.",
+      "properties": {
+        "artifacts": {
+          "description": "The exact unfinished paths `work/get` reported.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "deployable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "deployable",
+        "artifacts"
+      ],
+      "title": "WorkCleanup",
+      "type": "object"
+    },
+    "WorkCleanupResult": {
+      "description": "What the approved cleanup removed.",
+      "properties": {
+        "removed": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "removed"
+      ],
+      "title": "WorkCleanupResult",
+      "type": "object"
+    },
+    "WorkGet": {
+      "description": "`work/get`: the live release, unfinished files, and recent events.",
+      "properties": {
+        "deployable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "deployable"
+      ],
+      "title": "WorkGet",
+      "type": "object"
+    },
+    "WorkInspection": {
+      "description": "The current symlink and unfinished release artifacts.",
+      "properties": {
+        "current": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uncertain": {
+          "description": "A release whose switch started and whose completion was never saved.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unfinished": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "unfinished"
+      ],
+      "title": "WorkInspection",
+      "type": "object"
+    },
+    "WorkReport": {
+      "description": "What is known about interrupted work on one server.",
+      "properties": {
+        "active": {
+          "description": "The service's live state, when it could be read.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "current": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "events": {
+          "default": [],
+          "description": "The newest saved events for the project, oldest first.",
+          "items": {
+            "$ref": "#/definitions/AgentEvent"
+          },
+          "type": "array"
+        },
+        "uncertain": {
+          "description": "A release whose activation started and was never confirmed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unfinished": {
+          "description": "Paths a failed or interrupted operation left, relative to the project.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "unfinished"
+      ],
+      "title": "WorkReport",
+      "type": "object"
     },
     "WorkspaceOpen": {
       "description": "`workspace/open`: pick the folder of projects, and how to log in.",

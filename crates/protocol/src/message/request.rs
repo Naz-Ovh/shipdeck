@@ -58,6 +58,100 @@ pub struct StatusGet {
     pub deployable: String,
 }
 
+/// `server/info`: facts about the server for one deployable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ServerInfoGet {
+    pub deployable: String,
+}
+
+/// What guided setup may grant on the server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SetupAccess {
+    /// Password-free sudo for every command.
+    Full,
+    /// Password-free sudo for exactly the commands shipdeck runs.
+    Commands,
+}
+
+/// `server/setup`: prepare a server once, from the app.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ServerSetup {
+    pub deployable: String,
+    pub access: SetupAccess,
+    /// The user's sudo password, for this run only. It is never saved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sudo_password: Option<String>,
+}
+
+/// What guided setup did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SetupReport {
+    pub os: String,
+    pub user: String,
+    pub dir: String,
+    /// `root`, `full sudo` or `commands`.
+    pub access: String,
+    /// Packages this run installed.
+    #[serde(default)]
+    pub installed: Vec<String>,
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
+/// `work/get`: the live release, unfinished files, and recent events.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct WorkGet {
+    pub deployable: String,
+}
+
+/// What is known about interrupted work on one server.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct WorkReport {
+    pub current: Option<String>,
+    /// The service's live state, when it could be read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active: Option<String>,
+    /// Paths a failed or interrupted operation left, relative to the project.
+    pub unfinished: Vec<String>,
+    /// A release whose activation started and was never confirmed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uncertain: Option<String>,
+    /// The newest saved events for the project, oldest first.
+    #[serde(default)]
+    pub events: Vec<crate::message::agent::AgentEvent>,
+}
+
+/// `work/cleanup`: remove unfinished files after the user approved them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct WorkCleanup {
+    pub deployable: String,
+    /// The exact unfinished paths `work/get` reported.
+    pub artifacts: Vec<String>,
+}
+
+/// What the approved cleanup removed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct WorkCleanupResult {
+    pub removed: Vec<String>,
+}
+
+/// `events/read`: replay saved events after a sequence number.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct EventsRead {
+    pub deployable: String,
+    /// Return events whose sequence is greater than this.
+    pub sequence: i64,
+    /// At most this many; the engine caps it.
+    pub limit: u32,
+}
+
+/// One page of saved events, in sequence order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct EventsReadResult {
+    pub events: Vec<crate::message::agent::AgentEvent>,
+}
+
 /// What `status/get` answers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct StatusGetResult {
