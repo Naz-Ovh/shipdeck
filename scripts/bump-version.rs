@@ -1,11 +1,29 @@
-//! Update the workspace version and regenerate its published schemas.
+//! Update release versions without Cargo or external dependencies.
 
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
+
+/// One validated file update and its original contents for recovery.
+struct FileChange {
+    path: PathBuf,
+    original: String,
+    updated: String,
+}
+
+impl FileChange {
+    /// Read the original file before any release files are written.
+    fn read(path: PathBuf) -> Result<Self> {
+        let original = fs::read_to_string(&path)?;
+        Ok(Self {
+            path,
+            original,
+            updated: String::new(),
+        })
+    }
+}
 
 /// Parse a stable version without limiting the size of its numbers.
 fn version(value: &str) -> Result<Vec<&str>> {
@@ -49,30 +67,76 @@ fn versioned_files(root: &Path) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-/// Run Cargo and write the generated schema only after it succeeds.
-fn schema(root: &Path, args: &[&str], paths: &[&str]) -> Result<()> {
-    let output = Command::new("cargo")
-        .args(args)
-        .current_dir(root)
-        .output()?;
-    if !output.status.success() {
-        return Err(format!(
-            "Schema generation failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )
-        .into());
+/// Update only the local workspace packages in Cargo's generated lockfile.
+fn lockfile(content: &str, old: &str, new: &str) -> Result<String> {
+    let packages = [
+        "shipdeck",
+        "shipdeck-agent",
+        "shipdeck-engine",
+        "shipdeck-protocol",
+        "shipdeck-tui",
+    ];
+    let mut found = Vec::with_capacity(packages.len());
+    let mut updated = String::with_capacity(content.len());
+    for section in content.split("[[package]]") {
+        if !updated.is_empty() {
+            updated.push_str("[[package]]");
+        }
+        let name = section.lines().find_map(|line| {
+            line.strip_prefix("name = \"")
+                .and_then(|value| value.strip_suffix('"'))
+        });
+        if let Some(name) = name.filter(|name| packages.contains(name)) {
+            if found.contains(&name)
+                || section.lines().any(|line| line.starts_with("source = "))
+                || !section
+                    .lines()
+                    .any(|line| line == format!("version = \"{old}\""))
+            {
+                return Err(format!("Unexpected lockfile entry for {name}.").into());
+            }
+            found.push(name);
+            updated.push_str(&section.replacen(
+                &format!("version = \"{old}\""),
+                &format!("version = \"{new}\""),
+                1,
+            ));
+        } else {
+            updated.push_str(section);
+        }
     }
-    for path in paths {
-        fs::write(root.join(path), &output.stdout)?;
+    if found.len() != packages.len() {
+        return Err("Cargo.lock is missing a workspace package.".into());
+    }
+    Ok(updated)
+}
+
+/// Apply prepared changes, reporting every failure to restore an original.
+fn apply(changes: &[FileChange]) -> Result<()> {
+    for (index, change) in changes.iter().enumerate() {
+        if let Err(error) = fs::write(&change.path, &change.updated) {
+            let mut message = format!("Could not write {}: {error}", change.path.display());
+            for original in changes.iter().take(index + 1) {
+                if let Err(restore) = fs::write(&original.path, &original.original) {
+                    use std::fmt::Write;
+                    write!(
+                        message,
+                        "\nCould not restore {}: {restore}",
+                        original.path.display()
+                    )?;
+                }
+            }
+            return Err(message.into());
+        }
     }
     Ok(())
 }
 
-/// Apply a version change, restoring the original files if a command fails.
+/// Validate every input before updating release files.
 fn bump(root: &Path, new: &str) -> Result<()> {
-    let manifest = root.join("Cargo.toml");
-    let text = fs::read_to_string(&manifest)?;
-    let section = text
+    let mut manifest = FileChange::read(root.join("Cargo.toml"))?;
+    let section = manifest
+        .original
         .split_once("[workspace.package]\n")
         .ok_or("Workspace package not found.")?
         .1;
@@ -86,74 +150,36 @@ fn bump(root: &Path, new: &str) -> Result<()> {
     if !newer(new, old)? {
         return Err(format!("The new version must be greater than {old}.").into());
     }
-    let files = versioned_files(root)?;
+    let mut files = versioned_files(root)?;
+    files.extend([
+        root.join("docs/schema/deploy.schema.json"),
+        root.join("docs/website/public/deploy.schema.json"),
+        root.join("docs/schema/protocol.schema.json"),
+    ]);
     let mut changes = Vec::new();
+    let old_tag = format!("v{old}");
+    let new_tag = format!("v{new}");
     for path in files {
-        let content = fs::read_to_string(&path)?;
-        if !content.contains(&format!("v{old}")) {
-            return Err(format!("{} does not contain v{old}.", path.display()).into());
+        let mut change = FileChange::read(path)?;
+        if !change.original.contains(&old_tag) {
+            return Err(format!("{} does not contain v{old}.", change.path.display()).into());
         }
-        changes.push((
-            path,
-            content.replace(&format!("v{old}"), &format!("v{new}")),
-        ));
+        change.updated = change.original.replace(&old_tag, &new_tag);
+        changes.push(change);
     }
-    changes.push((
-        manifest,
-        text.replacen(
-            &format!("[workspace.package]\nversion = \"{old}\""),
-            &format!("[workspace.package]\nversion = \"{new}\""),
-            1,
-        ),
-    ));
-    let mut affected: Vec<_> = changes.iter().map(|(path, _)| path.clone()).collect();
-    affected.extend(
-        [
-            "Cargo.lock",
-            "docs/schema/deploy.schema.json",
-            "docs/website/public/deploy.schema.json",
-            "docs/schema/protocol.schema.json",
-        ]
-        .iter()
-        .map(|path| root.join(path)),
+    manifest.updated = manifest.original.replacen(
+        &format!("[workspace.package]\nversion = \"{old}\""),
+        &format!("[workspace.package]\nversion = \"{new}\""),
+        1,
     );
-    let originals: Vec<_> = affected
-        .iter()
-        .map(|path| Ok((path, fs::read(path)?)))
-        .collect::<Result<_>>()?;
-    let result = (|| -> Result<()> {
-        for (path, content) in &changes {
-            fs::write(path, content)?;
-        }
-        schema(
-            root,
-            &["run", "-q", "-p", "shipdeck", "--", "--schema"],
-            &[
-                "docs/schema/deploy.schema.json",
-                "docs/website/public/deploy.schema.json",
-            ],
-        )?;
-        schema(
-            root,
-            &[
-                "run",
-                "-q",
-                "-p",
-                "shipdeck-protocol",
-                "--example",
-                "schema",
-            ],
-            &["docs/schema/protocol.schema.json"],
-        )?;
-        Ok(())
-    })();
-    if let Err(error) = result {
-        for (path, content) in originals {
-            fs::write(path, content)?;
-        }
-        return Err(error);
-    }
-    println!("Updated shipdeck from {old} to {new}. Add release notes to CHANGELOG.md.");
+    let mut lock = FileChange::read(root.join("Cargo.lock"))?;
+    lock.updated = lockfile(&lock.original, old, new)?;
+    changes.push(lock);
+    let message =
+        format!("Updated shipdeck from {old} to {new}. Add release notes to CHANGELOG.md.");
+    changes.push(manifest);
+    apply(&changes)?;
+    println!("{message}");
     Ok(())
 }
 
@@ -163,6 +189,6 @@ fn main() -> Result<()> {
     if args.next().is_some() {
         return Err("Usage: just version MAJOR.MINOR.PATCH".into());
     }
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = std::env::current_dir()?;
     bump(&root, &new)
 }

@@ -1,5 +1,25 @@
 # Handoff
 
+## Standalone version tool — 2026-11-08
+
+Removed the `bump-version` example registration from the protocol crate.
+`scripts/bump-version.rs` now compiles directly with `rustc`; `just version`
+uses a temporary binary and removes it on exit. No workspace membership,
+dependencies, or Cargo calls are needed by the version tool.
+
+The tool updates the workspace manifest, the five local lockfile entries,
+release links, and the three published schema URLs. Schema generation stays
+in `just schema` and `just protocol`. Inputs are checked before writes, and
+write failures trigger restoration with any restoration errors reported.
+Development docs include direct compilation instructions.
+
+Verified five tests in `tests/version_bump_test.py`, including the real Just
+recipe in a disposable copy without workspace crates. Tests cover dependency
+and schema-content preservation, invalid versions, missing schema files, and
+stale lockfile entries. No project version was changed by these checks.
+Workspace formatting, strict workspace Clippy with all targets, direct
+Clippy for the standalone script, and `git diff --check` also passed.
+
 ## Privileged agent install and version policy — 2026-11-08
 
 Implemented the agreed policy in `docs/feature/agent-version-policy.md`. No

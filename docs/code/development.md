@@ -70,6 +70,14 @@ Run `just protocol` after protocol changes. The manual lives in
 Local Lefthook hooks run the version check before commits and Rust checks before
 pushes. They do not replace release verification.
 
+The version tool is `scripts/bump-version.rs`, outside the workspace. To run it
+directly, compile and run it from the repository root:
+
+```sh
+rustc --edition=2024 scripts/bump-version.rs -o /tmp/shipdeck-bump-version
+/tmp/shipdeck-bump-version NEW_VERSION
+```
+
 ## Publish a release
 
 1. Inspect the changes since the last published tag and the relevant reviews.
