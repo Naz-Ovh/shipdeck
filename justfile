@@ -22,13 +22,16 @@ build-release: (build 'release')
 
 alias release := build-release
 
-# Installs the local release build into Cargo's bin folder (usually ~/.cargo/bin).
+# Installs the local release build as ~/.local/bin/shipdeck.
 install:
-    cargo install --path apps/cli --locked
+    cargo install --path apps/cli --locked --root "$HOME/.local" --force
 
-# Installs the local release agent into Cargo's bin folder (usually ~/.cargo/bin).
+# Installs the local release agent as ~/.local/bin/shipdeck-agent.
 install-agent:
-    cargo install --path crates/agent --locked
+    cargo install --path crates/agent --locked --root "$HOME/.local" --force
+
+# Installs both the local release CLI and agent as ~/.local/bin/shipdeck and shipdeck-agent.
+install-all: install install-agent
 
 # Checks every workspace target without producing binaries.
 check:

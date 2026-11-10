@@ -235,7 +235,9 @@ exit 1",
                     self.session.label
                 ),
             );
+            report.log(LogKind::Info, "creating the release folders");
             agent.prepare_project(&self.dir).await?;
+            report.log(LogKind::Info, "checking unfinished release files");
             let inspection = agent.inspect_work(&self.dir).await?;
             if let Some(release) = &inspection.uncertain {
                 report.log(
@@ -257,6 +259,7 @@ exit 1",
             }
         } else {
             let dir = self.q_dir();
+            report.log(LogKind::Info, "creating the release folders");
             self.run(
                 "create releases/, backups/ and shared/",
                 &format!("cd {dir} && mkdir -p releases backups shared"),

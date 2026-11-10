@@ -60,6 +60,8 @@ pub(crate) struct Lines {
     last_line: Instant,
     /// The last progress text, for a silent-step heartbeat.
     last_progress: Option<String>,
+    /// The last log text, for a silent-step heartbeat.
+    activity: Option<String>,
     /// The first progress point of the running step: when, and how far.
     speed_from: Option<(Instant, u64)>,
 }
@@ -77,6 +79,7 @@ impl Lines {
             announced: false,
             last_line: now,
             last_progress: None,
+            activity: None,
             speed_from: None,
         }
     }
@@ -104,7 +107,16 @@ impl Lines {
             return None;
         }
         let name = self.steps.get(step).map_or("step", String::as_str);
-        let working = self.last_progress.as_deref().unwrap_or("working");
+        let prefix = format!("{name}: ");
+        let activity = self
+            .activity
+            .as_deref()
+            .map(|text| text.strip_prefix(&prefix).unwrap_or(text));
+        let working = self
+            .last_progress
+            .as_deref()
+            .or(activity)
+            .unwrap_or("working");
         self.last_line = now;
         Some(self.paint.muted(&format!(
             "… {name}: {working} · {} so far",
@@ -112,7 +124,10 @@ impl Lines {
         )))
     }
 
-    fn log(&self, kind: LogKind, text: &str) -> String {
+    fn log(&mut self, kind: LogKind, text: &str) -> String {
+        if !text.is_empty() {
+            self.activity = Some(text.to_string());
+        }
         let paint = self.paint;
         match kind {
             LogKind::Step => {
@@ -148,6 +163,7 @@ impl Lines {
                 self.progress_at = now;
                 self.announced = false;
                 self.last_progress = None;
+                self.activity = None;
                 self.speed_from = None;
                 None
             }
@@ -204,6 +220,11 @@ impl Lines {
             self.speed_from = Some((now, progress.done));
             return text;
         };
+        if progress.total > progress.done {
+            text.push_str(" · ");
+            text.push_str(&human::bytes(progress.total - progress.done));
+            text.push_str(" remaining");
+        }
         let seconds = now.duration_since(started).as_secs();
         let done = progress.done.saturating_sub(start_done);
         if seconds > 0 && done > 0 {
@@ -232,8 +253,22 @@ fn amount(done: u64, total: u64, unit: Unit) -> String {
         show(done)
     } else {
         let percent = u128::from(done) * 100 / u128::from(total);
-        format!("{} / {} ({percent}%)", show(done), show(total))
+        format!(
+            "{} {} of {} ({percent}%)",
+            bar(done, total),
+            show(done),
+            show(total)
+        )
     }
+}
+
+/// A ten-cell bar for a known total.
+fn bar(done: u64, total: u64) -> String {
+    const WIDTH: usize = 10;
+    let filled = usize::try_from(u128::from(done) * 10 / u128::from(total))
+        .unwrap_or(WIDTH)
+        .min(WIDTH);
+    format!("[{}{}]", "#".repeat(filled), "-".repeat(WIDTH - filled))
 }
 
 #[cfg(test)]

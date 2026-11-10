@@ -32,11 +32,14 @@ pub async fn preflight_apps<'a>(
     endpoint: &crate::ssh::Endpoint,
     pool: &Pool,
     report: &Reporter,
+    step: usize,
 ) -> Result<Vec<AppServer<'a>>> {
     if apps.is_empty() {
         bail!("the monorepo has no apps");
     }
-    let session = pool.get(endpoint).await?;
+    report.log(LogKind::Command, format!("connect {}", endpoint.label()));
+    let session = connect(pool, endpoint, report, step).await?;
+    report.log(LogKind::Info, "checking the server and its tools");
     let legacy_lock = session.agent().is_none();
     let mut tools = std::collections::BTreeSet::new();
     tools.extend(SERVER_TOOLS.iter().map(|(name, _)| (*name).to_string()));
@@ -64,7 +67,20 @@ pub async fn preflight_apps<'a>(
     }
     let tools: Vec<_> = tools.into_iter().collect();
     let mut servers = Vec::with_capacity(apps.len());
-    for app in apps {
+    let total = u64::try_from(apps.len()).unwrap_or(u64::MAX);
+    for (index, app) in apps.iter().enumerate() {
+        let checked = u64::try_from(index).unwrap_or(u64::MAX);
+        report.log(
+            LogKind::Info,
+            format!("checking {} ({}/{total})", app.name, index + 1),
+        );
+        report.progress(
+            step,
+            checked,
+            total,
+            Unit::Items,
+            format!("checking {}", app.name),
+        );
         let server = Server::for_app(std::sync::Arc::clone(&session), &app.service, &app.name)?;
         let facts = server.facts(&tools).await?;
         if !facts.dir_exists {
@@ -102,6 +118,7 @@ pub async fn preflight_apps<'a>(
         }
         servers.push(AppServer { app, server, facts });
     }
+    report.progress(step, total, total, Unit::Items, "server checked");
     Ok(servers)
 }
 
@@ -113,6 +130,39 @@ pub(super) const MIN_FREE: u64 = 100 * 1024 * 1024;
 pub(super) const SERVER_TOOLS: [(&str, &str); 3] =
     [("tar", "tar"), ("zstd", "zstd"), ("sha256sum", "coreutils")];
 
+/// Opens the connection, naming the agent and SSH phases as they run.
+/// Says whether server commands get the login shell's environment.
+fn log_shell_env(report: &Reporter, shell_env: &ShellEnv) {
+    match shell_env {
+        ShellEnv::Loaded => report.log(
+            LogKind::Info,
+            "server commands get the login shell's environment (ssh.shell_env)",
+        ),
+        ShellEnv::Off => report.log(
+            LogKind::Info,
+            "server commands run without the login shell's startup files",
+        ),
+        ShellEnv::Failed(why) => report.log(
+            LogKind::Warn,
+            format!("{why}; server commands run without them"),
+        ),
+    }
+}
+
+async fn connect(
+    pool: &Pool,
+    endpoint: &crate::ssh::Endpoint,
+    report: &Reporter,
+    step: usize,
+) -> Result<std::sync::Arc<crate::ssh::Session>> {
+    pool.get_with(
+        endpoint,
+        |what| report.log(LogKind::Info, what),
+        |done, total| report.progress(step, done, total, Unit::Bytes, "uploading the agent"),
+    )
+    .await
+}
+
 pub(super) async fn preflight(
     deployable: &Deployable,
     pool: &Pool,
@@ -120,6 +170,7 @@ pub(super) async fn preflight(
     step: usize,
 ) -> Result<(Server, Facts, String)> {
     let config = &deployable.config;
+    report.log(LogKind::Info, "checking the local project");
     check_local(deployable)?;
     let endpoint = &deployable.endpoint;
     let address = if endpoint.is_alias() {
@@ -135,21 +186,8 @@ pub(super) async fn preflight(
             pool.login().describe()
         ),
     );
-    let session = pool.get(endpoint).await?;
-    match &session.shell_env {
-        ShellEnv::Loaded => report.log(
-            LogKind::Info,
-            "server commands get the login shell's environment (ssh.shell_env)",
-        ),
-        ShellEnv::Off => report.log(
-            LogKind::Info,
-            "server commands run without the login shell's startup files",
-        ),
-        ShellEnv::Failed(why) => report.log(
-            LogKind::Warn,
-            format!("{why}; server commands run without them"),
-        ),
-    }
+    let session = connect(pool, endpoint, report, step).await?;
+    log_shell_env(report, &session.shell_env);
     let legacy_lock = session.agent().is_none();
     let server = Server::new(session, &config.service);
     let mut tools = deployable.required_tools();
@@ -161,6 +199,7 @@ pub(super) async fn preflight(
             tools.push(tool.into());
         }
     }
+    report.log(LogKind::Info, "checking the server and its tools");
     let facts = server.facts(&tools).await?;
     report.progress(step, 1, 2, Unit::Items, "server checked");
 

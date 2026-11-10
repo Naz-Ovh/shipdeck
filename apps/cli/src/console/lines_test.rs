@@ -76,16 +76,17 @@ fn progress_is_immediate_then_updates_with_rate_and_time_left() {
     };
     assert_eq!(
         lines.line(progress(1024), start + Duration::from_secs(1)),
-        Some("… Upload: uploading 1.0 KiB / 4.0 MiB (0%)".into())
+        Some("… Upload: uploading [----------] 1.0 KiB of 4.0 MiB (0%)".into())
     );
     let second = lines
         .line(progress(1024 * 1024), start + Duration::from_secs(6))
         .unwrap();
     assert!(
-        second.starts_with("… Upload: uploading 1.0 MiB / 4.0 MiB (25%)"),
+        second.starts_with("… Upload: uploading [##--------] 1.0 MiB of 4.0 MiB (25%)"),
         "{second}"
     );
     assert!(second.contains("/s"), "{second}");
+    assert!(second.contains("remaining"), "{second}");
     assert!(second.contains("left"), "{second}");
     assert_eq!(
         lines.line(
@@ -141,7 +142,7 @@ fn a_step_prints_its_number_and_survives_a_silent_spell() {
             }),
             start + Duration::from_secs(1)
         ),
-        Some("… Upload: uploading 1.0 KiB / 4.0 KiB (25%)".into())
+        Some("… Upload: uploading [##--------] 1.0 KiB of 4.0 KiB (25%)".into())
     );
     assert_eq!(lines.heartbeat(start + Duration::from_secs(2)), None);
     let beat = lines.heartbeat(start + Duration::from_secs(7)).unwrap();

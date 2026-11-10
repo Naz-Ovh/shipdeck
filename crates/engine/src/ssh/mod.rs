@@ -500,14 +500,26 @@ impl Session {
     /// Fails when the account lacks sudo, a newer agent major is installed,
     /// installation or verification fails, or the agent does not answer.
     pub async fn start_agent(&self) -> Result<()> {
-        let started = tokio::time::timeout(AGENT_START_TIMEOUT, crate::agent::Agent::start(self))
-            .await
-            .map_err(|_| {
-                anyhow!(
-                    "the agent did not start within {}s",
-                    AGENT_START_TIMEOUT.as_secs()
-                )
-            })??;
+        self.start_agent_with(&|_| {}, &|_, _| {}).await
+    }
+
+    /// Prepares the agent, naming each phase to `status`.
+    async fn start_agent_with(
+        &self,
+        status: &(dyn Fn(&str) + Sync),
+        bytes: &(dyn Fn(u64, u64) + Sync),
+    ) -> Result<()> {
+        let started = tokio::time::timeout(
+            AGENT_START_TIMEOUT,
+            crate::agent::Agent::start(self, status, bytes),
+        )
+        .await
+        .map_err(|_| {
+            anyhow!(
+                "the agent did not start within {}s",
+                AGENT_START_TIMEOUT.as_secs()
+            )
+        })??;
         *self
             .agent
             .lock()
@@ -597,6 +609,28 @@ impl Pool {
     ///
     /// Panics when the pool's slot lock is poisoned.
     pub async fn get(&self, target: &Endpoint) -> Result<Arc<Session>> {
+        self.get_with(target, |_| {}, |_, _| {}).await
+    }
+
+    /// Opens a connection, naming each slow phase to `status`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the server cannot be reached or the login is refused.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the pool's slot lock is poisoned.
+    pub async fn get_with<F, G>(
+        &self,
+        target: &Endpoint,
+        status: F,
+        bytes: G,
+    ) -> Result<Arc<Session>>
+    where
+        F: Fn(&str) + Sync,
+        G: Fn(u64, u64) + Sync,
+    {
         let slot = {
             let mut slots = self.slots.lock().expect("pool lock");
             slots.entry(target.clone()).or_default().clone()
@@ -607,12 +641,17 @@ impl Pool {
         {
             return Ok(session.clone());
         }
-        let session = Arc::new(self.connect(target).await?);
+        let session = Arc::new(self.connect(target, &status, &bytes).await?);
         *slot = Some(session.clone());
         Ok(session)
     }
 
-    async fn connect(&self, target: &Endpoint) -> Result<Session> {
+    async fn connect(
+        &self,
+        target: &Endpoint,
+        status: &(dyn Fn(&str) + Sync),
+        bytes: &(dyn Fn(u64, u64) + Sync),
+    ) -> Result<Session> {
         let label = target.label();
         // Errors name the alias and the address it stands for.
         let place = if target.is_alias() {
@@ -627,6 +666,7 @@ impl Pool {
         });
         let client = Client::new(target.host.clone(), target.port, self.asker.clone());
         let rejected = client.rejection();
+        status("opening the SSH connection");
         let connecting = client::connect(config, (target.host.as_str(), target.port), client);
         let mut handle = match tokio::time::timeout(CONNECT_TIMEOUT, connecting).await {
             Err(_) => bail!(
@@ -641,7 +681,9 @@ impl Pool {
             }
             Ok(Ok(handle)) => handle,
         };
+        status("logging in");
         login::authenticate(&mut handle, target, &self.login, &self.asker, &self.secrets).await?;
+        status("connected");
         let mut session = Session {
             handle,
             label,
@@ -651,10 +693,11 @@ impl Pool {
             agent: Mutex::new(None),
         };
         if self.shell_env && target.shell_env {
+            status("reading the login shell's environment");
             session.load_shell_env().await;
         }
         session
-            .start_agent()
+            .start_agent_with(status, bytes)
             .await
             .context("preparing the shipdeck agent")?;
         Ok(session)

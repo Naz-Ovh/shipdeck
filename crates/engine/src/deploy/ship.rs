@@ -62,6 +62,7 @@ impl Run<'_> {
         let index = self.at(row);
         let started = Instant::now();
         server.prepare(report).await?;
+        report.log(LogKind::Info, "folders ready; starting the upload");
         let target = server.upload_path(id);
         report.log(
             LogKind::Command,

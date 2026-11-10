@@ -21,26 +21,32 @@ pub(super) async fn install(
     local: &OsStr,
     target: &str,
     label: &str,
+    status: &(dyn Fn(&str) + Sync),
+    bytes: &(dyn Fn(u64, u64) + Sync),
 ) -> Result<String> {
     if local.is_empty() {
         bail!("{BINARY_ENV} must name a local Linux agent binary");
     }
     let local = Path::new(local);
+    status("reading the local agent binary");
     let data = tokio::fs::read(local)
         .await
         .with_context(|| format!("reading development agent {}", local.display()))?;
     check_target(&data, target)?;
     let digest = base16ct::lower::encode_string(&Sha256::digest(&data));
+    status("creating a private folder for the upload");
     let folder = private_folder(session).await?;
     let partial = format!("{folder}/agent.partial");
+    status("uploading the local agent");
     let uploaded = session
-        .upload_with_cat(&data, &partial, |_, _| {})
+        .upload_with_cat(&data, &partial, bytes)
         .await
         .with_context(|| format!("uploading development agent; unfinished file: {partial}"));
     if let Err(err) = uploaded {
         remove_folder(session, &folder).await;
         return Err(err);
     }
+    status("installing the uploaded agent");
     let result = install::install_uploaded(session, prefix, &partial, &digest, label).await;
     remove_folder(session, &folder).await;
     result

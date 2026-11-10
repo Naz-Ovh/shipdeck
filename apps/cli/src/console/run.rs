@@ -1,6 +1,7 @@
 //! One command run against the engine: what it asks, and what it says.
 
 use std::future::Future;
+use std::io::{IsTerminal, Write};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
@@ -381,6 +382,7 @@ impl Console {
         let choices = self.choices;
         let handle = self.connection.handle();
         let mut lines = Lines::new(steps, paint, Instant::now());
+        let mut live = Live::new();
         let started = Instant::now();
         let mut interrupted = false;
         let ctrl_c = tokio::signal::ctrl_c();
@@ -391,11 +393,12 @@ impl Console {
             tokio::select! {
                 _ = tick.tick() => {
                     if let Some(line) = lines.heartbeat(Instant::now()) {
-                        eprintln!("{line}");
+                        live.progress(&line);
                     }
                 }
                 incoming = self.connection.recv() => match incoming {
                     Some(Incoming::Event(Event::Finished(finished))) => {
+                        live.clear();
                         eprintln!(
                             "{}",
                             summary(paint, &project.name, &finished.outcome, started.elapsed())
@@ -403,22 +406,30 @@ impl Console {
                         return exit_code(&finished.outcome);
                     }
                     Some(Incoming::Event(event)) => {
+                        let progress = matches!(event, Event::Progress(_));
                         if let Some(line) = lines.line(event, Instant::now()) {
-                            eprintln!("{line}");
+                            if progress {
+                                live.progress(&line);
+                            } else {
+                                live.line(&line);
+                            }
                         }
                     }
                     Some(Incoming::Ask { id, ask }) => {
+                        live.clear();
                         answer(&handle, paint, choices, id, ask);
                     }
                     // The engine asks nothing this version does not know, and
                     // sends no notification these commands read.
                     Some(Incoming::Other { .. } | Incoming::Malformed { .. }) => {}
                     None => {
+                        live.clear();
                         eprintln!("{}", paint.error("✘ the operation stopped without a result"));
                         return 1;
                     }
                 },
                 _ = &mut ctrl_c => {
+                    live.clear();
                     if interrupted {
                         eprintln!("{}", paint.error("✘ stopped"));
                         return INTERRUPTED;
@@ -452,6 +463,48 @@ impl Console {
     fn fail(&self, error: &str) -> ExitCode {
         eprintln!("{}", self.paint.error(&format!("✘ {error}")));
         ExitCode::FAILURE
+    }
+}
+
+/// stderr while a deploy runs: one progress line on a terminal, plain rows otherwise.
+struct Live {
+    terminal: bool,
+    showing: bool,
+}
+
+impl Live {
+    fn new() -> Self {
+        Self {
+            terminal: std::io::stderr().is_terminal(),
+            showing: false,
+        }
+    }
+
+    /// A normal row. It replaces a live progress line first.
+    fn line(&mut self, text: &str) {
+        self.clear();
+        eprintln!("{text}");
+    }
+
+    /// A row that stays on one line on a terminal; a new row in CI.
+    fn progress(&mut self, text: &str) {
+        if self.terminal {
+            self.clear();
+            eprint!("{text}");
+            let _ = std::io::stderr().flush();
+            self.showing = true;
+        } else {
+            eprintln!("{text}");
+        }
+    }
+
+    /// Removes the live line, if there is one.
+    fn clear(&mut self) {
+        if self.showing {
+            eprint!("\r\x1b[2K");
+            let _ = std::io::stderr().flush();
+            self.showing = false;
+        }
     }
 }
 

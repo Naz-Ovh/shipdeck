@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.0/docs/schema/deploy.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.1/docs/schema/deploy.schema.json
 # A Go service: a static binary needs nothing from the server.
 name: Worker (prod)
 project: ../../../worker

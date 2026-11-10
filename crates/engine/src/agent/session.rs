@@ -55,41 +55,22 @@ impl Agent {
     /// Fails when the account cannot use sudo, a newer agent major is
     /// installed, the release cannot be fetched or verified, the server has
     /// no build, the agent cannot run, or it does not answer.
-    pub async fn start(session: &Session) -> Result<Self> {
+    pub async fn start(
+        session: &Session,
+        status: &(dyn Fn(&str) + Sync),
+        bytes: &(dyn Fn(u64, u64) + Sync),
+    ) -> Result<Self> {
         let label = env!("CARGO_PKG_VERSION");
         let cli = Version::parse(label)?;
+        status("checking the installed agent");
         let prefix = layout::sudo_prefix(session).await?;
         let found = layout::installed(session, &prefix).await?;
-        let selected = match choose(&cli, &found) {
-            Action::Use(installed) => installed,
-            Action::Refuse(installed) => bail!(
-                "the installed agent is v{}, but this shipdeck is v{label}. An agent with a \
-                 newer major version cannot serve it: this shipdeck requires agent major {}. \
-                 Change the agent installation to a v{}.x release.",
-                installed.label,
-                cli.major,
-                cli.major,
-            ),
-            Action::Replace | Action::Install => {
-                let target = binary::target_for(session).await?;
-                let path = match std::env::var_os(development::BINARY_ENV) {
-                    Some(local) => {
-                        development::install(session, &prefix, local.as_ref(), target, label)
-                            .await?
-                    }
-                    None => install::install(session, &prefix, target, label).await?,
-                };
-                Installed {
-                    version: cli,
-                    label: label.to_string(),
-                    path,
-                }
-            }
-        };
-
+        let selected = Self::select(session, &prefix, &cli, label, &found, status, bytes).await?;
+        status("reading the agent's home folder");
         let home = layout::home(session).await?;
         let command = layout::launch_command(&prefix, &selected.path, &session.user, &home);
         let path = selected.path;
+        status("starting the agent");
         let stream = session.open_stream(&command).await?;
         let (read, write) = tokio::io::split(stream);
         let connection = Connection::start(read, write);
@@ -127,6 +108,7 @@ impl Agent {
             done,
             lock_token: Mutex::new(None),
         };
+        status("waiting for the agent to answer");
         let answer = tokio::time::timeout(HELLO_TIMEOUT, agent.hello())
             .await
             .with_context(|| format!("the agent at {path} did not answer"))??;
@@ -154,7 +136,58 @@ impl Agent {
         agent.version = answer.version;
         agent.os = answer.os;
         agent.arch = answer.arch;
+        status("agent ready");
         Ok(agent)
+    }
+
+    /// Chooses the agent to run, installing one when needed.
+    async fn select(
+        session: &Session,
+        prefix: &str,
+        cli: &Version,
+        label: &str,
+        found: &[Installed],
+        status: &(dyn Fn(&str) + Sync),
+        bytes: &(dyn Fn(u64, u64) + Sync),
+    ) -> Result<Installed> {
+        Ok(match choose(cli, found) {
+            Action::Use(installed) => {
+                status(&format!("using installed agent v{}", installed.label));
+                installed
+            }
+            Action::Refuse(installed) => bail!(
+                "the installed agent is v{}, but this shipdeck is v{label}. An agent with a \
+                 newer major version cannot serve it: this shipdeck requires agent major {}. \
+                 Change the agent installation to a v{}.x release.",
+                installed.label,
+                cli.major,
+                cli.major,
+            ),
+            Action::Replace | Action::Install => {
+                status("checking the server's CPU and C library");
+                let target = binary::target_for(session).await?;
+                let path = if let Some(local) = std::env::var_os(development::BINARY_ENV) {
+                    development::install(
+                        session,
+                        prefix,
+                        local.as_ref(),
+                        target,
+                        label,
+                        status,
+                        bytes,
+                    )
+                    .await?
+                } else {
+                    status("downloading the shipdeck agent");
+                    install::install(session, prefix, target, label, status).await?
+                };
+                Installed {
+                    version: *cli,
+                    label: label.to_string(),
+                    path,
+                }
+            }
+        })
     }
 
     async fn hello(&self) -> Result<AgentHelloResult> {

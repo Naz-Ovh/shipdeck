@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.0/docs/schema/deploy.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.1/docs/schema/deploy.schema.json
 # A Node.js app kept running by PM2 in cluster mode, as the SSH user: no sudo
 # on the server. shipdeck writes my-api.pm2.json into each release.
 name: My API (prod)

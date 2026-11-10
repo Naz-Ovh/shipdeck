@@ -103,9 +103,16 @@ impl<'a> Multiple<'a> {
     /// Deploys all apps, preserving the old release until every health check passes.
     pub async fn deploy(&mut self, pool: &Pool) -> Result<Outcome> {
         self.start(Step::Preflight);
+        self.report.log(LogKind::Info, "checking the local project");
         let resolved = self.config.resolve_apps(&self.deployment.folder)?;
-        let mut checked =
-            preflight_apps(&resolved, &self.deployment.endpoint, pool, self.report).await?;
+        let mut checked = preflight_apps(
+            &resolved,
+            &self.deployment.endpoint,
+            pool,
+            self.report,
+            Self::index(Step::Preflight),
+        )
+        .await?;
         self.lock_and_refresh(&mut checked).await?;
         let first = checked.first().ok_or_else(|| anyhow::anyhow!("no apps"))?;
         self.previous.clone_from(&first.facts.current);
@@ -120,18 +127,7 @@ impl<'a> Multiple<'a> {
             .folder
             .join(&self.config.project)
             .canonicalize()?;
-        let version = self
-            .pipeline
-            .build
-            .version_from
-            .as_ref()
-            .map(|file| root.join(file))
-            .or_else(|| {
-                crate::config::VERSION_FILES
-                    .iter()
-                    .map(|file| root.join(file))
-                    .find(|p| p.is_file())
-            });
+        let version = version_file(&self.pipeline, &root);
         let (name, _) = crate::build::release_name_in(&root, version.as_deref()).await?;
         let id = name.id();
         self.release = Some(id.clone());
@@ -344,6 +340,21 @@ impl<'a> Multiple<'a> {
         self.check_project_lock()?;
         Ok(())
     }
+}
+
+/// The file whose version names this release, from the pipeline or the project.
+fn version_file(pipeline: &Pipeline, root: &std::path::Path) -> Option<std::path::PathBuf> {
+    pipeline
+        .build
+        .version_from
+        .as_ref()
+        .map(|file| root.join(file))
+        .or_else(|| {
+            crate::config::VERSION_FILES
+                .iter()
+                .map(|file| root.join(file))
+                .find(|path| path.is_file())
+        })
 }
 
 /// Runs a monorepo deployment and reports a single outcome.

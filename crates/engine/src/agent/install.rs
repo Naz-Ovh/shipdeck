@@ -27,7 +27,9 @@ pub(super) async fn install(
     prefix: &str,
     target: &str,
     label: &str,
+    status: &(dyn Fn(&str) + Sync),
 ) -> Result<String> {
+    status("downloading and installing the agent");
     let script = install_script(&download_body(target), label);
     run(session, prefix, &script).await?;
     Ok(binary_path(label))

@@ -292,19 +292,28 @@ shipdeck deploy ./scripts/deploy my-api --key ~/.ssh/id_deploy
 ```txt
 ━━ My API (prod) · deploy → deploy@203.0.113.10:/opt/my-api
 ━━ [1/11] Preflight: checking your PC and the server
+ℹ checking the local project
 › connect deploy@203.0.113.10 (key /home/me/.ssh/id_deploy)
+ℹ opening the SSH connection
+ℹ connected
+ℹ checking the installed agent
+ℹ agent ready
+ℹ checking the server and its tools
+ℹ checking admin (1/4)
 ✔ Preflight  ...
 ━━ [3/11] Pack: packing the release
-… Pack: hashing 12.3 MiB / 30.0 MiB (41%) · 2.1 MiB/s · 8s left
+… Pack: hashing [####------] 12.3 MiB of 30.0 MiB (41%) · 17.7 MiB remaining · 2.1 MiB/s · 8s left
 ⋮
 ✔ My API (prod): v0.3.1-ab12cd3-20261014.153012 is live (1m12s)
 ```
 
 Each step prints its number and name when it starts, then its result. While a
-step runs, progress prints at most once a second: amount, percent, and for
-bytes a rate and time left. A step that says nothing for 5 seconds repeats its
-last progress with the time spent so far, so a CI log never looks stuck. The
-last line says what is live now.
+step runs, a progress line shows a bar, amount, percent, and for bytes a rate
+and time left, how much is done and how much remains. It updates at most once a second. On a terminal it is rewritten
+in place below the log lines, so it never repeats. In CI, where stderr is not
+a terminal, each update is its own line. A step that says nothing for 5
+seconds repeats its last activity with the time spent so far, so a CI log
+never looks stuck. The last line says what is live now.
 
 #### `--on-failure <rollback|keep>`
 

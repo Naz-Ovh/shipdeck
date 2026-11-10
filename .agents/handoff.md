@@ -1,5 +1,21 @@
 # Handoff
 
+## Live progress and named phases — 2026-11-09
+
+Headless deploys now print each step as `[n/steps]` and name the slow
+phases: local project, SSH opening, login, connected, shell environment,
+agent check, local agent upload, agent start, server facts.
+
+Progress shows a ten-cell bar, amount, percent, and for bytes a rate and
+time left. On a terminal one line is rewritten in place under the log
+rows; in CI each update is an append-only line. A silent step repeats its
+last progress/activity after 5 seconds. Agent uploads report real bytes
+through the pool status callbacks.
+
+The justfile installs `shipdeck` and `shipdeck-agent` into `~/.local/bin`
+with `--force`. Work is uncommitted; `just verify` and the docs build
+passed. Not verified with a real SSH server.
+
 ## TUI and monorepos — 2026-11-09
 
 `shipdeck ./scripts/deploy` on a folder with several apps failed with
