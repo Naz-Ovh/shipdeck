@@ -37,7 +37,7 @@ download the release for the connecting CLI; an installed agent with the same
 major version is reused even when its minor or patch differs. Do not treat the
 development path as a download fallback.
 
-The agent is installed under `/opt/shipdeck/agent/v<version>/agent` by root.
+The agent is installed under `/var/lib/shipdeck/agent/v<version>/agent` by root.
 The SSH account must be root or have password-free sudo. A development binary
 is uploaded to a private user folder, copied into root staging, checked, and run
 only from the root-owned copy.

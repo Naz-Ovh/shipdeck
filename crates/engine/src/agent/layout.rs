@@ -1,15 +1,14 @@
 //! Where agents live on a server, whether the connection may use root, and
 //! how an installed agent is found and started.
 
-use std::fmt::Write as _;
-
 use anyhow::{Context, Result, bail};
 
 use super::version::{Installed, Version};
 use crate::ssh::{Session, sh_quote};
 
-/// The root-owned folder holding every versioned agent installation.
-pub(super) const AGENT_ROOT: &str = "/opt/shipdeck/agent";
+/// The root-owned folder holding every versioned agent installation, inside
+/// `/var/lib/shipdeck`. Why there: docs/feature/agent.md, "Where the agent lives".
+pub(super) const AGENT_ROOT: &str = "/var/lib/shipdeck/agent";
 
 /// The root-owned directory for one release label.
 pub(super) fn version_dir(label: &str) -> String {
@@ -52,20 +51,6 @@ pub(super) async fn sudo_prefix(session: &Session) -> Result<String> {
     );
 }
 
-/// The SSH user's home, as an absolute path.
-pub(super) async fn home(session: &Session) -> Result<String> {
-    let home = session
-        .exec_raw("printf '%s' \"$HOME\"")
-        .await
-        .context("asking the server for the home folder")?
-        .stdout;
-    let home = home.trim();
-    if !home.starts_with('/') {
-        bail!("the server did not say where the home folder is");
-    }
-    Ok(home.to_string())
-}
-
 /// Every valid root-owned agent installation, oldest first.
 ///
 /// A directory that is missing, unsafe, or whose binary reports another
@@ -74,7 +59,7 @@ pub(super) async fn home(session: &Session) -> Result<String> {
 /// root-owned and not writable by other users.
 pub(super) async fn installed(session: &Session, prefix: &str) -> Result<Vec<Installed>> {
     let output = session
-        .exec_raw(&privileged(prefix, LIST_SCRIPT))
+        .exec_raw(&privileged(prefix, &list_script()))
         .await
         .context("listing installed agents")?
         .check("listing installed agents")?;
@@ -119,15 +104,21 @@ pub(super) fn privileged(prefix: &str, script: &str) -> String {
     format!("{prefix}sh -c {}", sh_quote(script))
 }
 
-const LIST_SCRIPT: &str = "\
-set -eu
-[ -d /opt/shipdeck/agent ] || exit 0
-for path in /opt/shipdeck/agent/v*; do
-  [ -d \"$path\" ] || continue
-  [ -L \"$path\" ] && continue
-  printf '%s\\n' \"${path##*/}\"
+/// Lists the version folders under the agent root, skipping links.
+fn list_script() -> String {
+    format!(
+        r#"set -eu
+root={root}
+[ -d "$root" ] || exit 0
+for path in "$root"/v*; do
+  [ -d "$path" ] || continue
+  [ -L "$path" ] && continue
+  printf '%s\n' "${{path##*/}}"
 done
-";
+"#,
+        root = sh_quote(AGENT_ROOT),
+    )
+}
 
 /// Checks every directory above the executable before running it.
 fn probe_script(path: &str) -> String {
@@ -156,38 +147,34 @@ printf '%s' "$out"
     )
 }
 
-/// The command that starts `path` as root and keeps the SSH user's home for
-/// agent state and its log.
-pub(super) fn launch_command(prefix: &str, path: &str, operator: &str, home: &str) -> String {
-    agent_command(prefix, path, operator, home, "")
+/// The command that starts `path` as root for `operator`. The agent writes its
+/// own log under the shipdeck root, so nothing lands in the SSH user's home.
+pub(super) fn launch_command(prefix: &str, path: &str, operator: &str) -> String {
+    agent_command(prefix, path, operator, "")
 }
 
 /// The command that starts the upload receiver as root, with the same
-/// identity and state home as the control agent.
+/// identity as the control agent.
 pub(super) fn receiver_command(
     prefix: &str,
     path: &str,
     operator: &str,
-    home: &str,
     reservation: &str,
 ) -> String {
     let args = format!("--receive {}", sh_quote(reservation));
-    agent_command(prefix, path, operator, home, &args)
+    agent_command(prefix, path, operator, &args)
 }
 
-fn agent_command(prefix: &str, path: &str, operator: &str, home: &str, args: &str) -> String {
-    let log = format!("{home}/.shipdeck-agent.log");
+fn agent_command(prefix: &str, path: &str, operator: &str, args: &str) -> String {
     let mut inner = format!(
-        "exec {prefix}env SHIPDECK_OPERATOR={operator} SHIPDECK_OPERATOR_HOME={home} {path}",
+        "exec {prefix}env SHIPDECK_OPERATOR={operator} {path}",
         operator = sh_quote(operator),
-        home = sh_quote(home),
         path = sh_quote(path),
     );
     if !args.is_empty() {
         inner.push(' ');
         inner.push_str(args);
     }
-    let _ = write!(inner, " 2>>{}", sh_quote(&log));
     format!("sh -c {}", sh_quote(&inner))
 }
 

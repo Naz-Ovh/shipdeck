@@ -16,7 +16,7 @@ A small program, `shipdeck-agent`, runs on the server while you are connected.
 - Preparation happens on the first connection. The account logs in with its
   supplied SSH credentials and must be root or have password-free sudo for the
   installer and launch. A service-command-only sudo rule is not enough.
-- The agent is installed at `/opt/shipdeck/agent/v<version>/agent`. Root owns
+- The agent is installed at `/var/lib/shipdeck/agent/v<version>/agent`. Root owns
   the executable and every parent directory. It is started through `sudo`
   with the full path.
 - It opens no port, runs only while the SSH connection is open, and exits when
@@ -36,9 +36,47 @@ Alpine and older servers get the static musl build. `dist` builds four Linux
 archives; `dist plan` on this tree lists them, and the generated release
 workflow is current.
 
+## Where the agent lives
+
+Everything the agent keeps on a server is in one folder, `/var/lib/shipdeck`:
+
+```
+/var/lib/shipdeck/                 root-owned; only the agent writes here
+├── agent/v<version>/agent         the program, launched by full path
+├── agent/.install.lock            coordinates simultaneous installs
+├── agent.log                      the agent's own errors, written by the agent
+└── users/<ssh user>/state.db      that user's events, folder mode 700
+```
+
+Nothing shipdeck writes lands in the SSH user's home.
+
+Why this folder (decided 2026-11-11):
+
+- **One owner.** The agent runs as root. Its files must be writable by root
+  only. If a normal user owned the folder, a process running as that user could
+  replace `state.db` with a link to a system file, and the root agent would
+  write into it. A root-owned folder written only by the agent rules that out.
+- **One place.** The program, its log and its data sit together, so an admin
+  finds, checks and removes shipdeck in one step.
+- **The standard spot.** `/var/lib/<app>` is where Linux keeps data a program
+  changes as it runs (FHS). `/usr` is for package-manager files and is
+  read-only on some systems.
+- **Per-user events.** `users/<ssh user>/` keeps each user's history apart,
+  as the home folder did before.
+- **The agent writes its own log.** Before, the SSH user's shell opened the
+  log, so the log had to be in a folder that user could write.
+
+The cost we accepted: a server that mounts `/var` with `noexec` cannot run the
+agent from here. The install then fails, and the agent does not start. Such a
+server needs `/var` mounted without `noexec`.
+
+Before this, the program was in `/opt/shipdeck/agent`, and the events and log
+were in `~/.shipdeck/state.db` and `~/.shipdeck-agent.log`. Shipdeck does not
+move old events to the new place.
+
 ## Installation
 
-The engine lists valid installations under `/opt/shipdeck/agent`. A directory
+The engine lists valid installations under `/var/lib/shipdeck/agent`. A directory
 counts only when its executable and every parent are root-owned, not writable
 by other users, and the binary reports the version in the directory name.
 
@@ -66,7 +104,7 @@ All of these are typed requests; no request carries a shell line.
 | Services | Read systemd/PM2 state, stop, start and restart. Systemd runs as root. PM2 runs as the service user. |
 | Logs | Follow journal or PM2 output and send each line as a notification; stop on request. |
 | Locks | Hold one project lock per SSH session with an OS file lock and a private token. |
-| Events | Append numbered events to the SSH user's `~/.shipdeck/state.db`; read a page after a cursor, or a project's newest page. |
+| Events | Append numbered events to the SSH user's `/var/lib/shipdeck/users/<user>/state.db`; read a page after a cursor, or a project's newest page. |
 | Cleanup | Remove exactly the paths `work/get` reported, only after the user approves them. |
 | Setup | Guided one-time preparation: packages, project folder, and a checked sudoers rule. It is optional and no longer required for the agent. |
 
@@ -117,7 +155,7 @@ running. A stale lease is removed after its process is gone.
 
 ## Events and reconnect
 
-The SSH user's `~/.shipdeck/state.db` stores numbered events: build, pack,
+Each SSH user's `/var/lib/shipdeck/users/<user>/state.db` stores numbered events: build, pack,
 upload start/verify, unpack start/verify, setup, backup, switch start/complete,
 service restart, health, and the final outcome, plus rollback events.
 `shipdeck events` prints them and supports `--after` for a cursor; the TUI shows

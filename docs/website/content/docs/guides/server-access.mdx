@@ -6,13 +6,13 @@ description: The SSH user and service permissions.
 Shipdeck logs in as `server.ssh.user`. That user must already exist and accept
 your key or password. The first connection prepares the agent, so the account
 must be root or have password-free sudo (`NOPASSWD`). The agent then runs as
-root from `/opt/shipdeck/agent/v<version>/agent`. App and PM2 commands still
+root from `/var/lib/shipdeck/agent/v<version>/agent`. App and PM2 commands still
 run as the configured user.
 
 ## Required permissions
 
 - Root, or password-free sudo for the agent installer and its `sh` commands.
-  The installer writes only under `/opt/shipdeck/agent` and removes older agent
+  The installer writes only under `/var/lib/shipdeck/agent` and removes older agent
   versions there. A rule limited to the five service commands cannot prepare or
   start the agent; root or full password-free sudo is required.
 - Write to `server.dir`, or permission to create it.

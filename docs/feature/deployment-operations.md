@@ -30,14 +30,11 @@ each one a deploy needs and, when something is missing, stops and names it.
 ├── backups/         each release's backup, `<id>.tar.zst`, for `keep.open` + `keep.compressed` releases
 └── shared/          kept across deploys; the only folder the default unit may write to
 
-/opt/shipdeck/agent/
-├── v<version>/agent root-owned; launched by full path with sudo
-└── .install.lock    coordinates simultaneous installs
-
-~/.shipdeck/
-└── state.db         numbered events for work, events and replay
-
-~/.shipdeck-agent.log the agent's own diagnostics
+/var/lib/shipdeck/                root-owned; only the agent writes here
+├── agent/v<version>/agent       launched by full path with sudo
+├── agent/.install.lock          coordinates simultaneous installs
+├── agent.log                    the agent's own errors
+└── users/<ssh user>/state.db    numbered events for work, events and replay
 ```
 
 A release id is `v<version>-<git sha>[-dirty]-<UTC yyyymmdd.hhmmss>`. Each

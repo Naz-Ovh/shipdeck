@@ -7,7 +7,7 @@ fn version(text: &str) -> Version {
 fn installed(text: &str) -> Installed {
     let version = version(text);
     Installed {
-        path: format!("/opt/shipdeck/agent/v{text}/agent"),
+        path: format!("/var/lib/shipdeck/agent/v{text}/agent"),
         version,
         label: text.to_string(),
     }

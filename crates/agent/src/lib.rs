@@ -14,6 +14,7 @@ mod locks;
 mod logs;
 mod owner;
 mod paths;
+mod place;
 mod project;
 mod releases;
 mod serve;
@@ -26,5 +27,6 @@ mod unpack;
 mod unpack_reuse;
 mod unpack_verify;
 
+pub use place::record_error;
 pub use serve::serve;
 pub use transfer::receive_recorded;

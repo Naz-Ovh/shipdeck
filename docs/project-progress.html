@@ -512,7 +512,7 @@ const PLAN = [
    blurb: "A small helper program, <code>shipdeck-agent</code>. The engine prepares it on the first connection, the way VS Code does; the server downloads it over HTTPS from GitHub. It lives at a root-owned <code>/opt</code> path, starts through sudo, and runs only while you are connected. App and PM2 commands still run as the configured service user. It works with files and services directly, instead of through shell scripts.", subs: [
   { title: "The agent", items: [
    ["p3a1", "Prepared on the first connection", "built", "2026-11-08",
-    "<p>The first connection needs root or password-free sudo. The server downloads the matching release from GitHub into <code>/opt/shipdeck/agent/v&lt;version&gt;/agent</code>. Root owns the binary and every parent directory. The install is locked and checksummed, uses private staging, and publishes in one rename.</p><p>Every later connection checks the installed version. Same-major minor and patch differences are allowed. A newer agent major refuses the connection. A newer engine major clears older versions and installs its own release.</p><p>An explicit development binary can be uploaded with <code>SHIPDECK_AGENT_BINARY</code>; root copies and checks it before running. 32-bit ARM needs its own build.</p>",
+    "<p>The first connection needs root or password-free sudo. The server downloads the matching release from GitHub into <code>/var/lib/shipdeck/agent/v&lt;version&gt;/agent</code>. Root owns the binary and every parent directory. The install is locked and checksummed, uses private staging, and publishes in one rename.</p><p>Every later connection checks the installed version. Same-major minor and patch differences are allowed. A newer agent major refuses the connection. A newer engine major clears older versions and installs its own release.</p><p>An explicit development binary can be uploaded with <code>SHIPDECK_AGENT_BINARY</code>; root copies and checks it before running. 32-bit ARM needs its own build.</p>",
     "<a href=\"../docs/feature/agent-version-policy.md\">feature: version policy</a>"],
    ["p3a2", "The same messages as the engine", "built", "2026-11-06",
     "<p>The engine and the agent speak the same JSON-RPC, over the SSH connection. That means clear requests and live events, instead of shell scripts and reading their output.</p>",
@@ -526,7 +526,7 @@ const PLAN = [
   ]},
   { title: "Memory on the server", items: [
    ["p3b1", "state.db: every event, numbered", "built", "2026-11-08",
-    "<p><code>~/.shipdeck/state.db</code> records numbered events for build, pack, upload, unpack, setup, backup, switch, restart, health, the final outcome, and rollback. <code>shipdeck events --after N</code> replays a page; the TUI shows the newest events with <code>work</code>. The activation check uses the same records.</p>",
+    "<p><code>/var/lib/shipdeck/users/&lt;user&gt;/state.db</code> records numbered events for build, pack, upload, unpack, setup, backup, switch, restart, health, the final outcome, and rollback. <code>shipdeck events --after N</code> replays a page; the TUI shows the newest events with <code>work</code>. The activation check uses the same records.</p>",
     "<a href=\"../docs/feature/agent.md\">feature: agent</a>"],
   ]},
   { title: "Server setup", items: [

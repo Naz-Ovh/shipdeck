@@ -1,4 +1,5 @@
-//! Downloading, checking, and atomically publishing the agent under `/opt`.
+//! Downloading, checking, and atomically publishing the agent under
+//! `/var/lib/shipdeck`.
 //!
 //! The whole install runs as root inside one install lock. It downloads into a
 //! private staging folder, verifies the checksum and printed version, and
@@ -92,9 +93,10 @@ target={target}
 parent=$(dirname "$root")
 [ ! -L "$parent" ] || {{ echo "$parent must not be a symbolic link" >&2; exit 1; }}
 [ ! -L "$root" ] || {{ echo "$root must not be a symbolic link" >&2; exit 1; }}
-[ "$(stat -c %U -- /opt)" = root ] || {{ echo '/opt must be owned by root' >&2; exit 1; }}
-opt_mode=$(stat -c %a -- /opt)
-[ $((0$opt_mode & 022)) -eq 0 ] || {{ echo '/opt must not be writable by group or other' >&2; exit 1; }}
+base=$(dirname "$parent")
+[ "$(stat -c %U -- "$base")" = root ] || {{ echo "$base must be owned by root" >&2; exit 1; }}
+base_mode=$(stat -c %a -- "$base")
+[ $((0$base_mode & 022)) -eq 0 ] || {{ echo "$base must not be writable by group or other" >&2; exit 1; }}
 secure=yes
 dir="$target"
 while [ "$dir" != / ]; do

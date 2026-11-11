@@ -15,7 +15,7 @@ certificates, ProxyJump, and ProxyCommand are not supported.
 The engine installs the agent release it needs over HTTPS from GitHub, checks SHA-256 and the
 printed version, and verifies the protocol on startup. The checksum comes from the same
 release host; it is an integrity check, not an independent signature. The agent lives at
-`/opt/shipdeck/agent/v<version>/agent`, and root owns it and every parent directory. It opens
+`/var/lib/shipdeck/agent/v<version>/agent`, and root owns it and every parent directory. It opens
 no port, starts through sudo, runs as root, and exits on disconnect. The SSH account must be
 root or have password-free sudo.
 

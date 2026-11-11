@@ -6,6 +6,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, params};
+
+use crate::place;
 use shipdeck_protocol::message::agent::{
     AgentEvent, AgentEventAppend, AgentEventSaved, AgentEvents, AgentEventsAfter, AgentEventsRecent,
 };
@@ -167,41 +169,21 @@ pub(crate) async fn unconfirmed_activation(
 
 /// The state file when it already exists; nothing is created.
 fn existing_state_path() -> Option<PathBuf> {
-    let path = home().ok()?.join(".shipdeck").join("state.db");
+    let operator = crate::owner::operator().ok()?;
+    let path = place::state_file(Path::new(place::SHIPDECK_ROOT), &operator.name).ok()?;
     path.is_file().then_some(path)
 }
 
-/// The deploy user's home, passed at launch, so a root agent does not move
-/// the event history to `/root`.
-fn home() -> Result<PathBuf> {
-    let home = std::env::var_os("SHIPDECK_OPERATOR_HOME")
-        .or_else(|| std::env::var_os("HOME"))
-        .context("the agent did not receive its operator home")?;
-    let home = PathBuf::from(home);
-    if !home.is_absolute() {
-        bail!("the agent operator home must be absolute");
-    }
-    Ok(home)
-}
-
+/// The deploying user's database under `/var/lib/shipdeck/users/`, with each
+/// folder made private to root on the way.
 fn state_path() -> Result<PathBuf> {
-    let folder = home()?.join(".shipdeck");
-    let mut builder = std::fs::DirBuilder::new();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        builder.mode(0o700);
-    }
-    match builder.create(&folder) {
-        Ok(()) => {}
-        Err(err) if err.kind() == ErrorKind::AlreadyExists => {}
-        Err(err) => return Err(err).context("creating the state directory"),
-    }
-    let metadata = std::fs::symlink_metadata(&folder)?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        bail!("the state directory must be a directory, not a symbolic link");
-    }
-    Ok(folder.join("state.db"))
+    let operator = crate::owner::operator()?;
+    let path = place::state_file(Path::new(place::SHIPDECK_ROOT), &operator.name)?;
+    let folder = path.parent().context("the state file has no folder")?;
+    let users = folder.parent().context("the user folder has no parent")?;
+    place::private_dir(users)?;
+    place::private_dir(folder)?;
+    Ok(path)
 }
 
 #[cfg(test)]

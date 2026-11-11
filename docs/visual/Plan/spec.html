@@ -983,10 +983,10 @@ scripts/server-setup.sh        <span class="c">a public URL pinned to each relea
 ├── backups/&lt;id&gt;.tar.zst     <span class="c">one backup per release (20 in all)</span>
 └── shared/                  <span class="c">kept across releases (uploads, …)</span>
 
-/opt/shipdeck/agent/v&lt;version&gt;/agent <span class="c">root-owned; launched by full path</span>
-
-~/.shipdeck/                 <span class="c">the agent's own state</span>
-└── state.db                 <span class="c">every event, numbered</span></pre>
+/var/lib/shipdeck/            <span class="c">root-owned; only the agent writes here</span>
+├── agent/v&lt;version&gt;/agent   <span class="c">launched by full path</span>
+├── agent.log                <span class="c">the agent's own errors</span>
+└── users/&lt;user&gt;/state.db   <span class="c">every event, numbered, per SSH user</span></pre>
         <div class="note"><b>A contract</b><p>The release ids and the <code>current</code>, <code>releases</code>, <code>backups</code> and <code>shared</code> layout are a contract with servers already deployed to. They change only on purpose.</p></div>
       </article>
 

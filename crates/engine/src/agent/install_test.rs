@@ -12,7 +12,8 @@ fn the_installer_runs_as_root_inside_one_lock() {
     assert!(script.contains(".install.lock.d"));
     assert!(script.contains("holds_dir_lock=yes"));
     assert!(script.contains("secure=no"));
-    assert!(script.contains("/opt must not be writable"));
+    assert!(script.contains("base=$(dirname \"$parent\")"));
+    assert!(script.contains("must not be writable by group or other"));
 }
 
 #[test]
@@ -39,7 +40,7 @@ fn the_installer_replaces_and_cleans_versioned_directories() {
     assert!(script.contains("rm -rf -- \"$target\""));
     assert!(script.contains("for old in \"$root\"/v*"));
     assert!(script.contains("\"$root\"/v*) rm -rf -- \"$old\""));
-    assert!(script.contains("root='/opt/shipdeck/agent'"));
+    assert!(script.contains("root='/var/lib/shipdeck/agent'"));
 }
 
 #[test]

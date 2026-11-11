@@ -46,7 +46,6 @@ impl Agent {
             &self.prefix,
             &self.path,
             &self.operator,
-            &self.operator_home,
             &reservation.reservation,
         );
         let mut stream = session.open_stream(&command).await?;

@@ -38,7 +38,6 @@ pub struct Agent {
     /// The sudo prefix and identity used for the receiver channel too.
     pub(super) prefix: String,
     pub(super) operator: String,
-    pub(super) operator_home: String,
     pub(super) logs: LogViews,
     /// Set when the reader task sees the agent's stream end.
     done: Arc<Notify>,
@@ -66,9 +65,7 @@ impl Agent {
         let prefix = layout::sudo_prefix(session).await?;
         let found = layout::installed(session, &prefix).await?;
         let selected = Self::select(session, &prefix, &cli, label, &found, status, bytes).await?;
-        status("reading the agent's home folder");
-        let home = layout::home(session).await?;
-        let command = layout::launch_command(&prefix, &selected.path, &session.user, &home);
+        let command = layout::launch_command(&prefix, &selected.path, &session.user);
         let path = selected.path;
         status("starting the agent");
         let stream = session.open_stream(&command).await?;
@@ -103,7 +100,6 @@ impl Agent {
             path: path.clone(),
             prefix: prefix.clone(),
             operator: session.user.clone(),
-            operator_home: home.clone(),
             logs,
             done,
             lock_token: Mutex::new(None),

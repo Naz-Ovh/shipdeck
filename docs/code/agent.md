@@ -67,7 +67,7 @@ On every new SSH connection, before any operational request:
 1. The engine checks that the account is root or can run `sudo -n -- sh -c
    'id -u'`. Failure stops the connection with the account and the missing
    permission.
-2. It lists `/opt/shipdeck/agent/v*`. A directory counts only when every parent
+2. It lists `/var/lib/shipdeck/agent/v*`. A directory counts only when every parent
    directory and the executable are root-owned, not writable by group or other,
    and the executable reports the version in its directory name.
 3. It applies the major-version rules in `crates/engine/src/agent/version.rs`.
@@ -85,10 +85,10 @@ agent that failed installation or handshake.
 The bytes never cross SSH for a published release. The engine sends a fixed
 install script, and the server downloads its own build over HTTPS:
 
-1. Root takes `/opt/shipdeck/agent/.install.lock` with `flock`, or an atomic
+1. Root takes `/var/lib/shipdeck/agent/.install.lock` with `flock`, or an atomic
    `.install.lock.d` directory with stale-owner detection when `flock` is
    missing.
-2. A private staging directory under `/opt/shipdeck/agent` receives the archive
+2. A private staging directory under `/var/lib/shipdeck/agent` receives the archive
    and its `.sha256`.
 3. The script checks the checksum, refuses absolute or parent-escaping paths,
    refuses links and special files, and unpacks into staging.
@@ -118,14 +118,15 @@ a fallback when a published download fails.
 For a non-root account the engine runs this through the SSH channel:
 
 ```sh
-sh -c 'exec sudo -n -- env SHIPDECK_OPERATOR=<user> SHIPDECK_OPERATOR_HOME=<home> <path> 2>> <home>/.shipdeck-agent.log'
+sh -c 'exec sudo -n -- env SHIPDECK_OPERATOR=<user> <path>'
 ```
 
 For root it drops the `sudo` prefix. The process replaces `sh`, so stdout
-carries only protocol lines. Diagnostics go to the user's log file.
+carries only protocol lines. The agent writes its errors to stderr and to
+`/var/lib/shipdeck/agent.log` itself (`place.rs`); nothing goes to the user's home.
 
-The upload receiver on the second SSH channel uses the same `sudo`, identity,
-and state home. It does not run as the SSH user.
+The upload receiver on the second SSH channel uses the same `sudo` and
+identity. It does not run as the SSH user.
 
 ## Execution identity
 
@@ -137,8 +138,9 @@ The agent runs as root. It never lets app commands inherit that identity:
 - Systemd unit installation and control stay root work.
 - New project, release, backup, and shared directories are given back to the
   SSH user. Existing app and service ownership is preserved.
-- `~/.shipdeck/state.db` is located from `SHIPDECK_OPERATOR_HOME`, so events do
-  not move to `/root`.
+- Events go to `/var/lib/shipdeck/users/<SHIPDECK_OPERATOR>/state.db`. Each
+  folder on the way is made mode 700 and refused if it is a link. Why this
+  place: docs/feature/agent.md, "Where the agent lives".
 
 ## Limits
 

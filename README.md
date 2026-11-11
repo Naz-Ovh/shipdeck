@@ -65,7 +65,7 @@ flags. Review a new host key before trusting it.
 
 Shipdeck prepares and runs a matching **shipdeck-agent** over SSH. The first
 connection needs an account with root or password-free sudo. The agent installs
-as root under `/opt/shipdeck/agent/v<version>/agent`, handles files, backups,
+as root under `/var/lib/shipdeck/agent/v<version>/agent`, handles files, backups,
 process operations, project locks, and events, and starts through the full path
 with sudo. It opens no network port and exits on disconnect. Published builds
 download the checked release from GitHub. If preparation or the handshake

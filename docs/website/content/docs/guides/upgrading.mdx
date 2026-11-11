@@ -102,6 +102,22 @@ The whole design, with every rule and the reasoning, is in
 5. Deploy once so the server has a release with `.shipdeck/settings.json`. Only then can a
    later rollback restore its settings.
 
+## The agent's new folder
+
+The server agent now keeps everything in `/var/lib/shipdeck`: its program, its log, and each
+SSH user's events in `users/<user>/state.db`. It used to use `/opt/shipdeck/agent`,
+`~/.shipdeck/state.db` and `~/.shipdeck-agent.log`.
+
+The first connection installs the agent in the new place. Old events are not moved, so
+`shipdeck events` starts empty. When you no longer need the old files, remove them on the
+server:
+
+```sh
+sudo rm -rf /opt/shipdeck ~/.shipdeck ~/.shipdeck-agent.log
+```
+
+A server that mounts `/var` with `noexec` cannot run the agent from there.
+
 ## Renew the sudo rule
 
 A release that changes the commands shipdeck runs as root needs `scripts/server-setup.sh`

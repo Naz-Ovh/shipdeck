@@ -17,7 +17,7 @@ must allow the agent installer and launch, so a rule limited to the service
 commands is not enough. When the account cannot use sudo, the connection stops
 with a clear access error before anything changes.
 
-Agents live at `/opt/shipdeck/agent/v<version>/agent`. Root owns the executable
+Agents live at `/var/lib/shipdeck/agent/v<version>/agent`. Root owns the executable
 and every parent directory. The directories are not writable by ordinary
 users, and the executable is `0755`. Shipdeck starts it through `sudo` with the
 full path. There is no `PATH` entry, shared executable, or `current` symlink.

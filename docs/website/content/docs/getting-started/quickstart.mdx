@@ -119,7 +119,7 @@ In the UI, `r` opens releases. `D` inspects files. Select an older release and p
 roll back; you need at least two releases first. `:logs` follows logs; `:restart`, `:stop`,
 and `:start` control the processes. `q` quits.
 
-The first connection prepares a root-owned server agent under `/opt/shipdeck/agent`; it runs
+The first connection prepares a root-owned server agent under `/var/lib/shipdeck/agent`; it runs
 over SSH and exits on disconnect. After an interrupted operation, reconnect and inspect
 before retrying:
 

@@ -1,5 +1,5 @@
 //! The agent's entry: `--version`, or the JSON-RPC loop on stdin and stdout.
-//! Everything else goes to stderr.
+//! Errors go to stderr and to /var/lib/shipdeck/agent.log.
 
 use std::process::ExitCode;
 use tokio::io::AsyncWriteExt;
@@ -9,11 +9,11 @@ async fn main() -> ExitCode {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     if args.first().is_some_and(|arg| arg == "--receive") {
         if args.len() != 2 {
-            eprintln!("shipdeck-agent: --receive needs one reservation");
+            fail("--receive needs one reservation");
             return ExitCode::FAILURE;
         }
         let Some(ticket) = args.get(1).and_then(|arg| arg.to_str()) else {
-            eprintln!("shipdeck-agent: invalid reservation path");
+            fail("invalid reservation path");
             return ExitCode::FAILURE;
         };
         match shipdeck_agent::receive_recorded(ticket, tokio::io::stdin()).await {
@@ -25,7 +25,7 @@ async fn main() -> ExitCode {
                 std::process::exit(0);
             }
             Err(err) => {
-                eprintln!("shipdeck-agent: {err:#}");
+                fail(&format!("{err:#}"));
                 std::process::exit(1);
             }
         }
@@ -44,8 +44,16 @@ async fn main() -> ExitCode {
             std::process::exit(0);
         }
         Err(err) => {
-            eprintln!("shipdeck-agent: {err:#}");
+            fail(&format!("{err:#}"));
             std::process::exit(1);
         }
+    }
+}
+
+/// Reports an error on stderr and in the agent's own log.
+fn fail(message: &str) {
+    eprintln!("shipdeck-agent: {message}");
+    if let Err(err) = shipdeck_agent::record_error(message) {
+        eprintln!("shipdeck-agent: writing the agent log: {err:#}");
     }
 }

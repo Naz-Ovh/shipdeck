@@ -18,7 +18,7 @@ Linux agent over SSH. Your apps stay under their process manager.
 The engine reuses an SSH session per endpoint. On each connection it checks the installed
 agent's major version. Same-major minor and patch differences are allowed. A newer agent
 major refuses the connection. A newer engine major clears older versions and installs its
-release. A missing agent is installed under `/opt/shipdeck/agent/v<version>/agent` as root,
+release. A missing agent is installed under `/var/lib/shipdeck/agent/v<version>/agent` as root,
 then started through sudo on an SSH channel.
 
 The agent uses stdin/stdout for requests and stderr for diagnostics. It opens no port and
@@ -66,7 +66,7 @@ holds the lock. Upload tickets require the same lock token. Configured server co
 a process lease; another operation refuses while that command is alive, even after an agent
 disconnect.
 
-The agent records numbered events in the SSH user's `~/.shipdeck/state.db`.
+The agent records numbered events in `/var/lib/shipdeck/users/<ssh user>/state.db`.
 `shipdeck events --after N` replays them; `shipdeck work` shows current facts, unfinished
 files, recent events, and an activation without a confirmed health pass.
 

@@ -3,7 +3,7 @@
 Owner decision, 2026-11-08. Source: user-stated.
 
 Follow [the agreed policy](../../docs/feature/agent-version-policy.md).
-Agents use root-owned `/opt/shipdeck/agent/v<version>/agent` paths and are
+Agents use root-owned `/var/lib/shipdeck/agent/v<version>/agent` paths and are
 launched by full path. GitHub is the only release source. Preparation happens
 on connection, without a separate setup command.
 
