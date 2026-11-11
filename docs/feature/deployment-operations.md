@@ -6,14 +6,14 @@ Detailed reference. Start with the [overview](../../README.md).
 
 ### What the user must be able to do
 
-shipdeck deploys as `ssh.user`, whoever that is. On the server, that user
+shipdeck deploys as `server.ssh.user`, whoever that is. On the server, that user
 must be able to:
 
 | What | Why |
 | --- | --- |
-| create `dir` (itself, or with sudo), or write to it | the first deploy creates the app's folder; every deploy writes releases into it |
+| create `server.dir` (itself, or with sudo), or write to it | the first deploy creates the app's folder; every deploy writes releases into it |
 | `systemctl daemon-reload`, `systemctl enable <service>`, `systemctl restart <service>` | install and restart the app |
-| `install -m 0644 <dir>/current/<service>.service /etc/systemd/system/<service>.service` | put the release's unit in place |
+| `install -m 0644 <dir>/current/.shipdeck/<service>.service /etc/systemd/system/<service>.service` | put the release's unit in place |
 | `journalctl -u <service> -n 30 --no-pager` | show the log when a release fails |
 | `systemctl stop <service>`, `systemctl start <service>`, `journalctl -u <service> -f -n 200 --no-pager` | `:stop`, `:start` and `:logs` in the TUI; a deploy never needs them |
 
@@ -38,10 +38,10 @@ each one a deploy needs and, when something is missing, stops and names it.
 ```
 
 A release id is `v<version>-<git sha>[-dirty]-<UTC yyyymmdd.hhmmss>`. Each
-release carries `release.json` (who deployed what, from which commit, and
-the fingerprint of what it holds) and its own unit, whose `Description=`
-holds the version, so `systemctl status` shows what is live. While a
-release is sent, `releases/` also holds its archive, receipt and copy lists
+release's `.shipdeck/` folder holds `release.json` (who deployed what, from
+which commit, and the fingerprint of what it holds) and its own unit, whose
+`Description=` holds the version, so `systemctl status` shows what is live.
+While a release is sent, `releases/` also holds its archive, receipt and copy lists
 (`.<id>.tar.zst`, `.<id>.sha256`, `.<id>.reuse.<mode>`); unpack removes
 them. Each release also installs its own dependencies in setup, so a
 rollback to an open release finds them already in place; one kept only as
@@ -58,7 +58,7 @@ a backup gets them from setup again.
 | `r` | open releases | open releases | refresh |
 | `s` | refresh the connected ones | | |
 | `x` | clean up the unfinished files the server reported (asks first) | | |
-| `:` | a command for the selected service: `:logs`, `:restart`, `:setup`, `:stop`, `:start` | | |
+| `:` | a command for the selected service: `:logs`, `:restart`, `:stop`, `:start` | | |
 | `G` | | follow the log again | |
 | `esc` | | back | back |
 | `tab`, `1` `2` `3` | switch screens | | |
@@ -82,9 +82,6 @@ says which there are:
 | `:restart` | Restarts the service, as a deploy's restart step does. Asks first. |
 | `:stop` | Stops it until it is started again, a deploy restarts it or the server reboots. Asks first. |
 | `:start` | Starts it; a running one is left as it is. |
-| `:setup` | Guided one-time server setup. Choose full sudo or only the commands shipdeck runs, then enter the sudo password. It never widens access without that choice. |
 
-While a deploy or rollback of that deployable runs, only `:logs` works. A
-command the server's sudo rule does not allow says so, with the
-`server-setup.sh` command that renews the rule.
+While a deploy or rollback of that deployable runs, only `:logs` works.
 

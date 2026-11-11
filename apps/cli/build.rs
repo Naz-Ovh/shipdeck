@@ -39,7 +39,7 @@ struct Topic {
     text: String,
 }
 
-/// One shipdeck.yaml property, in the tree's order.
+/// One config property, in the tree's order.
 struct Config {
     key: String,
     depth: usize,

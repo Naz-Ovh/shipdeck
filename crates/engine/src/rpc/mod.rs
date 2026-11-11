@@ -10,7 +10,6 @@ mod operations;
 mod pump;
 mod releases;
 mod run;
-mod server_setup;
 mod service;
 mod session;
 mod work;

@@ -10,14 +10,19 @@ apps. It has no engine logic: no SSH, no files, no build.
   questions (with an id).
 - Field names are `snake_case`. A value with variants is one flat object
   with a `kind` field, such as `{"kind": "key", "path": "..."}`.
-- Names are a contract: add new methods and fields, never rename or remove
+- Until v1.0.0, shipdeck is in beta and the protocol may break: a method or
+  field can be renamed or removed when a design changes. From v1.0.0 on,
+  names are a contract: add new methods and fields, never rename or remove
   one. A field marked `#[serde(default)]` is the optional one.
+- Keep methods generic. Prefer one method with a `kind` or a parameter over a
+  new method for each case. A specific method is fine when a task really
+  needs one.
 - Secrets travel in the pipe. A password is never written to a log.
 - `workspace/open` answers each project with its slug, name, host, user,
   port, its folder on this PC and its service folder. Its `no_shell_env` hides the login shell's startup
-  files from server commands, over every file's `ssh.shell_env`.
+  files from server commands, over every file's `server.ssh.shell_env`.
 - `deploy/start` may carry `on_failure`, which overrides
-  `pipeline.failed.rollback`; without it the file decides.
+  `release.steps.rollback.mode`; without it the file decides.
 - The steps in `deploy/start`'s answer are the names a screen shows, in
   order ("Preflight"). `op/step` carries a step's place in that list.
 
@@ -36,7 +41,8 @@ apps. It has no engine logic: no SSH, no files, no build.
 ## Errors
 
 `wire::code` lists every code once. JSON-RPC's own codes are `-327xx`;
-shipdeck's start at `-32001` and go down. A code is never renumbered.
+shipdeck's start at `-32001` and go down. A code is never renumbered;
+a code no longer sent is removed, and its number is not given to another.
 
 ## The two ends
 

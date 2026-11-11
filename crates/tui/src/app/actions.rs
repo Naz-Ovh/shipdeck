@@ -9,8 +9,8 @@ use shipdeck_protocol::message::agent::ServerFacts;
 use shipdeck_protocol::message::method;
 use shipdeck_protocol::message::request::{
     ConnectionClose, DeployStart, Done, LogsFollow, LogsFollowResult, LogsStop, OperationStarted,
-    ReleasesList, ReleasesListResult, RollbackStart, ServerSetup, ServiceControl, SetupAccess,
-    SetupReport, StatusGet, StatusGetResult, WorkCleanup, WorkCleanupResult, WorkGet, WorkReport,
+    ReleasesList, ReleasesListResult, RollbackStart, ServiceControl, StatusGet, StatusGetResult,
+    WorkCleanup, WorkCleanupResult, WorkGet, WorkReport,
 };
 
 use shipdeck_engine::remote::{Control, log_command};
@@ -152,37 +152,6 @@ impl App {
                 .map(|result| result.removed)
                 .map_err(|err| err.reason());
             let _ = tx.send(Fetched::Cleaned { index, result });
-        });
-    }
-
-    /// Runs guided setup with the chosen access and the sudo password.
-    pub(super) fn start_setup(
-        &mut self,
-        index: usize,
-        access: SetupAccess,
-        password: Option<String>,
-    ) {
-        if self.setting_up.contains(&index) {
-            self.notify("Guided setup is already running", Tone::Warn);
-            return;
-        }
-        let Some(deployable) = self.deployables.get(index).cloned() else {
-            return;
-        };
-        self.setting_up.push(index);
-        self.notify("Preparing the server…", Tone::Info);
-        let (engine, tx) = (self.engine.clone(), self.fetched.clone());
-        tokio::spawn(async move {
-            let asked = ServerSetup {
-                deployable: deployable.slug.clone(),
-                access,
-                sudo_password: password,
-            };
-            let result = engine
-                .request::<_, SetupReport>(method::SERVER_SETUP, &asked)
-                .await
-                .map_err(|err| err.reason());
-            let _ = tx.send(Fetched::SetupDone { index, result });
         });
     }
 

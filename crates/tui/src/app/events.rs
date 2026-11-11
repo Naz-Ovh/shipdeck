@@ -9,7 +9,6 @@ use super::{
 };
 use shipdeck_engine::deploy::report::{OpEvent, OpUpdate};
 use shipdeck_engine::ssh::Question;
-use shipdeck_protocol::message::request::SetupReport;
 
 impl App {
     pub fn on_fetched(&mut self, fetched: Fetched) {
@@ -111,7 +110,6 @@ impl App {
                 }
             }
             Fetched::Cleaned { index, result } => self.on_cleaned(index, result),
-            Fetched::SetupDone { index, result } => self.on_setup_done(index, result),
         }
     }
 
@@ -206,26 +204,6 @@ impl App {
             }),
         }
         self.refresh_work(index);
-    }
-
-    fn on_setup_done(&mut self, index: usize, result: Result<SetupReport, String>) {
-        self.setting_up.retain(|i| *i != index);
-        match result {
-            Ok(report) => {
-                self.notify(
-                    format!("{} is ready: {}", report.dir, report.access),
-                    Tone::Info,
-                );
-                for note in report.notes {
-                    self.notify(note, Tone::Warn);
-                }
-                self.refresh_status(index);
-            }
-            Err(err) => self.modals.push_back(Modal::Notice {
-                title: "Guided setup failed".to_string(),
-                text: err,
-            }),
-        }
     }
 
     pub fn on_question(&mut self, question: Question) {

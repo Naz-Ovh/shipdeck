@@ -225,7 +225,7 @@ pub struct AgentReleases {
     pub entries: Vec<AgentRelease>,
 }
 
-/// `agent/link_shared`: link service.shared folders into a release.
+/// `agent/link_shared`: link the `shared` folders into a release.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AgentLinkShared {
     pub root: String,

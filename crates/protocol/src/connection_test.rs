@@ -4,7 +4,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, duplex}
 use super::{Connection, Incoming};
 use crate::message::ask::{Ask, SecretAnswer};
 use crate::message::event::Event;
-use crate::message::{Initialize, LogsFollow, LogsFollowResult};
+use crate::message::{Initialize, LogsFollow, LogsFollowResult, method};
 use crate::wire::{ErrorObject, Id};
 
 /// One end of a test pipe, pretending to be the engine.
@@ -78,9 +78,12 @@ async fn an_error_answer_becomes_an_rpc_error() {
     let (client, mut engine) = Engine::pair();
     let call = tokio::spawn(async move {
         client
-            .logs_follow(&LogsFollow {
-                deployable: "missing".into(),
-            })
+            .request::<_, LogsFollowResult>(
+                method::LOGS_FOLLOW,
+                &LogsFollow {
+                    deployable: "missing".into(),
+                },
+            )
             .await
     });
 
@@ -229,9 +232,12 @@ async fn a_typed_answer_is_read() {
     let (client, mut engine) = Engine::pair();
     let call = tokio::spawn(async move {
         client
-            .logs_follow(&LogsFollow {
-                deployable: "my-api".into(),
-            })
+            .request::<_, LogsFollowResult>(
+                method::LOGS_FOLLOW,
+                &LogsFollow {
+                    deployable: "my-api".into(),
+                },
+            )
             .await
     });
     let asked = engine.next().await.unwrap();

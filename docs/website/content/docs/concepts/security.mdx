@@ -17,7 +17,7 @@ printed version, and verifies the protocol on startup. The checksum comes from t
 release host; it is an integrity check, not an independent signature. The agent lives at
 `/var/lib/shipdeck/agent/v<version>/agent`, and root owns it and every parent directory. It opens
 no port, starts through sudo, runs as root, and exits on disconnect. The SSH account must be
-root or have password-free sudo.
+root or have full password-free sudo.
 
 ## Files and concurrency
 
@@ -41,10 +41,9 @@ user, and the agent starts those commands through `runuser` with that user's hom
 ownership is preserved.
 
 Your own commands are shell by design and run as written. They run as the deploy user, not as
-the root agent. They can modify databases and files outside the release folder. Guided setup
-offers `commands` or `full` access, validates the rule with `visudo`, and never saves the
-sudo password. `full` grants password-free sudo for every command. See
-[server access](/docs/guides/server-access).
+the root agent. They can modify databases and files outside the release folder. Shipdeck never
+asks for a sudo password and never changes the server's sudo rules. The SSH account must be root or
+have full password-free sudo. See [server access](/docs/guides/server-access).
 
 The default systemd unit restricts writes to shared data and blocks home folders. A custom
 template can change those restrictions. PM2 runs under its configured service user.

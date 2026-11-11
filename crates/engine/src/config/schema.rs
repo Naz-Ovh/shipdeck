@@ -15,7 +15,14 @@ pub const WEBSITE_COPY: &str = "docs/website/public/deploy.schema.json";
 /// Where editors fetch the schema for this version of shipdeck.
 #[must_use]
 pub fn url() -> String {
-    crate::setup::raw_url(FILE_NAME)
+    let repository = env!("CARGO_PKG_REPOSITORY").trim_end_matches('/');
+    let path = repository
+        .strip_prefix("https://github.com/")
+        .unwrap_or(repository);
+    format!(
+        "https://raw.githubusercontent.com/{path}/v{}/{FILE_NAME}",
+        env!("CARGO_PKG_VERSION")
+    )
 }
 
 /// The line that gives a deploy file completion in editors using the YAML

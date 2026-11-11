@@ -20,10 +20,7 @@ use crate::message::ask::Ask;
 use crate::message::event::Event;
 use crate::message::method;
 use crate::message::request::{
-    ConnectionClose, DeployStart, Done, Initialize, InitializeResult, LogsFollow, LogsFollowResult,
-    LogsStop, OperationStarted, ReleaseContents, ReleaseContentsResult, ReleaseReadFile,
-    ReleaseReadFileResult, ReleasesList, ReleasesListResult, RollbackStart, ServiceControl,
-    StatusGet, StatusGetResult, WorkspaceOpen, WorkspaceOpenResult,
+    Done, Initialize, InitializeResult, WorkspaceOpen, WorkspaceOpenResult,
 };
 use crate::wire::{self, ErrorObject, Id, Notification, Request, Response};
 
@@ -283,92 +280,6 @@ impl Connection {
         params: &WorkspaceOpen,
     ) -> Result<WorkspaceOpenResult, Error> {
         self.request(method::WORKSPACE_OPEN, params).await
-    }
-
-    /// `status/get`.
-    ///
-    /// # Errors
-    /// Returns [`Error`] when the call fails or the answer does not fit.
-    pub async fn status_get(&self, params: &StatusGet) -> Result<StatusGetResult, Error> {
-        self.request(method::STATUS_GET, params).await
-    }
-
-    /// `connection/close`.
-    ///
-    /// # Errors
-    /// Returns [`Error`] when the call fails or the answer does not fit.
-    pub async fn connection_close(&self, params: &ConnectionClose) -> Result<Done, Error> {
-        self.request(method::CONNECTION_CLOSE, params).await
-    }
-
-    /// `service/control`.
-    ///
-    /// # Errors
-    /// Returns [`Error`] when the call fails or the answer does not fit.
-    pub async fn service_control(&self, params: &ServiceControl) -> Result<Done, Error> {
-        self.request(method::SERVICE_CONTROL, params).await
-    }
-
-    /// `releases/list`.
-    ///
-    /// # Errors
-    /// Returns [`Error`] when the call fails or the answer does not fit.
-    pub async fn releases_list(&self, params: &ReleasesList) -> Result<ReleasesListResult, Error> {
-        self.request(method::RELEASES_LIST, params).await
-    }
-
-    /// `release/contents`.
-    ///
-    /// # Errors
-    /// Returns [`Error`] when the call fails or the answer does not fit.
-    pub async fn release_contents(
-        &self,
-        params: &ReleaseContents,
-    ) -> Result<ReleaseContentsResult, Error> {
-        self.request(method::RELEASE_CONTENTS, params).await
-    }
-
-    /// `release/read_file`.
-    ///
-    /// # Errors
-    /// Returns [`Error`] when the call fails or the answer does not fit.
-    pub async fn release_read_file(
-        &self,
-        params: &ReleaseReadFile,
-    ) -> Result<ReleaseReadFileResult, Error> {
-        self.request(method::RELEASE_READ_FILE, params).await
-    }
-
-    /// `logs/follow`.
-    ///
-    /// # Errors
-    /// Returns [`Error`] when the call fails or the answer does not fit.
-    pub async fn logs_follow(&self, params: &LogsFollow) -> Result<LogsFollowResult, Error> {
-        self.request(method::LOGS_FOLLOW, params).await
-    }
-
-    /// `logs/stop`.
-    ///
-    /// # Errors
-    /// Returns [`Error`] when the call fails or the answer does not fit.
-    pub async fn logs_stop(&self, params: &LogsStop) -> Result<Done, Error> {
-        self.request(method::LOGS_STOP, params).await
-    }
-
-    /// `deploy/start`.
-    ///
-    /// # Errors
-    /// Returns [`Error`] when the call fails or the answer does not fit.
-    pub async fn deploy_start(&self, params: &DeployStart) -> Result<OperationStarted, Error> {
-        self.request(method::DEPLOY_START, params).await
-    }
-
-    /// `rollback/start`.
-    ///
-    /// # Errors
-    /// Returns [`Error`] when the call fails or the answer does not fit.
-    pub async fn rollback_start(&self, params: &RollbackStart) -> Result<OperationStarted, Error> {
-        self.request(method::ROLLBACK_START, params).await
     }
 }
 

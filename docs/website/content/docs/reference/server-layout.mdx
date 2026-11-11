@@ -1,6 +1,6 @@
 ---
 title: Server layout
-description: Every folder and file shipdeck keeps under dir, the release id format, ownership and modes, and what it writes outside the deploy folder.
+description: Every folder and file shipdeck keeps under server.dir, the release id format, ownership and modes, and what it writes outside the deploy folder.
 ---
 
 shipdeck keeps everything for one deploy under `dir`, plus one systemd unit per process in
@@ -117,7 +117,7 @@ values. That is why a release from before config format 2 is refused.
   Windows, which has no Unix modes). A file copied from the live release gets the mode the
   new release has for it. Symlinks stay symlinks.
 - If shipdeck created `dir` with `sudo -n mkdir` on a first deploy, it hands it to the SSH
-  user with `chown`. `scripts/server-setup.sh` creates it and gives it to the user too.
+  user with `chown`.
 - The process runs as `systemd.user`, by default the SSH user. That user must be able to read
   the release.
 
@@ -132,11 +132,10 @@ itself, and may not be able to write to `shared/`.
 | Path | Written by | Content |
 | --- | --- | --- |
 | `/etc/systemd/system/<process>.service` | `sudo -n install -m 0644` (no sudo as root), at every switch | A copy of `current/.shipdeck/<process>.service`. It refers only to paths under `current/`. |
-| `/etc/sudoers.d/shipdeck-<process>` | `scripts/server-setup.sh` or `shipdeck setup`, once | The sudo rule for the commands a deploy needs, and those that stop, start and follow the process by hand. Every `.` in the name becomes `_`, because sudo ignores files in `sudoers.d` whose names contain a dot. |
 
 The unit is always installed from the same path, `<dir>/current/.shipdeck/<process>.service`,
-so a sudo rule can name it exactly. A server prepared before config format 2 installed
-`<dir>/current/<process>.service`; run the setup script once more to update the rule.
+so every deploy finds it in the same place. Before config format 2 it was
+`<dir>/current/<process>.service`; a deploy now installs it from the new path by itself.
 
 `shipdeck server-info` lists the processes, and `shipdeck releases` lists the releases.
 

@@ -64,7 +64,7 @@ Every build writes `llms.txt` (an index linking to each page's Markdown),
 | `app/surfaces.css` | Nested area coloring: each block inside another sits one shade deeper. |
 | `app/chrome.css`, `app/prose.css`, `app/home.css` | Sidebar and TOC, article typography, landing page and terminal captures. |
 | `components/screen.tsx` | `<Screen>`: a text capture of a shipdeck screen, framed like a terminal. |
-| `components/pipeline-steps.tsx` | `<PipelineSteps />`: the ten deploy steps. |
+| `components/pipeline-steps.tsx` | `<PipelineSteps />`: the twelve deploy steps. |
 | `app/fonts/` | JetBrains Mono files for box drawing and braille, which Google's subsets leave out (OFL). |
 
 Fonts are Google Sans Flex and JetBrains Mono. The theme follows the system

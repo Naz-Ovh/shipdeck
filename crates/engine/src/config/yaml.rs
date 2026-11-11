@@ -123,7 +123,7 @@ pub fn parse(text: &str) -> Result<Node, Problem> {
         let line = before.matches('\n').count() + 1;
         let col = before.rsplit('\n').next().unwrap_or(before).chars().count();
         return Err(
-            Problem::new("shipdeck.yaml has Windows line endings (CRLF); shipdeck reads LF only")
+            Problem::new("this file has Windows line endings (CRLF); shipdeck reads LF only")
                 .at(Some(Span::point(line, col)))
                 .label("a CR here")
                 .help("save it with LF line endings; in Git, `*.yaml text eol=lf` in .gitattributes keeps them"),
@@ -140,7 +140,7 @@ pub fn parse(text: &str) -> Result<Node, Problem> {
             Event::StreamEnd => break,
             Event::DocumentStart(..) => {
                 if root.is_some() {
-                    return Err(Problem::new("shipdeck.yaml holds more than one document")
+                    return Err(Problem::new("this file holds more than one document")
                         .at(Some(span))
                         .label("a second document starts here")
                         .help("remove the `---` line and what follows it, or merge them"));
@@ -180,7 +180,7 @@ impl<'a> Reader<'a> {
                 ))
             }
             Some(Err(err)) => Err(syntax(&err)),
-            None => Err(Problem::new("shipdeck.yaml ends too early")),
+            None => Err(Problem::new("this file ends too early")),
         }
     }
 

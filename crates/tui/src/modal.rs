@@ -49,8 +49,6 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
             deployable,
             artifacts,
         } => confirm_cleanup(app, *deployable, artifacts),
-        Modal::SetupAccess { deployable } => setup_access(app, *deployable),
-        Modal::SetupPassword { input, .. } => setup_password(input),
         Modal::Notice { title, text } => notice(title, text),
         Modal::ConfirmQuit => confirm_quit(),
         Modal::Secret {
@@ -136,64 +134,6 @@ fn confirm_cleanup(app: &App, deployable: usize, artifacts: &[String]) -> Dialog
         WARN,
         lines,
         vec![("y", "remove them".into()), ("n", "keep them".into())],
-    )
-}
-
-fn setup_access(app: &App, deployable: usize) -> Dialog {
-    let name = app
-        .deployables
-        .get(deployable)
-        .map_or("this deployable", |found| found.slug.as_str());
-    (
-        format!("Prepare the server for {name}"),
-        ACCENT,
-        vec![
-            Line::from(Span::styled(
-                "shipdeck installs what it needs, creates the project folder, and grants                  password-free sudo.",
-                theme::text(),
-            )),
-            Line::default(),
-            Line::from(vec![
-                theme::key("f"),
-                Span::styled(
-                    "  full sudo: every command, for anything on this server",
-                    theme::text(),
-                ),
-            ]),
-            Line::from(vec![
-                theme::key("c"),
-                Span::styled(
-                    "  commands only: exactly the sudo commands shipdeck runs",
-                    theme::text(),
-                ),
-            ]),
-            Line::default(),
-            Line::from(Span::styled(
-                "The sudo password is asked next and never saved.",
-                theme::muted(),
-            )),
-        ],
-        vec![("f", "full sudo".into()), ("c", "commands".into())],
-    )
-}
-
-fn setup_password(input: &str) -> Dialog {
-    (
-        "Sudo password".to_string(),
-        ACCENT,
-        vec![
-            Line::from(Span::styled(
-                "Enter the sudo password for this server. Leave it empty when sudo needs none.",
-                theme::text(),
-            )),
-            Line::default(),
-            Line::from(vec![
-                Span::styled("  ", theme::muted()),
-                Span::styled("•".repeat(input.chars().count()), theme::bold(TEXT)),
-                Span::styled("▏", Style::new().fg(ACCENT)),
-            ]),
-        ],
-        vec![("⏎", "continue".into()), ("esc", "cancel".into())],
     )
 }
 

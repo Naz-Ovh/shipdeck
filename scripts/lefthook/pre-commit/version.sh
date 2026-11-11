@@ -4,7 +4,7 @@
 version=$(git show :Cargo.toml | sed -n '/^\[workspace\.package\]/,/^\[/s/^version = "\(.*\)"/\1/p')
 status=0
 for file in README.md docs/schema/deploy.schema.json docs/schema/protocol.schema.json \
-  docs/website/public/deploy.schema.json $(git ls-files 'examples/*/shipdeck.yaml'); do
+  docs/website/public/deploy.schema.json $(git ls-files 'examples/*/deploy.yaml'); do
   for found in $(git show ":$file" |
     grep -oE 'shipdeck/v[^/]+/[^ "]*\.schema\.json|git tag v[^ ]+' |
     sed -E 's#^shipdeck/v([^/]+)/.*#\1#; s#^git tag v##' | sort -u); do

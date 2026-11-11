@@ -15,7 +15,7 @@ mod preflight;
 mod releases;
 
 pub use backup::ReleaseFile;
-pub use control::{Control, control_commands, log_command};
+pub use control::{Control, log_command};
 pub use delta::Unpacked;
 pub use health::{HttpCheck, Probe};
 pub use inspect::{FileInfo, FileKind, FileText, READ_CAP, ReleaseContents, Source};
@@ -137,15 +137,6 @@ impl Server {
         self.manager.as_ref().map(Manager::kind)
     }
 
-    /// As messages name the manager.
-    #[must_use]
-    pub fn manager_label(&self) -> &'static str {
-        match &self.manager {
-            Some(manager) => manager.label(),
-            None => "static",
-        }
-    }
-
     /// The process name, or an empty string for a static app.
     #[must_use]
     pub fn process_name(&self) -> &str {
@@ -200,15 +191,6 @@ impl Server {
             env: self.env.clone(),
             env_file: self.env_file.clone(),
         })
-    }
-
-    /// The commands that need root here; see [`sudo_commands`].
-    #[must_use]
-    pub fn sudo_commands(&self) -> Vec<String> {
-        match self.manager {
-            Some(Manager::Systemd(_)) => sudo_commands(&self.dir, &self.process),
-            _ => Vec::new(),
-        }
     }
 
     /// Logged in as root, so nothing needs sudo.
@@ -681,23 +663,6 @@ const ENV_FILE_READER: &str = r#"shipdeck_env() {
   done < "$1"
 }
 "#;
-
-/// The commands that need root, without `sudo`, for an app in `dir` run as
-/// `service`. The sudoers rule must allow exactly these; changing one breaks
-/// every server set up before.
-#[must_use]
-pub fn sudo_commands(dir: &str, service: &str) -> Vec<String> {
-    let svc = service;
-    vec![
-        "systemctl daemon-reload".into(),
-        format!("systemctl enable {svc}"),
-        format!("systemctl restart {svc}"),
-        format!(
-            "install -m 0644 {dir}/current/.shipdeck/{svc}.service /etc/systemd/system/{svc}.service"
-        ),
-        format!("journalctl -u {svc} -n 30 --no-pager"),
-    ]
-}
 
 /// Removes `releases/<id>`, everything sent to make it, and its backup.
 fn discard_script(dir: &str, id: &str) -> String {

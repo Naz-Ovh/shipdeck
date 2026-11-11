@@ -65,8 +65,8 @@ that prints would corrupt the protocol.
 On every new SSH connection, before any operational request:
 
 1. The engine checks that the account is root or can run `sudo -n -- sh -c
-   'id -u'`. Failure stops the connection with the account and the missing
-   permission.
+   'id -u'`. Failure stops the connection and says that the user needs
+   password-free sudo, with the sudoers line to add.
 2. It lists `/var/lib/shipdeck/agent/v*`. A directory counts only when every parent
    directory and the executable are root-owned, not writable by group or other,
    and the executable reports the version in its directory name.

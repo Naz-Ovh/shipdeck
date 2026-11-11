@@ -27,14 +27,11 @@ Shipdeck reads this alias. It uses the named key; it does not use ssh-agent or t
 default keys. Review the server fingerprint when first connecting. CLI commands need
 `--trust-new-host` for a new key.
 
-## 2. Prepare the server
+## 2. Check the server user
 
-Once per server, either run the setup script as root (see
-[Server access](/docs/guides/server-access)) or, from your PC:
-
-```sh
-shipdeck setup production
-```
+The SSH user must be root, or have full password-free sudo. See
+[Server access](/docs/guides/server-access) for the sudoers line. There is nothing
+else to prepare: the first connection installs the agent on its own.
 
 ## 3. Create the deployment
 

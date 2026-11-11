@@ -4,7 +4,7 @@ description: Every argument and flag of the shipdeck command, its errors, exit c
 ---
 
 Run `shipdeck` in the folder that holds your root file and it opens the terminal UI. For
-scripts and CI, `deploy`, `rollback`, `releases`, `server-info`, `work`, `events`, `setup`
+scripts and CI, `deploy`, `rollback`, `releases`, `server-info`, `work`, `events`
 and `tree` do the same work [without the UI](#without-the-ui), and `man` prints
 [the manual](#the-manual).
 
@@ -19,7 +19,7 @@ shipdeck releases   [DEPLOY]
 shipdeck server-info [DEPLOY]
 shipdeck work     [DEPLOY] [--cleanup]
 shipdeck events   [DEPLOY] [--after <N>] [--limit <N>]
-shipdeck setup    [DEPLOY] [--access full|commands] [--sudo-password <VALUE>]
+
 shipdeck tree     [DEPLOY] [--app <APP>] [--depth <N>] [--build] [--json]
 shipdeck man      [index | configs | details <KEY>...]
 shipdeck --schema
@@ -60,7 +60,7 @@ A `DEPLOY` argument is one of two things, and only the ending decides:
 Anything else, such as `./production`, is an error. Without an argument:
 
 - `deploy` uses the only deploy of the root file, and refuses when there are several;
-- `releases`, `server-info`, `work`, `events`, `setup` and `tree` do the same;
+- `releases`, `server-info`, `work`, `events` and `tree` do the same;
 - with a deploy file named, the one deploy in that file is used.
 
 `rollback` always needs the deploy, because it takes two arguments.
@@ -226,13 +226,6 @@ files; it removes only the paths this command just listed.
 
 Prints the numbered events the server saved, oldest first: `#sequence time operation kind
 detail`. `--after` follows on from the last sequence you saw; one page is at most 1000.
-
-### `setup [DEPLOY] [--access full|commands] [--sudo-password PASSWORD]`
-
-Prepares a server once: the packages, the deploy folder, and the sudo rule.
-`--access commands` grants password-free sudo for exactly what shipdeck runs (the default
-when nobody can be asked); `--access full` for everything. The sudo password travels on
-stdin and is never saved; `SHIPDECK_SUDO_PASSWORD` keeps it out of history.
 
 ### `tree [DEPLOY]`
 

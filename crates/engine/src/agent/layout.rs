@@ -37,18 +37,24 @@ pub(super) async fn sudo_prefix(session: &Session) -> Result<String> {
     if output.success() && output.stdout.trim() == "0" {
         return Ok("sudo -n -- ".to_string());
     }
-    let detail = output.stderr.trim();
+    bail!(access_message(&session.user, output.stderr.trim()));
+}
+
+/// The error for an account that cannot become root without a password.
+fn access_message(user: &str, detail: &str) -> String {
     let detail = if detail.is_empty() {
         String::new()
     } else {
         format!(" ({detail})")
     };
-    bail!(
-        "user {} cannot run the privileged commands the shipdeck agent needs{detail}. \
-         The agent installs under {AGENT_ROOT} and manages systemd, so the account must be \
-         root or have password-free sudo (NOPASSWD).",
-        session.user
-    );
+    // sudo skips a sudoers.d file whose name holds a dot, and user names may.
+    let file = user.replace('.', "_");
+    format!(
+        "{user} cannot become root without a password{detail}. shipdeck needs this to install \
+         and update its agent. Use the root user, or give {user} password-free sudo. \
+         As root on the server, run:\n  echo '{user} ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/{file}\n  \
+         chmod 0440 /etc/sudoers.d/{file}\n  visudo -c"
+    )
 }
 
 /// Every valid root-owned agent installation, oldest first.

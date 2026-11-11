@@ -1,4 +1,4 @@
-//! Problems in a `shipdeck.yaml`, and how they are printed when shipdeck
+//! Problems in a config file, and how they are printed when shipdeck
 //! refuses to start: one block per problem with the line it is on, a caret
 //! under the spot and a hint, in colour on a terminal.
 
@@ -183,8 +183,8 @@ pub fn render(files: &[FileProblems], base: &Path, color: bool, outcome: &str) -
     }
     let count: usize = files.iter().map(|f| f.problems.len()).sum();
     let mut out = String::new();
-    // The heading names the file the problems are in, which is not always
-    // `shipdeck.yaml`: `-c` can name any file.
+    // The heading names the file the problems are in: the root file, a
+    // deploy file, or any file `-c` names.
     let problems_text = if count == 1 {
         "1 problem".to_string()
     } else {
@@ -219,7 +219,7 @@ pub fn render(files: &[FileProblems], base: &Path, color: bool, outcome: &str) -
     out
 }
 
-/// `web-prod/shipdeck.yaml`: the deployable's folder and the file.
+/// `production/deploy.yaml`: the file and the folder it is in.
 fn short_name(path: &Path) -> String {
     let file = path
         .file_name()

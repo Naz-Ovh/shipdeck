@@ -1,40 +1,19 @@
 use super::*;
 use crate::config::{Pm2, Systemd};
-use crate::remote::sudo_commands;
-
-/// What `sh` passes to sudo, quotes removed: the words the rule must name.
-fn words(script: &str) -> String {
-    script.replace('\'', "")
-}
 
 #[test]
-fn what_runs_with_sudo_is_what_the_rule_allows() {
-    let allowed: Vec<String> = sudo_commands("/opt/my-api", "my-api")
-        .into_iter()
-        .chain(control_commands("my-api"))
-        .collect();
+fn systemd_commands_are_quoted_for_the_shell() {
     for action in [Control::Stop, Control::Start, Control::Restart] {
-        let shell = systemctl(action, &sh_quote("my-api"));
-        assert_eq!(shell, format!("systemctl {} 'my-api'", action.verb()));
-        assert!(allowed.contains(&words(&shell)), "{shell}");
+        assert_eq!(
+            systemctl(action, &sh_quote("my-api")),
+            format!("systemctl {} 'my-api'", action.verb())
+        );
     }
     let systemd = Manager::Systemd(Systemd::default());
-    let follow = log_script(Some(&systemd), "my-api", "my-api", "sudo -n ");
     assert_eq!(
-        follow,
+        log_script(Some(&systemd), "my-api", "my-api", "sudo -n "),
         "sudo -n journalctl -u 'my-api' -f -n 200 --no-pager"
     );
-    assert!(allowed.contains(&words(follow.trim_start_matches("sudo -n "))));
-}
-
-#[test]
-fn control_commands_stay_out_of_what_a_deploy_needs() {
-    // Preflight fails a deploy when one of sudo_commands is missing, so a
-    // server set up before these must not need them to deploy.
-    let deploy = sudo_commands("/opt/my-api", "my-api");
-    for command in control_commands("my-api") {
-        assert!(!deploy.contains(&command), "{command}");
-    }
 }
 
 #[test]

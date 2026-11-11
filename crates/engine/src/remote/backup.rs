@@ -1,5 +1,5 @@
 //! A release's backup, `backups/<id>.tar.zst`: which of its files go in
-//! (`pipeline.backup.files`), packing it on the server after setup, and
+//! (`release.steps.backup`), packing it on the server after setup, and
 //! unpacking it again for a rollback, which then runs setup once more.
 
 use anyhow::{Result, bail};

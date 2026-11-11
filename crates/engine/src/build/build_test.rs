@@ -31,10 +31,11 @@ async fn a_local_command_is_one_sh_line() {
     std::fs::create_dir_all(&dir).unwrap();
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let report = Reporter::new(1, tx);
-    let env = [("SHIPDECK_VERSION", "1.4.0".to_string())];
+    let env = [("SHIPDECK_VERSION".to_string(), "1.4.0".to_string())];
 
     let line = "echo \"v$SHIPDECK_VERSION\" | tr v V > a.txt && cp a.txt b.txt && mkdir -p out/x";
-    Box::pin(run_local(line, &dir, &env, &report, 0))
+    let command = Command::Sh(line.into());
+    Box::pin(run_command(&command, line, &dir, &env, &report, 0))
         .await
         .unwrap();
     assert_eq!(
@@ -43,7 +44,8 @@ async fn a_local_command_is_one_sh_line() {
     );
     assert!(dir.join("out/x").is_dir());
 
-    let err = Box::pin(run_local("exit 3", &dir, &env, &report, 0))
+    let failing = Command::Sh("exit 3".into());
+    let err = Box::pin(run_command(&failing, "exit 3", &dir, &env, &report, 0))
         .await
         .unwrap_err();
     assert_eq!(err.to_string(), "`exit 3` exited with code 3");

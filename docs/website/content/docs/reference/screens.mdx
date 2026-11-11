@@ -40,7 +40,7 @@ Toasts:
 | `An operation is using this connection` | You press `c` to disconnect while a deploy or rollback uses that connection. |
 | `That release is already live` | You press `⏎` on the live release. |
 | `shipdeck did not create that folder, so it will not switch to it` | You press `⏎` on a folder marked `not ours`. |
-| `Not a command: :<text>. Try :logs, :restart, :setup, :stop or :start` | You run a command the `:` line does not know. |
+| `Not a command: :<text>. Try :logs, :restart, :stop or :start` | You run a command the `:` line does not know. |
 | `<folder> is being deployed; only :logs works until it ends` | You run `:stop`, `:start` or `:restart` while that deploy runs. |
 | `Stopping <service>…`, then `<service>: stopped` | `:stop` runs, then is done (`Starting`, `Restarting` alike). |
 | `Wait for the last command to finish` | You run a second `:stop`, `:start` or `:restart` on a deploy before the first is done. |
@@ -125,11 +125,12 @@ The live summary is one of:
 
 The panel on the right shows the selected deploy, read from its deploy file:
 
-- **TARGET:** `ssh` (with `→ <address:port>  ~/.ssh/config` when the host is an alias), `login`, `folder`, `service` with its state, `runs as`, `start` (the full `ExecStart`), and `live`.
-- **SERVER:** once connected through the agent: Linux and kernel, CPU and cores, free and total memory, the disk behind the folder, uptime, and the agent version.
-- **WORK:** when there is something to say: the service's real state, unfinished files (`x` cleans them), an activation that never reached a health pass, and the newest saved events.
-- **PIPELINE:** one row per configured step item: the commands of each step, with `local`, `server` or `check` beside them, the `pack` lists (`binary`, `project`, `deploy`, `leaves`), what the `backup` `takes` and `leaves` (or a faint `none: keep.compressed is 0`), how `health` waits, and the `failed` `policy`: `asks, then rolls back after 30s` or `rolls back at once`.
-- **POLICY:** `keeps` (`5 unpacked + 15 compressed`, from `release.steps.backup.keep`), the release's `shared` folders, the rollback `mode`, and how many apps the deploy has.
+- **TARGET:** `ssh` (with `→ <address:port>  ~/.ssh/config` when the host is an alias), `login`, `folder` (`server.dir`) and `live`. A deploy that can't run, such as one with a missing `${NAME}` variable, also shows `why`.
+- **APPS:** one row per app: `process · <manager> · <process name>` or `static`, and its `source`. Below it, when set: the program it starts, `health <url>` and its `shared` folders.
+- **SERVER:** once connected through the agent: `system` (Linux and kernel), `cpu` and cores, `memory`, the `disk` behind the folder, `uptime` and the `agent` version.
+- **WORK:** when there is something to say: the `service`'s real state, `unfinished` files (`x` cleans them), an `uncertain` activation that never reached a health pass, and the newest saved `event`.
+- **STEPS:** one row per command you wrote, in step order: the step, its key, `server:` or `local:` (with `<app>/` in front for an app's command), and the command. With none: `no commands; shipdeck does the work`.
+- **POLICY:** `keeps` (`5 unpacked + 15 compressed`, from `release.steps.backup.keep`), the release's `shared` folders, the `rollback` mode (`asks, then rolls back after 30s`, `rolls back at once` or `never rolls back on its own`), and how many apps the deploy has.
 
 With no deploys, the screen shows `No deploys yet` and the root file it looked for.
 
@@ -157,11 +158,10 @@ The footer's `c` label reads `connect`, or `disconnect` when the selected deploy
 | --- | --- |
 | `:logs` | Opens the [log view](#logs). Works at any time. |
 | `:restart` | Restarts the service the way a deploy's Restart step does. Asks first. |
-| `:setup` | Guided one-time server setup: choose full sudo or only the commands shipdeck runs, then enter the sudo password. |
 | `:stop` | Stops every process of the deploy. Asks first. It stays stopped until it is started again, a deploy restarts it or the server reboots. |
 | `:start` | Starts every process. A PM2 app that is already online is left as it is. |
 
-While a deploy or rollback of that deploy runs, only `:logs` works. With systemd, `:stop`, `:start` and `:logs` need sudo rights of their own; on a server set up before shipdeck had them, a dialog titled `Could not stop <process>` (or start, or the log view itself) says so. See [Server access](/docs/guides/server-access).
+While a deploy or rollback of that deploy runs, only `:logs` works. See [Server access](/docs/guides/server-access) for the sudo rule every command relies on.
 
 | Key | Action |
 | --- | --- |
@@ -208,7 +208,7 @@ While a deploy or rollback of that deploy runs, only `:logs` works. With systemd
  ↑↓  scroll    pgup/pgdn  page    G  follow    q  close
 `}</Screen>
 
-The title names the service and the server, the bottom border the command. On the right: ` connecting ` until the server answers, ` following `, ` ↑ <n> lines · G to follow ` after you scroll up, or ` ended ` with the reason under the last line, such as a missing sudo right with the command that adds it. Up to 5000 lines are kept.
+The title names the service and the server, the bottom border the command. On the right: ` connecting ` until the server answers, ` following `, ` ↑ <n> lines · G to follow ` after you scroll up, or ` ended ` with the reason under the last line, such as the reason the command failed. Up to 5000 lines are kept.
 
 | Key | Action |
 | --- | --- |
@@ -224,7 +224,7 @@ A deploy or rollback, running or finished. Starting one switches to this screen.
 
 <Screen title="Operation">{`
  ◆ shipdeck   project ./                              login ~/.ssh/config key, else password prompt
- 1 Deploys   2 Operation   3 Releases                          ⠋ Deploying shop · Build 59%
+ 1 Deploys   2 Operation   3 Releases                          ⠋ Deploying shop · Upload 59%
 
 ┏ Deploy ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 0.0s ┓
 ┃ shop  →  deploy@prod:/opt/shop  release v1.4.1-77aa001-20261110.160501  v1.4.1                        ┃
@@ -233,15 +233,16 @@ A deploy or rollback, running or finished. Starting one switches to this screen.
 ╭ Steps ─────────────────────────────────────╮╭ Log · 9 lines ────────────────────────── following ╮
 │ ✔ 1 Preflight  x86_64 · glibc 2.39    0.0s ││ 00:00 ━━ Preflight: checking the server            │
 │ ✔ 2 Build      31.0 MiB · glibc ≥     0.0s ││ 00:00 › connect deploy@203.0.113.10 (password, ask │
-│ ✔ 3 Pack       5 files · 31.2 MiB     0.0s ││ 00:00 ℹ server: x86_64 · glibc 2.39 · 41.2 GiB fre │
-│ ⠋ 4 Upload     59%                    0.0s ││ 00:00 ━━ Build: compiling on this machine          │
-│ ○ 5 Unpack                                 ││ 00:00      Compiling my-api v0.3.2 (/home/me/my-ap │
-│ ○ 6 Setup                                  ││ 00:00       Finished \`release\` profile [optimized] │
-│ ○ 7 Backup                                 ││ 00:00 ▲ the source has uncommitted changes; the re │
-│ ○ 8 Switch                                 ││ 00:00 ━━ Upload: sending the release               │
-│ ○ 9 Restart                                ││ 00:00 › deploy@203.0.113.10 › upload 11.8 MiB to / │
-│ ○ 10 Health                                ││                                                    │
-│ ○ 11 Done                                  ││                                                    │
+│ ⠋ 3 Upload     59%                    0.0s ││ 00:00 ℹ server: x86_64 · glibc 2.39 · 41.2 GiB fre │
+│ ○ 4 Setup                                  ││ 00:00 ━━ Build: compiling on this machine          │
+│ ○ 5 Backup                                 ││ 00:00      Compiling my-api v0.3.2 (/home/me/my-ap │
+│ ○ 6 Switch                                 ││ 00:00       Finished \`release\` profile [optimized] │
+│ ○ 7 Restart                                ││ 00:00 ▲ the source has uncommitted changes; the re │
+│ ○ 8 Nginx                                  ││ 00:00 ━━ Upload: sending the release               │
+│ ○ 9 Health                                 ││ 00:00 › deploy@203.0.113.10 › upload 11.8 MiB to / │
+│ ○ 10 Done                                  ││                                                    │
+│ ○ 11 Rollback                              ││                                                    │
+│ ○ 12 Failed                                ││                                                    │
 ╰────────────────────────────────────────────╯│                                                    │
 ╭ Progress ──────────────────────────────────╮│                                                    │
 │ ⠋ Upload  0.0s                             ││                                                    │
@@ -250,7 +251,7 @@ A deploy or rollback, running or finished. Starting one switches to this screen.
 │ 4.2 MiB/s                                  ││                                                    │
 │                                            ││                                                    │
 │ overall  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ││                                                    │
-│ 3/11 steps  ·  0.0s                        ││                                                    │
+│ 2/12 steps  ·  0.0s                        ││                                                    │
 ╰────────────────────────────────────────────╯╰────────────────────────────────────────────────────╯
  ↑↓  scroll    pgup/pgdn  page    G  follow    r  releases    esc  back    q  quit
 `}</Screen>
@@ -279,7 +280,7 @@ The capture uses test data, so every time reads `0.0s`.
 | `✘` | Failed |
 | `–` | Skipped |
 
-**Progress.** The running step with a gauge and a percentage when the total is known (bytes for Pack and Upload, crates for a cargo build, seconds for Health), or a sliding bar when it is not. Under it, the amount (`7.0 MiB of 11.8 MiB`) and a label such as the upload speed. At the bottom, an `overall` bar and `<done>/<total> steps`.
+**Progress.** The running step with a gauge and a percentage when the total is known (bytes for Upload, crates for a cargo build, seconds for Health), or a sliding bar when it is not. Under it, the amount (`7.0 MiB of 11.8 MiB`) and a label such as the upload speed. At the bottom, an `overall` bar and `<done>/<total> steps`.
 
 **Timeline.** Below Progress when the terminal is tall enough: one bar per step that has started, scaled to the slowest one.
 
@@ -399,12 +400,12 @@ Opens with `⏎` or `d` on Deploys.
 │           ║ found). The deploy will stop at Preflight, before building.              ║           │
 │           ║                                                                          ║           │
 │           ║  y  deploy     n  cancel                                                 ║           │
-│           ╚══════════════════════════════════════════════════════════════════════════╝ 20s       │
-│                                        ││   failed    policy  asks, then rolls back after 30s    │
+│           ╚══════════════════════════════════════════════════════════════════════════╝           │
 │                                        ││                                                        │
 │                                        ││ POLICY ─────────────────────────                       │
 │                                        ││   keeps    5 unpacked + 15 compressed                  │
-│                                        ││   unit     built-in template                           │
+│                                        ││   rollback asks, then rolls back after 30s             │
+│                                        ││                                                        │
 ╰────────────────────────────────────────╯╰────────────────────────────────────────────────────────╯
  y  yes    n  no
 `}</Screen>
@@ -500,7 +501,7 @@ It stays stopped until it is started again, a deploy restarts it or the server r
 
 ### Could not …
 
-Opens when `:stop`, `:start` or `:restart` fails, with the whole error, such as a missing sudo right. `⏎`, `Esc` or `q` close it.
+Opens when `:stop`, `:start` or `:restart` fails, with the whole error. `⏎`, `Esc` or `q` close it.
 
 ### Quit now?
 
@@ -541,20 +542,20 @@ Asks for an SSH password (title `SSH password`) or a key passphrase (title `Key 
 │    deploy@║                                                                          ║           │
 │    not con║  ⏎  log in     esc  cancel                                               ║           │
 │           ╚══════════════════════════════════════════════════════════════════════════╝ -p my-api │
-│                                        ││   pack      binary  target/release/server              │
-│                                        ││             deploy  .env, files/                       │
-│                                        ││   backup    takes   deployed files                     │
-│                                        ││   health    waits   http://127.0.0.1:6520/ · 20s       │
-│                                        ││   failed    policy  asks, then rolls back after 30s    │
 │                                        ││                                                        │
 │                                        ││ POLICY ─────────────────────────                       │
 │                                        ││   keeps    5 unpacked + 15 compressed                  │
-│                                        ││   unit     built-in template                           │
+│                                        ││   rollback asks, then rolls back after 30s             │
+│                                        ││                                                        │
+│                                        ││                                                        │
+│                                        ││                                                        │
+│                                        ││                                                        │
+│                                        ││                                                        │
 ╰────────────────────────────────────────╯╰────────────────────────────────────────────────────────╯
  ⏎  submit    esc  cancel    ctrl+u  clear
 `}</Screen>
 
-The prompt is `Password for <user>@<host>[:port]` or `Passphrase for <key path>`, followed by a note when there is one: ` (key <path> was refused)`, ` (key <path>: <err>)` or ` (wrong, try again)`. You get 3 attempts. A password that works is kept in memory for the rest of the run, per `user@host` as the prompt shows it (`ssh.host` as written, plus `:port` when it is not 22), so you type it once per server. A passphrase is kept per key file.
+The prompt is `Password for <user>@<host>[:port]` or `Passphrase for <key path>`, followed by a note when there is one: ` (key <path> was refused)`, ` (key <path>: <err>)` or ` (wrong, try again)`. You get 3 attempts. A password that works is kept in memory for the rest of the run, per `user@host` as the prompt shows it (`server.ssh.host` as written, plus `:port` when it is not 22), so you type it once per server. A passphrase is kept per key file.
 
 | Key | Action |
 | --- | --- |

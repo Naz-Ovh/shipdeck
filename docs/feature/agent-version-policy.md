@@ -11,11 +11,12 @@ account. Preparation happens during the first connection. There is no separate
 setup command. The agent needs elevated access for protected files, systemd,
 and system dependencies.
 
-The account must be root or have password-free sudo (`NOPASSWD`). Shipdeck
-uses `sudo -n` and never asks for a sudo password during preparation. The rule
-must allow the agent installer and launch, so a rule limited to the service
-commands is not enough. When the account cannot use sudo, the connection stops
-with a clear access error before anything changes.
+The account must be root or have full password-free sudo (`NOPASSWD: ALL`).
+Shipdeck uses `sudo -n` and never asks for a sudo password during
+preparation. A rule limited to some commands is not supported, because the
+installer and the agent's file work need root every time. When the account
+cannot become root, the connection stops with an access error that shows the
+sudoers line to add, before anything changes.
 
 Agents live at `/var/lib/shipdeck/agent/v<version>/agent`. Root owns the executable
 and every parent directory. The directories are not writable by ordinary

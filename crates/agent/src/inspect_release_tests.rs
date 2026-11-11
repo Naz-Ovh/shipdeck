@@ -18,8 +18,13 @@ fn folder(name: &str) -> std::path::PathBuf {
 async fn lists_a_folder_and_reads_a_file() {
     let root = folder("inspect-release");
     std::fs::create_dir_all(root.join("releases/v1/dir")).expect("release");
+    std::fs::create_dir_all(root.join("releases/v1/.shipdeck")).expect("record folder");
     std::fs::write(root.join("releases/v1/dir/file"), "hello").expect("file");
-    std::fs::write(root.join("releases/v1/release.json"), "{\"version\":\"1\"}").expect("manifest");
+    std::fs::write(
+        root.join("releases/v1/.shipdeck/release.json"),
+        "{\"version\":\"1\"}",
+    )
+    .expect("manifest");
     #[cfg(unix)]
     std::os::unix::fs::symlink("dir/file", root.join("releases/v1/link")).expect("link");
     let found = contents(AgentReleaseContentsRequest {

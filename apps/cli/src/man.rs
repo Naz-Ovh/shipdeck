@@ -1,5 +1,5 @@
 //! `shipdeck man`: the manual, for people and coding agents alike.
-//! `man index` lists the topics, `man configs` every shipdeck.yaml property,
+//! `man index` lists the topics, `man configs` every config property,
 //! and `man details <KEY>...` prints topics and properties in full, each in
 //! its own tagged block. The text is `manual/*.yaml`; `build.rs` turns it
 //! into the static data below, so a run reads no file and parses nothing.
@@ -26,9 +26,9 @@ pub struct Topic {
     pub text: &'static str,
 }
 
-/// One shipdeck.yaml property, in the order of the tree.
+/// One config property, in the order of the tree.
 pub struct Config {
-    /// Its dotted path, such as `service.env`.
+    /// Its dotted path, such as `server.ssh.host`.
     pub key: &'static str,
     /// How deep it sits: 0 for a top-level key.
     pub depth: usize,
@@ -58,12 +58,12 @@ pub struct ManArgs {
 enum Page {
     /// Every topic as `key: brief`; `man` alone prints it too
     Index,
-    /// Every shipdeck.yaml property as a YAML tree, with its type, default and brief
+    /// Every config property as a YAML tree, with its type, default and brief
     Configs,
     /// Topics and properties in full, each in its own tagged block
     Details {
-        /// Topic keys or property paths, apart or comma-separated: `step.health service.env`
-        /// or `step.health,service.env`
+        /// Topic keys or property paths, apart or comma-separated: `step.health server.ssh.host`
+        /// or `step.health,server.ssh.host`
         #[arg(value_name = "KEY", required = true)]
         keys: Vec<String>,
     },
@@ -100,7 +100,7 @@ fn index() -> String {
     let mut out = format!(
         "shipdeck {} manual. Topics as `key: brief`.\n\
          Read in full: shipdeck man details <key> [<key>...]  (several: spaces or commas)\n\
-         shipdeck.yaml properties: shipdeck man configs; one in full: shipdeck man details <path>\n",
+         config properties: shipdeck man configs; one in full: shipdeck man details <path>\n",
         env!("CARGO_PKG_VERSION"),
     );
     for section in SECTIONS {
@@ -114,9 +114,9 @@ fn index() -> String {
 
 fn configs() -> String {
     let mut out = format!(
-        "# shipdeck.yaml properties (shipdeck {}). Each line: `name: type, default  # brief`.\n\
+        "# config properties, root file and deploy file (shipdeck {}). Each line: `name: type, default  # brief`.\n\
          # commands = one shell line or a list run in order; patterns = paths or globs\n\
-         # (man details config.files). One in full: shipdeck man details <path>, e.g. service.env\n",
+         # (man details config.files). One in full: shipdeck man details <path>, e.g. server.ssh.host\n",
         env!("CARGO_PKG_VERSION"),
     );
     out.push_str(&tree(CONFIGS, 0));
@@ -218,7 +218,7 @@ fn see(out: &mut String, keys: &[&str]) {
 }
 
 /// Up to five keys close to `word`: one that holds it as a part, such as
-/// `service.env` for `env`, or one a typo or two away.
+/// `server.ssh.host` for `host`, or one a typo or two away.
 fn suggest(word: &str) -> Vec<&'static str> {
     let word = word.to_lowercase();
     keys()

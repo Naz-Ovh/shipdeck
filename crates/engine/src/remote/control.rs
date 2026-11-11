@@ -1,7 +1,6 @@
 //! The service by hand, outside a deploy: stop, start and restart it, and
-//! follow its log live. With systemd, stopping, starting and the log need
-//! sudo rights of their own ([`control_commands`]); a server set up before
-//! them still deploys, and only these say `server-setup.sh` must run again.
+//! follow its log live. With systemd these run through `sudo -n`, which the
+//! agent start has already shown to work.
 
 use std::future::Future;
 
@@ -9,8 +8,7 @@ use anyhow::{Result, bail};
 
 use super::Server;
 use crate::agent::AgentLogEvent;
-use crate::config::{Manager, ManagerKind};
-use crate::setup;
+use crate::config::Manager;
 use crate::ssh::sh_quote;
 use shipdeck_protocol::message::agent::AgentServiceAction;
 
@@ -36,29 +34,12 @@ impl Control {
     }
 }
 
-/// The commands that need root to run the service by hand, without
-/// `sudo`. They are kept apart from `sudo_commands`, which preflight
-/// requires, so a server set up before them still deploys. The sudoers
-/// rule must allow exactly these; changing one breaks every server set up
-/// before.
-#[must_use]
-pub fn control_commands(service: &str) -> Vec<String> {
-    vec![
-        format!("systemctl stop {service}"),
-        format!("systemctl start {service}"),
-        format!("systemctl disable {service}"),
-        journal_follow(service),
-    ]
-}
-
-/// The service's last journal lines, then each new one as it comes. With
-/// the plain name it is what the sudoers rule names; with the name quoted,
-/// what `sh` runs.
+/// The service's last journal lines, then each new one as it comes.
 fn journal_follow(service: &str) -> String {
     format!("journalctl -u {service} -f -n {LOG_LINES} --no-pager")
 }
 
-/// The systemd command for `action`, named like [`journal_follow`].
+/// The systemd command for `action`.
 fn systemctl(action: Control, service: &str) -> String {
     format!("systemctl {} {service}", action.verb())
 }
@@ -86,23 +67,6 @@ pub fn log_command(manager: Option<&Manager>, process: &str) -> String {
 }
 
 impl Server {
-    /// Checks stop rights before a deployment changes any live process.
-    ///
-    /// # Errors
-    /// Returns an error when stop or disable is not permitted.
-    pub async fn check_stop_permission(&self) -> Result<()> {
-        if self.manager.is_none() {
-            return Ok(());
-        }
-        if self.manager_kind() == Some(ManagerKind::Systemd) {
-            self.check_sudo(|service| systemctl(Control::Stop, service))
-                .await?;
-            self.check_sudo(|service| format!("systemctl disable {service}"))
-                .await?;
-        }
-        Ok(())
-    }
-
     /// Removes a process that is absent or uses another manager in the target.
     ///
     /// # Errors
@@ -111,7 +75,6 @@ impl Server {
         if self.manager.is_none() {
             return Ok(());
         }
-        self.check_stop_permission().await?;
         let script = match self.manager {
             Some(Manager::Oxmgr(_)) => bail!("oxmgr is not built yet"),
             None => return Ok(()),
@@ -137,8 +100,7 @@ impl Server {
     /// running is left as it is by `Start`.
     ///
     /// # Errors
-    /// Returns an error when sudo is not allowed, the PM2 state is unreadable,
-    /// or the command fails.
+    /// Returns an error when the PM2 state is unreadable or the command fails.
     pub async fn control(&self, action: Control) -> Result<()> {
         if self.is_static() {
             bail!("a static site has no process to {}", action.verb());
@@ -158,8 +120,6 @@ impl Server {
             None => return Ok(()),
             Some(Manager::Oxmgr(_)) => bail!("oxmgr is not built yet"),
             Some(Manager::Systemd(_)) => {
-                self.check_sudo(|service| systemctl(action, service))
-                    .await?;
                 let command = systemctl(action, &self.q_service());
                 format!("{}{command}", self.sudo())
             }
@@ -182,7 +142,7 @@ impl Server {
     /// its own; then returns its exit code.
     ///
     /// # Errors
-    /// Returns an error when sudo is not allowed or the log command cannot run.
+    /// Returns an error when the log command cannot run.
     pub async fn follow_logs(
         &self,
         on_line: impl FnMut(&str),
@@ -214,9 +174,6 @@ impl Server {
                 }
             }
         }
-        if self.manager_kind() == Some(ManagerKind::Systemd) {
-            self.check_sudo(journal_follow).await?;
-        }
         let script = log_script(
             self.manager.as_ref(),
             &self.process,
@@ -224,25 +181,6 @@ impl Server {
             self.sudo(),
         );
         self.session.follow(&script, on_line, stop).await
-    }
-
-    /// Fails, saying what to run, when the user may not run the service's
-    /// `command` with sudo. Root needs nothing.
-    async fn check_sudo(&self, command: impl Fn(&str) -> String) -> Result<()> {
-        if self.is_root() {
-            return Ok(());
-        }
-        let check = format!("sudo -n -l {} >/dev/null 2>&1", command(&self.q_service()));
-        if self.session.exec(&check).await?.success() {
-            return Ok(());
-        }
-        bail!(
-            "{user} may not run sudo {command}. Run server-setup.sh on the server again, \
-             as root, to allow it:\n{setup}",
-            user = self.session.user,
-            command = command(&self.process),
-            setup = setup::command(&self.session.user, &self.dir, &self.process),
-        )
     }
 }
 

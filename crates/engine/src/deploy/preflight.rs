@@ -72,7 +72,6 @@ impl Run<'_> {
         let base = self.base_server(Arc::clone(&session))?;
         let tools = self.tools();
         let mut facts = base.facts(&tools).await?;
-        self.check_sudo(&tools, &mut facts).await?;
         let endpoint = &self.deployment.endpoint;
         let dir = self.deployment.dir();
         if !facts.dir_exists {
@@ -238,37 +237,6 @@ impl Run<'_> {
             tools.insert("flock".into());
         }
         tools.into_iter().collect()
-    }
-
-    /// Checks every process app's sudo rights and merges them into the facts.
-    async fn check_sudo(&self, _tools: &[String], facts: &mut Facts) -> Result<()> {
-        let mut missing: BTreeSet<String> = facts.sudo_missing.iter().cloned().collect();
-        for name in self.deployment.process_apps().map(|(name, _)| name) {
-            let Some(session) = &self.session else {
-                break;
-            };
-            let server = Server::for_app(self.deployment, name, Arc::clone(session))?;
-            let found = server.facts(&[]).await?;
-            missing.extend(found.sudo_missing);
-        }
-        facts.sudo_missing = missing.into_iter().collect();
-        if !facts.sudo_missing.is_empty() {
-            for command in &facts.sudo_missing {
-                self.report.log(
-                    LogKind::Warn,
-                    format!(
-                        "{} may not run: sudo {command}",
-                        self.deployment.endpoint.user
-                    ),
-                );
-            }
-            bail!(
-                "{} may not run {} of the commands shipdeck needs as root (sudo, without a password)",
-                self.deployment.endpoint.user,
-                facts.sudo_missing.len()
-            );
-        }
-        Ok(())
     }
 
     /// Every program is there, and a missing runner names its step and app.

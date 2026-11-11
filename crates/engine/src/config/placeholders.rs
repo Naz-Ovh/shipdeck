@@ -329,14 +329,6 @@ pub fn env(values: &Values<'_>) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The environment variables every command gets, beyond the placeholders.
-pub const EXTRA_ENV: [&str; 4] = [
-    "SHIPDECK_ACTION",
-    "SHIPDECK_STEP",
-    "SHIPDECK_PREVIOUS",
-    "SHIPDECK_ERROR",
-];
-
 /// One placeholder found in a string.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Found {

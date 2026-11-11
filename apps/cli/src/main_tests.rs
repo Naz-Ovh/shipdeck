@@ -187,7 +187,6 @@ fn every_server_command_takes_one_deploy() {
         (vec!["server-info"], "server-info"),
         (vec!["work"], "work"),
         (vec!["events"], "events"),
-        (vec!["setup"], "setup"),
     ] {
         let mut args = vec!["shipdeck"];
         args.extend(command);

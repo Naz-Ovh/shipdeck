@@ -14,8 +14,8 @@ sturdier as typed requests and live events.
 A small program, `shipdeck-agent`, runs on the server while you are connected.
 
 - Preparation happens on the first connection. The account logs in with its
-  supplied SSH credentials and must be root or have password-free sudo for the
-  installer and launch. A service-command-only sudo rule is not enough.
+  supplied SSH credentials and must be root or have full password-free sudo
+  (`NOPASSWD: ALL`). A sudo rule limited to some commands is not supported.
 - The agent is installed at `/var/lib/shipdeck/agent/v<version>/agent`. Root owns
   the executable and every parent directory. It is started through `sudo`
   with the full path.
@@ -98,7 +98,7 @@ All of these are typed requests; no request carries a shell line.
 | Files | Hash live-release files for reuse, prepare project folders, switch `current` atomically. |
 | Upload | Reserve a one-use ticket, receive a bundle on a second SSH channel, check length and SHA-256, keep partial files. |
 | Unpack | Extract tar/zstd with path, symlink, mode, entry and byte limits; copy unchanged files; verify every file against the receipt; keep staging on mismatch. |
-| Shared | Link `service.shared` folders into a release, creating each in `shared/` the first time. |
+| Shared | Link the `shared` folders into a release, creating each in `shared/` the first time. |
 | Backups | Pack selected release paths natively into `backups/<id>.tar.zst`, restore one, list the paths. |
 | Releases | List open releases and backups, read a release folder or its backup, read one file, drop one release or backup. |
 | Services | Read systemd/PM2 state, stop, start and restart. Systemd runs as root. PM2 runs as the service user. |
@@ -106,7 +106,6 @@ All of these are typed requests; no request carries a shell line.
 | Locks | Hold one project lock per SSH session with an OS file lock and a private token. |
 | Events | Append numbered events to the SSH user's `/var/lib/shipdeck/users/<user>/state.db`; read a page after a cursor, or a project's newest page. |
 | Cleanup | Remove exactly the paths `work/get` reported, only after the user approves them. |
-| Setup | Guided one-time preparation: packages, project folder, and a checked sudoers rule. It is optional and no longer required for the agent. |
 
 The engine still contains the older SSH command paths, but a connection now
 fails when agent preparation fails. A plain SSH connection is not used to bypass
@@ -129,11 +128,10 @@ Remote code execution is the risk to design out, not a feature to add.
   users are preserved.
 - App archives must remain inside their intended release. The agent keeps the
   path, archive, symlink, mode, entry and size checks under root.
-- `shipdeck.yaml` server commands remain the one shell exception, because their
-  contract is a shell line. They run as the deploy user.
-- Guided setup offers full sudo or only the commands shipdeck runs. It never
-  widens access without that explicit choice. The sudo password travels on
-  stdin and is never saved.
+- Your server commands from the deploy file remain the one shell exception,
+  because their contract is a shell line. They run as the deploy user.
+- shipdeck never asks for a sudo password and never changes the server's sudo
+  rules. The account must already be root or have password-free sudo.
 - An interrupted upload is bounded: a dead receiver cannot make the engine wait
   forever.
 - Interrupted files stay until the user runs `shipdeck work --cleanup` or the
@@ -148,7 +146,7 @@ to run unless the same connection holds the lock.
 
 An upload ticket is tied to the lock token. The receiver refuses it when the
 lock is free or belongs to another operation, and re-checks while bytes arrive.
-Every `shipdeck.yaml` server command writes `.shipdeck.command` with its shell
+Every server command from the deploy file writes `.shipdeck.command` with its shell
 PID and a token. A new operation refuses while that command is alive, so an
 agent disconnect cannot let a second deploy overlap a command that is still
 running. A stale lease is removed after its process is gone.
@@ -176,7 +174,7 @@ switch or restart with no health pass after it. It does not guess.
 | p3a3 | Files, natively | built |
 | p3a4 | Final activation and interrupted-work inspection | built |
 | p3b1 | `state.db`: every event, numbered | built |
-| p3c1 | Guided setup from the app | built |
+| p3c1 | Guided setup from the app | removed on 2026-11-12 |
 | p3c2 | Server facts in CLI and TUI | built |
 | p3d1 | Agent root access and execution identity | built |
 

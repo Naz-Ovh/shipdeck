@@ -17,14 +17,11 @@ of these and a deploy fails on someone's server, or opens a hole.
   shell, after the variables the login shell's startup files export
   (`ssh::shell_env`, off with `ssh.shell_env: false` or `--no-shell-env`).
 
-## Sudo: a contract with every installed server
+## Sudo: one rule
 
-- The sudo commands in `remote::sudo_commands` and
-  `remote::control_commands` are a contract with the sudoers line people
-  install. Changing one breaks every existing server, and `server-setup.sh`
-  must change with it (`setup_test.rs` checks they match).
-- Preflight requires all of `sudo_commands`, so a command a deploy can do
-  without goes in `control_commands`, and older servers keep deploying.
-- `scripts/server-setup.sh` is public and runs as root through
-  `curl | bash`, pinned to a release tag. It validates every argument before
-  doing anything; keep it that way, and tag every release (`v<version>`).
+- The SSH user is root, or `sudo -n -- sh -c 'id -u'` answers `0` (full
+  password-free sudo). `agent::layout::sudo_prefix` checks it once, when the
+  agent starts, and its error says how to grant it.
+- After that check, a command that needs root is run with `sudo -n` (the
+  `Server::sudo` prefix, empty for root). There is no per-command sudo rule to
+  keep in step, and no setup script.

@@ -26,13 +26,11 @@ pub struct Facts {
     /// The service's state: `systemctl is-active` output, or PM2's state
     /// in the same words.
     pub active: String,
-    /// `systemctl is-active` for `service.name`, whichever the manager: a
+    /// `systemctl is-active` for the process name, whichever the manager: a
     /// unit still running holds the app's port when moving to PM2.
     pub systemd: String,
     /// `pm2 -v` output, with PM2 as the manager.
     pub pm2_version: Option<String>,
-    /// The commands the user may not run with sudo (never any for root).
-    pub sudo_missing: Vec<String>,
     /// Each program asked for, with where `command -v` found it.
     pub tools: Vec<(String, Option<String>)>,
 }
@@ -60,26 +58,12 @@ impl Server {
     /// # Errors
     /// Returns an error when the server cannot be inspected.
     pub async fn facts(&self, tools: &[String]) -> Result<Facts> {
-        // Root runs them without sudo.
-        let commands = if self.is_root() {
-            Vec::new()
-        } else {
-            self.sudo_commands()
-        };
         let mut lookups = String::new();
         for tool in tools {
             let q = sh_quote(tool);
             let _ = writeln!(
                 lookups,
                 "printf 'tool=%s:%s\\n' {q} \"$(command -v {q} 2>/dev/null)\""
-            );
-        }
-        let mut checks = String::new();
-        for c in &commands {
-            let q = sh_quote(c);
-            let _ = writeln!(
-                checks,
-                "if sudo -n -l {c} >/dev/null 2>&1; then echo sudo_ok={q}; else echo sudo_missing={q}; fi"
             );
         }
         let script = format!(
@@ -93,7 +77,7 @@ echo \"free_kb=$(df -Pk \"$p\" | awk 'NR==2 {{print $4}}')\"
 echo \"current=$(readlink \"$dir/current\" 2>/dev/null)\"
 echo \"manifest=$(tr -d '\\n' 2>/dev/null < \"$dir/current/.shipdeck/release.json\")\"
 echo \"active=$(systemctl is-active {svc} 2>&1 | head -n1)\"
-{pm2}{lookups}{checks}",
+{pm2}{lookups}",
             dir = self.q_dir(),
             svc = self.q_service(),
             pm2 = if self.manager_kind() == Some(ManagerKind::Pm2) {
@@ -136,11 +120,6 @@ echo \"active=$(systemctl is-active {svc} 2>&1 | head -n1)\"
             active,
             systemd,
             pm2_version: (self.manager_kind() == Some(ManagerKind::Pm2)).then(|| get("pm2")),
-            sudo_missing: values
-                .iter()
-                .filter(|(k, _)| *k == "sudo_missing")
-                .map(|(_, v)| v.to_string())
-                .collect(),
             tools: tools
                 .iter()
                 .map(|tool| {

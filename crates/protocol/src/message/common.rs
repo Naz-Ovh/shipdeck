@@ -165,10 +165,10 @@ fn port() -> u16 {
     22
 }
 
-/// One mistake in a `shipdeck.yaml`, at its line and column.
+/// One mistake in a config file, at its line and column.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Problem {
-    /// The `shipdeck.yaml` path, as it was opened.
+    /// The config file's path, as it was opened.
     pub file: String,
     pub line: u32,
     pub column: u32,

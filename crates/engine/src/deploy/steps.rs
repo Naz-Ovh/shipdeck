@@ -73,15 +73,6 @@ impl Step {
             Self::Failed => "failed",
         }
     }
-
-    /// Whether a failure here needs a rollback.
-    #[must_use]
-    pub fn needs_rollback(self) -> bool {
-        matches!(
-            self,
-            Self::Switch | Self::Restart | Self::Nginx | Self::Health
-        )
-    }
 }
 
 /// The steps a deploy goes through.

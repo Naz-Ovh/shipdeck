@@ -1,5 +1,5 @@
-//! Where and as whom to log in: `shipdeck.yaml`'s `ssh` block with
-//! `~/.ssh/config` applied, so `"host": "prod"` works like `ssh prod`.
+//! Where and as whom to log in: the deploy's `server.ssh` with
+//! `~/.ssh/config` applied, so `host: prod` works like `ssh prod`.
 
 use std::path::PathBuf;
 
@@ -10,7 +10,7 @@ use crate::config::{Port, SshTarget};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Endpoint {
-    /// `ssh.host` as written in shipdeck.yaml: an alias or a real address.
+    /// `server.ssh.host` as given: an alias or a real address.
     pub name: String,
     /// The address to connect to: `HostName` for an alias, else `name`.
     pub host: String,
@@ -19,14 +19,14 @@ pub struct Endpoint {
     /// `IdentityFile` from `~/.ssh/config`, used when no `--key-file` or
     /// `--password` is given.
     pub identity: Option<PathBuf>,
-    /// `User` from `~/.ssh/config`, which `shipdeck.yaml` may have overridden.
+    /// `User` from `~/.ssh/config`, which the deploy may have overridden.
     pub config_user: Option<String>,
-    /// `ssh.shell_env`: commands get the login shell's environment.
+    /// `server.ssh.shell_env`: commands get the login shell's environment.
     pub shell_env: bool,
 }
 
 impl Endpoint {
-    /// Applies `~/.ssh/config` to `target`. Values in shipdeck.yaml win.
+    /// Applies `~/.ssh/config` to `target`. Values the deploy gives win.
     ///
     /// # Errors
     ///
@@ -37,7 +37,7 @@ impl Endpoint {
     }
 
     /// Builds the endpoint from the deploy target and its `~/.ssh/config`
-    /// entry; values in shipdeck.yaml win.
+    /// entry; values the deploy gives win.
     ///
     /// # Errors
     ///

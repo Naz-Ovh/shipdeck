@@ -43,17 +43,6 @@ fn a_rollback_puts_the_target_first() {
 }
 
 #[test]
-fn only_activation_failures_need_a_rollback() {
-    assert!(Step::Switch.needs_rollback());
-    assert!(Step::Restart.needs_rollback());
-    assert!(Step::Nginx.needs_rollback());
-    assert!(Step::Health.needs_rollback());
-    assert!(!Step::Build.needs_rollback());
-    assert!(!Step::Setup.needs_rollback());
-    assert!(!Step::Done.needs_rollback());
-}
-
-#[test]
 fn commands_are_release_first_then_apps_in_name_order() {
     use crate::config::load::parse_deploy;
     use crate::ssh::Endpoint;

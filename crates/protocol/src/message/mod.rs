@@ -30,9 +30,9 @@ pub use request::{
     ConnectionClose, DeployStart, Done, EventsRead, EventsReadResult, Initialize, InitializeResult,
     LogsFollow, LogsFollowResult, LogsStop, OperationStarted, ReleaseContents,
     ReleaseContentsResult, ReleaseReadFile, ReleaseReadFileResult, ReleasesList,
-    ReleasesListResult, RollbackStart, ServerInfoGet, ServerSetup, ServiceControl, SetupAccess,
-    SetupReport, SshOverride, StatusGet, StatusGetResult, WorkCleanup, WorkCleanupResult, WorkGet,
-    WorkReport, WorkspaceOpen, WorkspaceOpenResult,
+    ReleasesListResult, RollbackStart, ServerInfoGet, ServiceControl, SshOverride, StatusGet,
+    StatusGetResult, WorkCleanup, WorkCleanupResult, WorkGet, WorkReport, WorkspaceOpen,
+    WorkspaceOpenResult,
 };
 
 #[cfg(test)]

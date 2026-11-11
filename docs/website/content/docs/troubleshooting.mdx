@@ -70,9 +70,10 @@ panel when they happen during a deploy.
     The server does not accept that key for that user. Add the public key to
     `~/.ssh/authorized_keys` on the server.
   </Accordion>
-  <Accordion title="<user> may not run: sudo <command>">
-    The sudo rule is missing or older than this shipdeck. Run `shipdeck setup`, or
-    scripts/server-setup.sh as root on the server. See
+  <Accordion title="<user> cannot become root without a password">
+    shipdeck needs root to install and update its agent. Use the root user, or give the user
+    full password-free sudo. As root on the server:
+    `echo '<user> ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/<user>`, then `visudo -c`. sudo skips a file whose name has a dot, so write `john.doe` as `john_doe` in the file name. See
     [Server access](/docs/guides/server-access).
   </Accordion>
 </Accordions>
@@ -85,7 +86,7 @@ panel when they happen during a deploy.
     checked.
   </Accordion>
   <Accordion title="<user> cannot create <dir>, and has no sudo without a password">
-    The deploy folder does not exist and the user cannot make it. Run `shipdeck setup`, or create
+    The deploy folder does not exist and the user cannot make it. Create
     it by hand: `sudo install -d -o <user> <dir>`.
   </Accordion>
   <Accordion title="<user> cannot write to <dir>">

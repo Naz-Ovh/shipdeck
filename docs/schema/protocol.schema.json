@@ -380,7 +380,7 @@
       "type": "object"
     },
     "AgentLinkShared": {
-      "description": "`agent/link_shared`: link service.shared folders into a release.",
+      "description": "`agent/link_shared`: link the `shared` folders into a release.",
       "properties": {
         "release": {
           "type": "string"
@@ -990,7 +990,7 @@
               "type": "null"
             }
           ],
-          "description": "What a failure after the switch does; overrides `pipeline.failed`."
+          "description": "What a failure after the switch does; overrides `release.steps.rollback.mode`."
         }
       },
       "required": [
@@ -1799,7 +1799,7 @@
       ]
     },
     "Problem": {
-      "description": "One mistake in a `shipdeck.yaml`, at its line and column.",
+      "description": "One mistake in a config file, at its line and column.",
       "properties": {
         "column": {
           "format": "uint32",
@@ -1807,7 +1807,7 @@
           "type": "integer"
         },
         "file": {
-          "description": "The `shipdeck.yaml` path, as it was opened.",
+          "description": "The config file's path, as it was opened.",
           "type": "string"
         },
         "hint": {
@@ -2240,30 +2240,6 @@
       "title": "ServerInfoGet",
       "type": "object"
     },
-    "ServerSetup": {
-      "description": "`server/setup`: prepare a server once, from the app.",
-      "properties": {
-        "access": {
-          "$ref": "#/definitions/SetupAccess"
-        },
-        "deployable": {
-          "type": "string"
-        },
-        "sudo_password": {
-          "description": "The user's sudo password, for this run only. It is never saved.",
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "deployable",
-        "access"
-      ],
-      "title": "ServerSetup",
-      "type": "object"
-    },
     "ServiceControl": {
       "description": "`service/control`: start, stop or restart the service.",
       "properties": {
@@ -2279,63 +2255,6 @@
         "action"
       ],
       "title": "ServiceControl",
-      "type": "object"
-    },
-    "SetupAccess": {
-      "description": "What guided setup may grant on the server.",
-      "oneOf": [
-        {
-          "const": "full",
-          "description": "Password-free sudo for every command.",
-          "type": "string"
-        },
-        {
-          "const": "commands",
-          "description": "Password-free sudo for exactly the commands shipdeck runs.",
-          "type": "string"
-        }
-      ],
-      "title": "SetupAccess"
-    },
-    "SetupReport": {
-      "description": "What guided setup did.",
-      "properties": {
-        "access": {
-          "description": "`root`, `full sudo` or `commands`.",
-          "type": "string"
-        },
-        "dir": {
-          "type": "string"
-        },
-        "installed": {
-          "default": [],
-          "description": "Packages this run installed.",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "notes": {
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "os": {
-          "type": "string"
-        },
-        "user": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "os",
-        "user",
-        "dir",
-        "access"
-      ],
-      "title": "SetupReport",
       "type": "object"
     },
     "SshOverride": {

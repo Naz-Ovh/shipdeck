@@ -6,7 +6,7 @@ use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
-use crate::config::{DeployFile, FileProblems, ManagerKind, parse_deploy};
+use crate::config::{FileProblems, ManagerKind, parse_deploy};
 
 /// The `.env` every preset ships; it starts empty and stays out of git.
 const ENV_FILE: &str = ".env";
@@ -465,18 +465,6 @@ pub fn write(root: &Path, name: &str, yaml: &str) -> Result<Vec<PathBuf>> {
         written.push(path);
     }
     Ok(written)
-}
-
-/// The parsed deploy file, for callers that want it.
-///
-/// # Errors
-/// Returns every problem in the text.
-pub fn deploy_file(yaml: &str) -> Result<DeployFile, FileProblems> {
-    parse_deploy(yaml).map_err(|problems| FileProblems {
-        path: PathBuf::from(DEPLOY_FILE),
-        source: Some(yaml.to_string()),
-        problems,
-    })
 }
 
 #[cfg(test)]

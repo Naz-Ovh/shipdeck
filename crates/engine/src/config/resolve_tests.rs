@@ -118,7 +118,7 @@ fn the_in_release_start_is_the_default_binary() {
         "    binary: target/release/shop\n    process: { systemd: {} }",
     );
     let deployment = deployment(&yaml);
-    assert_eq!(deployment.binary_name("web").as_deref(), Some("shop"));
+    assert_eq!(deployment.binary_place("web").as_deref(), Some("shop"));
     assert_eq!(
         deployment.start("web"),
         Some((Program::InRelease("shop".into()), String::new()))
@@ -134,7 +134,6 @@ fn a_binary_with_to_sets_its_place_and_the_default_start() {
         )
         .replace("start: node dist/main.js, ", "");
     let mapped = deployment(&yaml);
-    assert_eq!(mapped.binary_name("web").as_deref(), Some("shop"));
     assert_eq!(mapped.binary_place("web").as_deref(), Some("bin/shop"));
     assert_eq!(
         mapped.start("web"),
@@ -160,7 +159,6 @@ fn a_binary_with_to_sets_its_place_and_the_default_start() {
         )
         .replace("start: node dist/main.js, ", "");
     let bare = deployment(&bare);
-    assert_eq!(bare.binary_name("web").as_deref(), Some("shop"));
     assert_eq!(bare.binary_place("web").as_deref(), Some("shop"));
     assert_eq!(
         bare.start("web"),

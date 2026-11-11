@@ -24,22 +24,12 @@ pub mod code {
 
     /// The project named is not in the workspace.
     pub const UNKNOWN_DEPLOYABLE: i32 = -32001;
-    /// No such release on the server.
-    pub const UNKNOWN_RELEASE: i32 = -32002;
-    /// The server is not connected.
-    pub const NO_CONNECTION: i32 = -32003;
-    /// Login or the question was cancelled.
-    pub const CANCELLED: i32 = -32004;
-    /// A new host key was not trusted.
-    pub const HOST_KEY_REFUSED: i32 = -32005;
     /// Another operation is already running on it.
     pub const BUSY: i32 = -32006;
     /// `workspace/open` has not run yet.
     pub const WORKSPACE_NOT_OPEN: i32 = -32007;
     /// The two sides speak different protocol versions.
     pub const PROTOCOL_VERSION: i32 = -32008;
-    /// The engine is closing; it takes no new work.
-    pub const SHUTTING_DOWN: i32 = -32009;
     /// The deploy is listed, but cannot run: a variable it names is not set.
     pub const DEPLOYABLE_UNAVAILABLE: i32 = -32010;
 }

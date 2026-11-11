@@ -643,7 +643,6 @@ Still to decide before building it:
 - How `health` checks every copy.
 - How `systemd.template` works with instances. It must then be a template
   unit.
-- The sudo rules in `scripts/server-setup.sh` for `<process>@` units.
 - oxmgr reads an [oxfile](https://github.com/Vladimir-Urik/OxMgr) and applies
   it with `oxmgr apply`.
 
@@ -732,8 +731,8 @@ certificate exists for every domain?
   The domain's DNS must already point at the server.
 - **Every other deploy:** nothing is issued.
 - **Renewal** is not a deploy's job. A timer on the server renews
-  certificates. `scripts/server-setup.sh` installs the certificate tool and
-  the timer; a deploy never installs software.
+  certificates. The server owner installs the certificate tool and the
+  timer; a deploy never installs software.
 - **Rollback** never touches certificates. They are server state, like
   `shared/`, and are never in a release or a backup.
 - **If getting a certificate fails**, the app keeps its plain-HTTP config.
@@ -897,9 +896,9 @@ missing patterns, and exits with 1.
 | `pipeline.backup.files.deployed` | Removed: a backup always holds what was uploaded |
 | Rollback to a backup: unpack, set up, switch | Every step after upload, as for a fresh upload |
 
-Server setup: the sudo rule in `scripts/server-setup.sh` installs
-`current/<service>.service`. It becomes `current/.shipdeck/<service>.service`,
-so each server runs the setup script once more.
+The unit file is now installed from `current/.shipdeck/<service>.service`
+instead of `current/<service>.service`. A deploy does this by itself; no server
+preparation is needed.
 
 ## Open questions
 

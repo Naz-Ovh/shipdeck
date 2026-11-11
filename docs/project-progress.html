@@ -236,13 +236,12 @@
     <aside class="next">
       <h2>Up next</h2>
       <ol>
+        <li>Server setup is removed, on your decision of 2026-11-12 (<a href="#p3c1">p3c1</a>). The SSH user must be root, or have full <code>NOPASSWD: ALL</code> sudo. Shipdeck checks this on connect and says how to grant it. Try it on a real server, then say yes or what to change.</li>
         <li>Server details can come from <code>${NAME}</code> in the deploy file, a <code>.env</code> file, or <code>-H</code>, <code>-P</code>, <code>-U</code> for one deploy; <code>--key</code> is now <code>--key-file</code> (<a href="#p0c8">p0c8</a>). Try it on a real server, then say yes or what to change.</li>
         <li>Config format 2 is built: a root file plus one deploy per deploy (a file or written in place), twelve steps, <code>.shipdeck/</code> in each release, <code>shipdeck tree</code>, and <code>binary</code> with <code>{ path, to }</code> (<a href="#p0c7">p0c7</a>). The old format is refused. Nginx and oxmgr are parsed and stop a deploy at preflight.</li>
         <li>Owner: run the Podman SSH suite for config format 2 (<code>docs/code/monorepo-ssh-tests.md</code>). It is rewritten but unrun here: this machine has no container and no <code>sshd</code>.</li>
         <li>Monorepo deployment is built and verified through SSH in Podman: shared releases, saved app settings, rollback, controls, and logs (<a href="#p1d3">p1d3</a>). Nginx and oxmgr remain future work.</li>
-        <li>Static sites are built: <code>static:</code> next to <code>service:</code>, no process, and a stable path for nginx. Start with <a href="../docs/feature/static-site-mode.md">the plan</a> and <code>examples/static</code>; the owner has not tried it yet (<a href="#p4a0">p4a0</a>).</li>
-        <li>The config file is now <code>shipdeck.yaml</code> or <code>shipdeck.yml</code>; <code>deploy.yaml</code> is no longer read. Existing projects need one <code>mv</code> (<a href="#p0c6">p0c6</a>).</li>
-        <li>The privileged-agent policy is built and verified in Podman: root-owned <code>/opt/shipdeck/agent/v&lt;version&gt;/agent</code>, sudo launch, same-major compatibility, newer-major refusal, atomic installs, and explicit app users (<a href="#p3a1">p3a1</a>, <a href="#p3d1">p3d1</a>). This needs a major release because the install and execution contracts changed. The owner must choose and publish the version.</li>
+        <li>The privileged-agent policy is built and verified in Podman: root-owned <code>/var/lib/shipdeck/agent/v&lt;version&gt;/agent</code>, sudo launch, same-major compatibility, newer-major refusal, atomic installs, and explicit app users (<a href="#p3a1">p3a1</a>, <a href="#p3d1">p3d1</a>). This needs a major release because the install and execution contracts changed. The owner must choose and publish the version.</li>
         <li>Agent completion remains verified: all ten findings in the <a href="../docs/review/agent-completion-review.md">agent completion review</a> are fixed. A release still needs the four <code>shipdeck-agent-*</code> archives. Follow the <a href="../.agents/task/agent-completion.md">agent completion plan</a> and the handoff.</li>
         <li>Owner: answer the remaining decisions marked <b>waiting</b>: four for the desktop app (<a href="#p2d1">p2d1</a> to <a href="#p2d4">p2d4</a>).</li>
         <li>Owner: five changes since version 0.6.1 are built but not released. They are Windows support (<a href="#p0f2">p0f2</a>), release details with <kbd>D</kbd> (<a href="#p0b3">p0b3</a>), wrapped log lines (<a href="#p0e3">p0e3</a>), the check for Windows line endings (<a href="#p0c4">p0c4</a>), and the end of support for pre-0.6 releases (<a href="#p0c5">p0c5</a>). Try them, then say when to make a release.</li>
@@ -263,6 +262,7 @@
         <li><span class="s s-waiting">waiting</span> Waiting for your answer.</li>
         <li><span class="s s-planned">planned</span> Agreed, but not started.</li>
         <li><span class="s s-deferred">deferred</span> For later.</li>
+        <li><span class="s s-dropped">dropped</span> Removed on the owner's decision; the row stays as history.</li>
       </ul>
     </div>
 
@@ -271,7 +271,7 @@
 </div>
 
 <script>
-const UPDATED = "2026-11-11";
+const UPDATED = "2026-11-12";
 // Status rules: never start a "planned" step without the owner's go. Only the owner moves a step to "done".
 // Each phase: { n, title, short (for the road at a glance), c (its colour), blurb, subs }.
 // Each item: [id, title, status, date, body (HTML), references (optional)].
@@ -283,13 +283,13 @@ const PLAN = [
   { title: "Deploy", items: [
    ["p0a1", "Build on your PC, deploy over SSH", "done", "2026-10-14",
     "<p>shipdeck builds your project on your own PC. Then it sends the project to your server over SSH and runs it there as a systemd service.</p><p>Every deploy becomes a new release in its own folder. The live release is never changed in place.</p>",
-    "<code>crates/engine</code> · docs/plan.md"],
+    "<code>crates/engine</code>"],
    ["p0a2", "Any project: Rust, Go, Node.js, Python", "done", "2026-10-14",
     "<p>One file, <code>shipdeck.yaml</code>, says what to build, what to send and how to start the project. You can send a binary, a folder of files, or both.</p><p>A binary is checked against the server's CPU and glibc before anything is sent. So a build that cannot run there stops early.</p>",
     "<code>examples/</code> · README.md"],
    ["p0a3", "Eleven steps, each with your own commands", "done", "2026-10-15",
     "<p>A deploy runs these steps in order: preflight, build, pack, upload, unpack, setup, backup, switch, restart, health and done. If something fails, a step called failed runs.</p><p>Most steps can run your own commands: on your PC, on the server, or both. For example, <code>npm ci --omit=dev</code> can run on the server before the new release goes live.</p>",
-    "<code>pipeline:</code> in shipdeck.yaml · docs/plan.md, “The deploy, step by step”"],
+    "<a href=\"../docs/feature/config-v2.md\">config format 2</a>, “Steps”"],
    ["p0a4", "Rollback when the health check fails", "done", "2026-10-14",
     "<p>After the switch, shipdeck checks that the new release is healthy. If it is not, shipdeck asks whether to roll back. With no answer in 30 seconds, it rolls back by itself.</p><p>With <code>rollback: auto</code>, it never asks.</p>",
     "<code>pipeline.failed.rollback</code>"],
@@ -306,7 +306,7 @@ const PLAN = [
   { title: "Releases and rollback", items: [
    ["p0b1", "Every release is kept; roll back to any of them", "done", "2026-10-14",
     "<p>Each deploy is kept. By default, 5 releases stay unpacked and 15 more are kept only as compressed backups: 20 versions in total.</p><p>You can roll back to any of them, from the Releases screen or with the <code>rollback</code> command. shipdeck refuses to roll back to a folder it did not name.</p>",
-    "<code>pipeline.backup.keep</code> · docs/plan.md, “Layout on the server”"],
+    "<code>release.steps.backup.keep</code> · <a href=\"../docs/feature/config-v2.md\">config format 2</a>, “Backups and rollback”"],
    ["p0b2", "A backup of each release", "done", "2026-10-15",
     "<p>After setup, each release is saved as one compressed file on the server. By default it holds only the files you shipped, not what setup made (like <code>node_modules</code>). So it is about the size of the upload.</p><p>Rolling back to an old release unpacks this file and runs setup again.</p>",
     "<code>pipeline.backup.files</code>"],
@@ -331,7 +331,7 @@ const PLAN = [
     "<p>Old formats from before version 0.6 are no longer read. The code no longer carries the old paths.</p><p>It is in the code, but not in a release yet.</p>",
     ""],
    ["p0c6", "shipdeck.yaml is the config file name", "built", "2026-11-09",
-    "<p>Discovery reads <code>shipdeck.yaml</code> or <code>shipdeck.yml</code>. <code>deploy.yaml</code> and <code>deploy.yml</code> are no longer read. <code>init</code>, the manual, docs and examples use the new name.</p><p>The JSON Schema file keeps its name, <code>deploy.schema.json</code>, because editors already point at it.</p>",
+    "<p>Discovery reads <code>shipdeck.yaml</code> or <code>shipdeck.yml</code>. <code>deploy.yaml</code> and <code>deploy.yml</code> are no longer read. <code>init</code>, the manual, docs and examples use the new name.</p><p>The JSON Schema file keeps its name, <code>deploy.schema.json</code>, because editors already point at it.</p><p>Replaced by <a href=\"#p0c7\">p0c7</a>: <code>shipdeck.yaml</code> is now the root file, and each deploy is a <code>deploy.yaml</code>.</p>",
     "<a href=\"../docs/website/content/docs/guides/upgrading.mdx\">upgrading guide</a> · <code>crates/engine/src/config</code>"],
   ]},
   { title: "Config format 2", items: [
@@ -349,9 +349,9 @@ const PLAN = [
    ["p0d2", "Server commands get your shell's variables", "done", "2026-10-15",
     "<p>Commands on the server first load the variables your login shell sets. So tools like <code>node</code> or <code>pm2</code> are found the same way as when you log in by hand. You can turn this off with <code>ssh.shell_env: false</code>.</p>",
     "<code>ssh::shell_env</code>"],
-   ["p0d3", "server-setup.sh: an optional deploy user", "done", "2026-10-15",
-    "<p>No server setup is needed: shipdeck deploys as whatever user you choose. If you want a separate user with only the rights one project needs, you run <code>server-setup.sh</code> by hand, as root.</p>",
-    "<code>scripts/server-setup.sh</code> · <code>crates/engine/src/setup</code>"],
+   ["p0d3", "server-setup.sh: an optional deploy user", "dropped", "2026-11-12",
+    "<p>Removed on the owner's decision on 2026-11-12, with every other server setup helper. The deploy user needs root or full password-free sudo; see <a href=\"#p3c1\">p3c1</a>.</p>",
+    ""],
   ]},
   { title: "Screens and scripts", items: [
    ["p0e1", "The terminal UI", "done", "2026-10-14",
@@ -359,7 +359,7 @@ const PLAN = [
     "<code>crates/tui</code>"],
    ["p0e2", "Vim-style commands: :logs, :restart, :stop, :start", "done", "2026-10-16",
     "<p>Type <kbd>:</kbd> on the Deployables screen, as in vim. <code>:logs</code> follows the project's log live. <code>:restart</code> and <code>:stop</code> ask first. <code>:start</code> starts the project.</p>",
-    "<code>remote::control_commands</code>"],
+    ""],
    ["p0e3", "Long log lines wrap", "built", "2026-10-18",
     "<p>Long log lines now wrap onto the next line, instead of being cut off.</p><p>It is in the code, but not in a release yet.</p>",
     ""],
@@ -433,7 +433,7 @@ const PLAN = [
     "<a href=\"code/protocol.md\">docs/code/protocol.md</a> · <code>apps/cli/src/engine.rs</code> · <code>apps/cli/src/console</code>"],
    ["p1d3", "Monorepo deployment through the engine, CLI and TUI", "built", "2026-11-07",
     "<p>Several apps share one verified release, one switch, backups and retention. Saved settings restore app additions, removals and process-manager changes. Global and app commands, status, logs and controls use the engine.</p><p>SSH tests in Podman cover mixed systemd and PM2 managers, external app files, shared data, unchanged content, backup rollback and failure recovery. The 302 workspace tests, strict Clippy checks, and documentation website build passed. Nginx and oxmgr stay deferred.</p>",
-    "docs/feature/monorepo-deploy.md · docs/code/monorepo-ssh-tests.md"],
+    "<a href=\"../docs/feature/config-v2.md\">config format 2</a>, “Apps” · docs/code/monorepo-ssh-tests.md"],
    ["p1d2", "The TUI uses the engine", "built", "2026-11-06",
     "<p>The terminal UI starts the engine as a separate process and asks it for everything: the service state, the releases, a release's files, the live log, a deploy or a rollback. Its questions arrive as messages and the dialogs answer them.</p><p>Every screen looks and works as before. Nothing in the app touches SSH or deploys anything itself any more.</p>",
     "<a href=\"code/protocol.md\">docs/code/protocol.md</a> · <code>crates/tui/src/pump.rs</code> · <code>apps/cli/src/engine.rs</code>"],
@@ -534,9 +534,9 @@ const PLAN = [
     "<a href=\"../docs/feature/agent.md\">feature: agent</a>"],
   ]},
   { title: "Server setup", items: [
-   ["p3c1", "Set up a server from the app, once", "built", "2026-11-08",
-    "<p>It asks for the sudo password on stdin, installs missing tools from the Linux's packages, creates the project folder, and installs a <code>visudo</code>-checked rule. <code>--access full</code> grants password-free sudo for every command; <code>--access commands</code> grants exactly what shipdeck runs. Root needs no rule.</p><p>Tested in Podman with a non-root user: a deploy without setup failed before touching the live release; guided setup worked in both access modes; the deploy then succeeded. Debian/Ubuntu and Fedora/RHEL are supported; another Linux is named and stopped. The agent installer and launch need root or full password-free sudo; a command-only rule is not enough.</p>",
-    "docs/plan.md, “Still open” · <a href=\"#p2a1\">p2a1</a> · <code>server-setup.sh</code>"],
+   ["p3c1", "Set up a server from the app, once", "dropped", "2026-11-12",
+    "<p>Removed on the owner's decision on 2026-11-12. There is no server setup at all now: no <code>shipdeck setup</code>, no <code>:setup</code>, and no <code>server-setup.sh</code>. The first connection installs the agent on its own.</p><p>Why: any SSH user may log in, root included, but the user must be able to become root without a password. That is <code>root</code>, or a user with full <code>NOPASSWD: ALL</code> sudo. Installing and updating the agent, and its file work, need root every time, so a sudo rule limited to some commands cannot work and is not supported. Shipdeck checks the access first and, when it fails, says how to grant it.</p>",
+    "<a href=\"#p2a1\">p2a1</a>"],
    ["p3c2", "Server facts in CLI and TUI", "built", "2026-11-08",
     "<p><code>shipdeck server-info</code> prints the Linux and kernel, CPU and cores, memory, the disk behind the project folder, uptime, agent version, and where common tools were found. The TUI shows the same facts in the selected deployable's <code>Server</code> section after connecting. Missing PATH is reported rather than guessed, and filesystem errors are errors.</p>",
     ""],
@@ -556,7 +556,7 @@ const PLAN = [
   { title: "nginx", items: [
    ["p4a0", "Static sites: files, no process", "built", "2026-11-08",
     "<p>A deploy can be a service, as before, or a static site. A static site has files and no process: no unit, no restart and no process logs. The release still switches <code>current</code>, and nginx serves <code>&lt;dir&gt;/current/&lt;root&gt;</code>.</p><p>Every deploy now names <code>dir</code> at the top level, and <code>static</code> takes only <code>root</code>. A monorepo app uses <code>static: {root}</code> inside its shared release. A deploy with neither target, or with both, is refused. <code>service.dir</code> and <code>static.dir</code> are refused, so there is one place for the folder. Relative paths accept <code>./</code>. The pack step stops when <code>root</code> is not in the release.</p><p>nginx config, domains and HTTPS are still the next step. This only gives static files a stable path to serve.</p>",
-    "<a href=\"../docs/feature/static-site-mode.md\">feature plan</a> · examples/static"],
+    "<a href=\"../docs/feature/config-v2.md\">config format 2</a>, “A static site” · examples/static"],
    ["p4a1", "A domain for each project", "planned", "",
     "<p>For example, <code>https://my-api.example.com</code>. nginx sends the traffic to the project's port. Each project gets one nginx config file, which you can read and extend.</p>",
     ""],

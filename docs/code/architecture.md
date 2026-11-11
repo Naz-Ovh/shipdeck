@@ -12,8 +12,7 @@ workspace: the engine does the work, the frontends show what it reports.
   the fingerprint and the receipt, tar.zst, the unit and PM2 file), `ssh`
   (sessions, login, host keys, `~/.ssh/config` aliases), `remote` (server
   scripts; the backup and which files go in it; the delta and its check at
-  upload; the process by hand), `release` (ids, release.json), `setup` (the
-  server-setup.sh URL), `deploy` (one pipeline, split by step: preflight,
+  upload; the process by hand), `release` (ids, release.json), `deploy` (one pipeline, split by step: preflight,
   build, upload, backup, activation, rollback, `report` for progress), `tree`
   (the next release's paths), `init` (the presets and the project and deploy
   files), `rpc` (the engine process: the loop, the methods, and what it

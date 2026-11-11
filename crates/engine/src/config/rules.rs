@@ -104,7 +104,7 @@ impl Rules<'_> {
         {
             self.fail(
                 &["server", "ssh", "user"],
-                "`user` is not a user name",
+                "`server.ssh.user` is not a user name",
                 "not allowed",
                 "letters, digits, `.`, `_` and `-`",
             );

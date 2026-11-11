@@ -273,3 +273,7 @@ fn mode_string(metadata: &fs::Metadata) -> String {
 fn mode_string(metadata: &fs::Metadata) -> String {
     if metadata.is_dir() { "d755" } else { "-644" }.to_string()
 }
+
+#[cfg(test)]
+#[path = "inspect_release_tests.rs"]
+mod tests;

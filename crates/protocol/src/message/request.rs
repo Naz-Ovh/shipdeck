@@ -104,41 +104,6 @@ pub struct ServerInfoGet {
     pub deployable: String,
 }
 
-/// What guided setup may grant on the server.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SetupAccess {
-    /// Password-free sudo for every command.
-    Full,
-    /// Password-free sudo for exactly the commands shipdeck runs.
-    Commands,
-}
-
-/// `server/setup`: prepare a server once, from the app.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ServerSetup {
-    pub deployable: String,
-    pub access: SetupAccess,
-    /// The user's sudo password, for this run only. It is never saved.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sudo_password: Option<String>,
-}
-
-/// What guided setup did.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct SetupReport {
-    pub os: String,
-    pub user: String,
-    pub dir: String,
-    /// `root`, `full sudo` or `commands`.
-    pub access: String,
-    /// Packages this run installed.
-    #[serde(default)]
-    pub installed: Vec<String>,
-    #[serde(default)]
-    pub notes: Vec<String>,
-}
-
 /// `work/get`: the live release, unfinished files, and recent events.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkGet {
@@ -290,7 +255,7 @@ pub struct LogsStop {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DeployStart {
     pub deployable: String,
-    /// What a failure after the switch does; overrides `pipeline.failed`.
+    /// What a failure after the switch does; overrides `release.steps.rollback.mode`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_failure: Option<OnFailure>,
 }

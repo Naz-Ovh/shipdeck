@@ -21,10 +21,9 @@ use crate::message::{
     OpRelease, OpStep, OperationStarted, Problem, ProjectLock, ReleaseContents,
     ReleaseContentsResult, ReleaseInfo, ReleaseName, ReleaseReadFile, ReleaseReadFileResult,
     ReleasesList, ReleasesListResult, RollbackStart, SecretAnswer, ServerFacts, ServerFactsRequest,
-    ServerInfoGet, ServerSetup, ServiceControl, SetupAccess, SetupReport, StatusGet,
-    StatusGetResult, SwitchRelease, UnpackRelease, UnpackResult, UploadPrepare, UploadReservation,
-    WorkCleanup, WorkCleanupResult, WorkGet, WorkInspection, WorkReport, WorkspaceOpen,
-    WorkspaceOpenResult,
+    ServerInfoGet, ServiceControl, StatusGet, StatusGetResult, SwitchRelease, UnpackRelease,
+    UnpackResult, UploadPrepare, UploadReservation, WorkCleanup, WorkCleanupResult, WorkGet,
+    WorkInspection, WorkReport, WorkspaceOpen, WorkspaceOpenResult,
 };
 
 /// The file in the shipdeck repository, published with each release.
@@ -91,9 +90,6 @@ fn agent_messages() -> Vec<(&'static str, Value)> {
         ("ServerFacts", schema_for::<ServerFacts>()),
         ("ServerFactsRequest", schema_for::<ServerFactsRequest>()),
         ("ServerInfoGet", schema_for::<ServerInfoGet>()),
-        ("ServerSetup", schema_for::<ServerSetup>()),
-        ("SetupAccess", schema_for::<SetupAccess>()),
-        ("SetupReport", schema_for::<SetupReport>()),
         ("WorkGet", schema_for::<WorkGet>()),
         ("WorkReport", schema_for::<WorkReport>()),
         ("WorkCleanup", schema_for::<WorkCleanup>()),

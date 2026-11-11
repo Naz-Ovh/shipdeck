@@ -1,6 +1,6 @@
 ---
 title: Upgrading
-description: Install a newer shipdeck, update each schema line, and renew the server's sudo rule when a release changes it.
+description: Install a newer shipdeck, update each schema line, and move to full password-free sudo.
 ---
 
 ## Install the new version
@@ -132,13 +132,18 @@ sudo rm -rf /opt/shipdeck ~/.shipdeck ~/.shipdeck-agent.log
 
 A server that mounts `/var` with `noexec` cannot run the agent from there.
 
-## Renew the sudo rule
+## The setup helpers are gone
 
-A release that changes the commands shipdeck runs as root needs `scripts/server-setup.sh`
-run once more as root on the server, or `shipdeck setup` from your PC. The release notes say
-when it is needed. A server set up before config format 2 needs it for the
-`.shipdeck/` unit path: units are now installed from
-`current/.shipdeck/<process>.service`.
+`shipdeck setup`, the TUI's `:setup` and `scripts/server-setup.sh` no longer exist.
+Shipdeck installs and updates its agent on the first connection, and that needs root.
+
+If you used `--access commands` or a sudo rule limited to some commands, give the
+SSH user full password-free sudo instead. See
+[Server access](/docs/guides/server-access). A user that is root, or already has
+`NOPASSWD: ALL`, needs no change.
+
+Units are installed from `current/.shipdeck/<process>.service`. A deploy does this by
+itself.
 
 ## Read the release notes
 

@@ -1,5 +1,56 @@
 # Handoff
 
+## Server setup removed — 2026-11-12
+
+Owner's rule: any SSH user may log in, root included, but it must become root
+with no password (root, or full `NOPASSWD: ALL` sudo). Limited sudo rules are
+not supported. All setup helpers are gone: `shipdeck setup` (`--access`,
+`--sudo-password`), the TUI's `:setup`, `scripts/server-setup.sh`, the
+`server/setup` protocol method, and the per-command sudo checks. The agent
+launch check (`agent/layout.rs`, `sudo -n -- sh -c 'id -u'`) is the one access
+check; its error gives the sudoers lines (a dot in the user becomes `_` in the
+file name, since sudo skips dotted names). Tracker rows `p3c1` and `p0d3` are
+`dropped`. `just verify` 471 passed; `just build-doc` passed. Not committed.
+The desktop mockup still shows sudo-rule samples.
+
+Owner's rule: until v1.0.0 the protocol may break; keep it generic
+(`docs/code/protocol.md`). So the ten unused typed helpers on
+`protocol::Connection` (`status_get` … `rollback_start`) and the five error
+codes never sent (`UNKNOWN_RELEASE`, `NO_CONNECTION`, `CANCELLED`,
+`HOST_KEY_REFUSED`, `SHUTTING_DOWN`) are removed; apps use `request(method, …)`.
+`Session::exec_input` (setup's sudo password on stdin) is removed too. The
+agent crate had no unused code.
+
+## Old docs and unused code purged — 2026-11-12
+
+Not committed yet. `just verify` passed (472 tests, 0 failed) and
+`just build-doc` passed.
+
+- **Deleted pages (format 1):** `docs/feature/deployment-config.md`,
+  `static-site-mode.md`, `monorepo-deploy.md`, `docs/plan.md`. The manual,
+  the website and `config-v2.md` cover each of their sections. Tracker rows
+  and `examples/monorepo/README.md` now link to `config-v2.md`.
+- **Orphan tests:** `build/build_test.rs` and `agent/inspect_release_tests.rs`
+  are wired in (one test moved to `run_command`, one to
+  `.shipdeck/release.json`). `rpc/session_test.rs` was an old copy of
+  `session_tests.rs` and is deleted. `init_test.rs` is deleted too, but its
+  checks that still apply are ported to `init_tests.rs`: preset names,
+  quoting, a bad value, name rules, `write` keeping files, `relative`, and the
+  field comments. The server user error now names `server.ssh.user`, as
+  the website says.
+- **Dead code removed:** `has_process`, `binary_name`, `release_health`,
+  `is_project_path`, `manager_label`, `init::deploy_file`, `EXTRA_ENV`,
+  `Step::needs_rollback` (its test went with it).
+- **Bug fixed:** the plain-SSH release list (no agent) read
+  `releases/<id>/release.json`; it is `.shipdeck/release.json` now.
+- **Old names fixed:** the lefthook version hook reads `examples/*/deploy.yaml`;
+  `shipdeck man`'s example key was `service.env`, which no longer exists;
+  config errors said `shipdeck.yaml` for any file; the website's screens page
+  shows the 12 steps and the real panel sections.
+- **Kept on purpose:** the typed `Connection` helpers in `crates/protocol`
+  with no callers (one per method, a client API), and the unused error codes
+  in `wire.rs` (part of the documented protocol).
+
 ## Config format 2 — 2026-11-11
 
 The config, the release layout and the deploy pipeline were rebuilt to the

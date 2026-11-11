@@ -1,4 +1,4 @@
-//! The deploy engine: reading `shipdeck.yaml`, building, packing, talking to
+//! The deploy engine: reading the config, building, packing, talking to
 //! the server over SSH, and the deploy and rollback flows. The apps only
 //! start a deploy and show what it reports.
 //!
@@ -14,6 +14,5 @@ pub mod init;
 pub mod release;
 pub mod remote;
 pub mod rpc;
-pub mod setup;
 pub mod ssh;
 pub mod tree;

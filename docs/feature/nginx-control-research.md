@@ -93,8 +93,8 @@ Keep routing generations and the last verified applied generation in server
 state. Check for manual changes before replacing a managed file. Conflicts need
 a clear report rather than silently overwriting the owner's edits.
 
-The exact shipdeck.yaml fields remain undecided. This research does not settle
-whether domains belong at deployment level, app level, or a separate route map.
+This research did not settle the config fields. They were settled later: see
+`nginx:` in [config-v2.md](config-v2.md#nginx-and-domains).
 
 ## Proposed update and recovery sequence
 

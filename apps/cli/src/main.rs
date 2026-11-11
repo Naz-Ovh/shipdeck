@@ -16,9 +16,8 @@ use shipdeck_engine::init::Preset;
 use shipdeck_protocol::message::DeployableInfo;
 
 use console::{Choices, Console};
-use naming::{Where, fail, problems, resolve_name, resolve_names, setup_access, setup_password};
+use naming::{Where, fail, problems, resolve_name, resolve_names};
 use shipdeck_protocol::message::common::OnFailure;
-use shipdeck_protocol::message::request::SetupAccess;
 
 mod console;
 mod engine;
@@ -165,20 +164,6 @@ enum ServerCommand {
         #[command(flatten)]
         ssh: SshArgs,
     },
-    /// Prepare a server once: packages, the project folder, and sudo access
-    Setup {
-        /// The deploy: a name from the root file, or a .yaml/.yml file
-        #[arg(value_name = "DEPLOY")]
-        name: Option<Target>,
-        /// Password-free sudo for every command, or only the ones shipdeck runs
-        #[arg(long, value_enum)]
-        access: Option<AccessArg>,
-        /// The sudo password for this run; `SHIPDECK_SUDO_PASSWORD` keeps it out of history
-        #[arg(long, value_name = "PASSWORD")]
-        sudo_password: Option<String>,
-        #[command(flatten)]
-        ssh: SshArgs,
-    },
     /// Print every path the next release will hold; never connects to the server
     Tree {
         /// The deploy: a name from the root file, or a .yaml/.yml file
@@ -224,24 +209,6 @@ struct InitArgs {
     /// Your source folder [default: the current folder]
     #[arg(long, value_name = "PATH")]
     project: Option<PathBuf>,
-}
-
-/// `--access`, as the flag parser knows it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum AccessArg {
-    /// Password-free sudo for every command
-    Full,
-    /// Password-free sudo for exactly the commands shipdeck runs
-    Commands,
-}
-
-impl From<AccessArg> for SetupAccess {
-    fn from(arg: AccessArg) -> Self {
-        match arg {
-            AccessArg::Full => SetupAccess::Full,
-            AccessArg::Commands => SetupAccess::Commands,
-        }
-    }
 }
 
 /// `--on-failure`, as the flag parser knows it.
@@ -364,17 +331,6 @@ async fn main() -> Result<ExitCode> {
     if !workspace.problems.is_empty() {
         return Ok(problems(&workspace.problems));
     }
-    let setup = match &command {
-        ServerCommand::Setup {
-            access,
-            sudo_password,
-            ..
-        } => Some((
-            setup_access(*access)?,
-            setup_password(sudo_password.clone(), &env)?,
-        )),
-        _ => None,
-    };
     let (on_failure, allow_unchanged) = match &command {
         ServerCommand::Deploy {
             on_failure,
@@ -397,7 +353,7 @@ async fn main() -> Result<ExitCode> {
         root: &root,
         root_file: &root_file,
     };
-    let code = run_command(&mut console, command, &names, &where_, setup).await;
+    let code = run_command(&mut console, command, &names, &where_).await;
     console.close().await;
     let _ = child.wait().await;
     Ok(code)
@@ -441,7 +397,6 @@ fn named(command: &ServerCommand) -> Vec<Target> {
         | ServerCommand::ServerInfo { name, .. }
         | ServerCommand::Work { name, .. }
         | ServerCommand::Events { name, .. }
-        | ServerCommand::Setup { name, .. }
         | ServerCommand::Tree { name, .. } => name.iter().cloned().collect(),
     }
 }
@@ -472,8 +427,7 @@ fn ssh_args(command: &ServerCommand) -> &SshArgs {
         | ServerCommand::Releases { ssh, .. }
         | ServerCommand::ServerInfo { ssh, .. }
         | ServerCommand::Work { ssh, .. }
-        | ServerCommand::Events { ssh, .. }
-        | ServerCommand::Setup { ssh, .. } => ssh,
+        | ServerCommand::Events { ssh, .. } => ssh,
         ServerCommand::Tree { .. } => unreachable!("tree runs without the server"),
     }
 }
@@ -484,7 +438,6 @@ async fn run_command(
     command: ServerCommand,
     projects: &[DeployableInfo],
     where_: &Where<'_>,
-    setup: Option<(SetupAccess, Option<String>)>,
 ) -> ExitCode {
     match command {
         ServerCommand::Deploy { names, .. } => {
@@ -530,16 +483,6 @@ async fn run_command(
                 Err(err) => return fail(&err),
             };
             console.events(projects, &name, after, limit).await
-        }
-        ServerCommand::Setup { name, .. } => {
-            let name = match resolve_name(projects, where_, name.as_ref()) {
-                Ok(name) => name,
-                Err(err) => return fail(&err),
-            };
-            let Some((access, password)) = setup else {
-                unreachable!("setup answers were read above");
-            };
-            console.setup(projects, &name, access, password).await
         }
         ServerCommand::Tree { .. } => unreachable!("tree runs without the engine"),
     }

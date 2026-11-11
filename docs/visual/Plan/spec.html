@@ -491,7 +491,7 @@
         <h4>Never</h4>
         <ul class="never">
           <li>Does any work. It is only the agreement.</li>
-          <li>Renames or removes a message. Messages are only added.</li>
+          <li>Renames or removes a message after v1.0.0. Until then, in beta, a message may change.</li>
         </ul>
         <p class="when" style="margin-top:12px">Cargo makes sure the apps depend only on the protocol, never on the engine itself.</p>
       </article>
@@ -709,8 +709,8 @@
           <li><b>Only stdin and stdout.</b> No port is opened. So only the app that started the engine can talk to it, and no token is needed.</li>
           <li><b>stdout carries only messages.</b> Everything else goes to stderr. Every child process gets an empty stdin.</li>
           <li><b>Both sides ask.</b> The app sends requests (deploy, list the releases). The engine sends events (a step started, a log line) and its own questions (a password, a new host key, roll back or not).</li>
-          <li><b>Only added, never renamed.</b> <code>initialize</code> checks the protocol version and lists what this engine can do.</li>
-          <li><b>One deploy root per engine.</b> <code>workspace/open</code> picks it.</li>
+          <li><b>Generic, and stable from v1.0.0.</b> One method serves many cases where it can. In beta, a message may be renamed or removed; from v1.0.0, messages are only added. <code>initialize</code> checks the protocol version and lists what this engine can do.</li>
+          <li><b>One project folder per engine.</b> <code>workspace/open</code> picks it, with its root file.</li>
           <li><b>Easy in every language.</b> Fields are snake_case. A value with variants is one flat object with a <code>kind</code> field.</li>
           <li><b>Errors.</b> JSON-RPC's own codes for broken messages. shipdeck's codes start at -32001 and go down, listed once, never renumbered.</li>
           <li><b>Secrets stay in the pipe.</b> A password or passphrase is never written to a log.</li>
@@ -821,7 +821,7 @@ crates/                        <span class="c">the code the shipdeck command is 
 docs/                          <span class="c">plan.md, project-progress.html, visual/Plan/spec.html, website/</span>
 ├── schema/                    <span class="c">deploy.schema.json, protocol.schema.json: published with each release</span>
 └── code/  feature/            <span class="c">how it works, and how each feature works</span>
-scripts/server-setup.sh        <span class="c">a public URL pinned to each release tag</span></pre>
+</pre>
         <ul class="plain" style="margin-top:10px">
           <li><b>Why <code>apps/cli</code>:</b> a top-level <code>bin/</code> would sit next to the <code>bin/</code> and <code>obj/</code> folders that every .NET build makes. The package keeps its name, <code>shipdeck</code>, because dist names the release files after it.</li>
           <li><b>The move comes first</b> (<a href="../../project-progress.html#p1a2">p1a2</a>). <code>apps/cli</code> is at the same depth as <code>bin/shipdeck</code>, so no test path changes.</li>
@@ -918,11 +918,11 @@ scripts/server-setup.sh        <span class="c">a public URL pinned to each relea
           <thead><tr><th></th><th>No agent</th><th>On-demand agent</th><th>Always-on agent</th></tr></thead>
           <tbody>
             <tr class="grp"><td colspan="4">On the server</td></tr>
-            <tr><td>Setup</td><td><span class="ok">✓</span>Nothing to install.</td><td><span class="ok">✓</span>Nothing by hand. The first connection downloads it from GitHub. The account needs root or password-free sudo.</td><td><span class="no">✕</span>Install once as root, on every server.</td></tr>
+            <tr><td>Setup</td><td><span class="ok">✓</span>Nothing to install.</td><td><span class="ok">✓</span>Nothing by hand. The first connection downloads it from GitHub. The account needs root or full password-free sudo (<code>NOPASSWD: ALL</code>).</td><td><span class="no">✕</span>Install once as root, on every server.</td></tr>
             <tr><td>While you are away</td><td><span class="ok">✓</span>Nothing of ours runs.</td><td><span class="ok">✓</span>Nothing of ours, except jobs you started.</td><td><span class="mid">~</span>A root process, all the time.</td></tr>
             <tr><td>What can be attacked</td><td><span class="ok">✓</span>SSH only.</td><td><span class="ok">✓</span>SSH only.</td><td><span class="no">✕</span>SSH, plus a root program, plus a port if reached without SSH.</td></tr>
-            <tr><td>Root</td><td><span class="mid">~</span>sudo: a fixed list of commands.</td><td><span class="mid">~</span>The agent runs as root through sudo. App and PM2 commands use the service user.</td><td><span class="mid">~</span>Always root. So is any bug in it.</td></tr>
-            <tr><td>Locked-down servers</td><td><span class="ok">✓</span>Works wherever SSH and sh work.</td><td><span class="mid">~</span>Needs root or password-free sudo for the root-owned <code>/opt</code> install. 32-bit ARM needs its own build.</td><td><span class="no">✕</span>Needs root to install at all.</td></tr>
+            <tr><td>Root</td><td><span class="mid">~</span>sudo, command by command.</td><td><span class="mid">~</span>The agent runs as root through sudo. App and PM2 commands use the service user.</td><td><span class="mid">~</span>Always root. So is any bug in it.</td></tr>
+            <tr><td>Locked-down servers</td><td><span class="ok">✓</span>Works wherever SSH and sh work.</td><td><span class="mid">~</span>Needs root or full password-free sudo for the root-owned <code>/opt</code> install. 32-bit ARM needs its own build.</td><td><span class="no">✕</span>Needs root to install at all.</td></tr>
             <tr><td>Versions in step</td><td><span class="ok">✓</span>Nothing to keep in step.</td><td><span class="ok">✓</span>Same-major compatibility; <a href="../../feature/agent-version-policy.md">major upgrade and refusal rules</a>.</td><td><span class="no">✕</span>Every server's agent must be updated.</td></tr>
             <tr class="grp"><td colspan="4">How the work gets done</td></tr>
             <tr><td>Commands</td><td><span class="mid">~</span>Shell scripts in, text out.</td><td><span class="ok">✓</span>Typed requests and answers.</td><td><span class="ok">✓</span>Typed requests and answers.</td></tr>
@@ -994,9 +994,9 @@ scripts/server-setup.sh        <span class="c">a public URL pinned to each relea
         <div class="fhead"><h3>Which Linux</h3></div>
         <ul class="plain">
           <li>Plain deploys install nothing. They work on any Linux with systemd or PM2.</li>
-          <li>Guided setup installs what shipdeck itself needs (tar, zstd, coreutils, curl, sudo) from the Linux's own packages. What later features install (nginx, Docker) comes from the same package source.</li>
+          <li>There is no server setup. Plain deploys install nothing. What later features install (nginx, Docker) comes from the Linux's own package source.</li>
           <li>Recommended order: Debian and Ubuntu first, then Rocky, Alma and Fedora (<a href="../../project-progress.html#p4b1">p4b1</a>).</li>
-          <li>The agent reads <code>/etc/os-release</code>, and names a Linux it does not support yet, at setup.</li>
+          <li>The agent reads <code>/etc/os-release</code>, and names a Linux it does not support yet, when it first needs to install something.</li>
         </ul>
       </article>
 
@@ -1019,7 +1019,7 @@ scripts/server-setup.sh        <span class="c">a public URL pinned to each relea
           </tbody>
         </table>
         <ul class="plain" style="margin-top:10px">
-          <li><b>Built:</b> server commands load your login shell's variables first, and <code>:logs</code> follows a log live. Reading another unit's journal uses two exact sudo commands, kept in their own list, so a server set up before them still deploys.</li>
+          <li><b>Built:</b> server commands load your login shell's variables first, and <code>:logs</code> follows a log live.</li>
           <li><b>Planned:</b> a richer status line (for example “active · 4 instances · up 2h · 180 MB · 3% cpu”), and <code>shipdeck status</code> and <code>shipdeck logs</code> for scripts (<a href="../../project-progress.html#p1f1">p1f1</a>, <a href="../../project-progress.html#p1f2">p1f2</a>).</li>
         </ul>
       </article>
@@ -1030,9 +1030,8 @@ scripts/server-setup.sh        <span class="c">a public URL pinned to each relea
           <li>Every value that reaches a remote shell is checked or quoted first. The only exception: the <code>server</code> commands people write in a deploy file, which run as the deploy user.</li>
           <li>The agent never runs shell text that an app sends, except those same deploy-file commands.</li>
           <li>Nothing opens a port. SSH keys and <code>known_hosts</code> stay the only way in.</li>
-          <li>The agent's messages are a contract like the engine's: only added, and the version is checked when the engine connects.</li>
-          <li>Servers without the agent keep the sudo lines they have today. That contract does not change.</li>
-        </ul>
+          <li>The agent's messages follow the same rule as the engine's: stable from v1.0.0, and the version is checked when the engine connects.</li>
+                  </ul>
       </article>
 
     </div>

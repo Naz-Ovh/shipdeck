@@ -5,7 +5,6 @@ pub const SHUTDOWN: &str = "shutdown";
 pub const WORKSPACE_OPEN: &str = "workspace/open";
 pub const STATUS_GET: &str = "status/get";
 pub const SERVER_INFO: &str = "server/info";
-pub const SERVER_SETUP: &str = "server/setup";
 pub const WORK_GET: &str = "work/get";
 pub const WORK_CLEANUP: &str = "work/cleanup";
 pub const EVENTS_READ: &str = "events/read";

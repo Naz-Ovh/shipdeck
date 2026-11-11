@@ -45,7 +45,7 @@ overview:
     There are two ways to drive it, over the same engine:
     - the TUI, `shipdeck`: interactive, shows every step live and asks before anything risky;
     - headless commands for scripts, CI and agents: `deploy`, `rollback`, `releases`,
-      `server-info`, `work`, `events` and `setup`. They print plain lines, never wait for an
+      `server-info`, `work` and `events`. They print plain lines, never wait for an
       answer, and end with an exit code that says what happened.
     `shipdeck tree` prints what the next release will hold, without connecting anywhere.
 
@@ -60,8 +60,8 @@ quickstart:
     From nothing to a live app:
     1. Install shipdeck (see install) and log in to the server once by hand, so its host key is
        known: `ssh deploy@prod`.
-    2. The first time, prepare the server: either run scripts/server-setup.sh as root (see
-       server-setup), or let `shipdeck setup` do it (see cli.setup).
+    2. Make sure the SSH user is root, or has full password-free sudo (see permissions). There
+       is nothing else to prepare: the first connection installs the agent by itself.
     3. Write a root file and a deploy file, or let init do it:
          shipdeck init my-api --preset nodejs --host prod --manager systemd
        That writes shipdeck.yaml, deploy.yaml, an empty .env and a .gitignore.
@@ -194,7 +194,6 @@ cli:
       server-info [DEPLOY]    Linux, CPU, memory, disk, uptime and tools on the server
       work [DEPLOY]           what an interrupted operation left; --cleanup removes it
       events [DEPLOY]         the events saved on the server, oldest first
-      setup [DEPLOY]          guided one-time server preparation
       tree [DEPLOY]           every path of the next release; never connects
       init                    write a root file and a deploy file
       engine                  the protocol loop an app drives; not for people
@@ -230,14 +229,14 @@ cli.tui:
     - Releases: every release on the server, newest first. Enter rolls one back, D opens it.
     Keys on Deploys: up/down or j/k to move; Enter or d to deploy; r for releases; c connects or
     disconnects the server; s refreshes; x offers to remove unfinished files; `:` opens a command
-    line (:logs, :restart, :stop, :start, :setup).
+    line (:logs, :restart, :stop, :start).
     Keys on Operation: up/down, PageUp/PageDown, g/G for the log; r for releases; Esc back.
     Keys on Releases: up/down to move, Enter to roll back, D for the release details, r to
     refresh, Esc back.
     `q` quits; during an operation it asks first.
 
-    The TUI never prepares a server: guided setup is `shipdeck setup` or the `:setup` command
-    line. It asks for a password as a dialog, and the deploy waits for the answer.
+    The TUI never prepares a server. It asks for a password as a dialog when the login needs
+    one, and the deploy waits for the answer.
 
     What a deploy dialog says: the target, the process name, the build command, and what happens
     on a failure after the switch. A rollback dialog says whether the target comes back from a
@@ -342,24 +341,6 @@ cli.events:
 
     Event recording is best effort: a deploy never fails because an event could not be saved. A
     warning in the log says so when it happens.
-
-cli.setup:
-  see: [server-setup, permissions, server]
-  text: |
-    `shipdeck setup [DEPLOY]` prepares a server once, from your PC. It installs the packages
-    shipdeck needs, creates the deployment folder for the SSH user, and installs the sudo rule for
-    what shipdeck runs.
-
-    --access commands (the default when nobody can be asked) grants password-free sudo for exactly
-    the commands shipdeck runs. --access full grants it for everything. The sudo password is asked
-    once when sudo needs one, travels on stdin, and is never saved; SHIPDECK_SUDO_PASSWORD keeps it
-    out of history.
-
-    Debian, Ubuntu, Fedora and RHEL are supported. An unsupported Linux stops with its name.
-    Running it again changes nothing that is already in place and brings an older sudo rule up to
-    date.
-
-    The TUI's `:setup` runs the same thing and asks for the access and the password.
 
 cli.init:
   see: [presets, quickstart, cli.schema]
@@ -485,8 +466,8 @@ hosts:
     prints its fingerprint; if it is right, `--trust-new-host` (or `y` in the TUI) records it. A
     changed key for a known host is always refused, and shipdeck never continues past it.
 
-    `shipdeck setup` needs a connection that can become root: the account is root, or it has
-    password-free sudo. See permissions for the exact rights.
+    The connection must be able to become root: the account is root, or it has password-free
+    sudo. See permissions for the exact rights.
 
 shell-env:
   see: [hosts, config.commands, pm2]
@@ -1084,12 +1065,10 @@ service-control:
     The service can be stopped, started and restarted outside a deploy, from the TUI command line:
       :stop, :start, :restart    act on the deploy's processes (they ask first, except :start)
       :logs                      follows the process log of each app
-      :setup                     guided server setup
     A multi-app deploy acts on every process in it; logs are labelled with the app name.
 
     shipdeck takes the project lock for a control change, so it cannot overlap a deploy. With
-    systemd, stop, start, restart and the log need their own sudo rights (see permissions); a
-    server set up before them still deploys and only these ask you to run server-setup.sh again.
+    systemd, stop, start, restart and the log run as root through the agent (see permissions).
 
     A static app has no process to control and no process log; nginx keeps its own in
     /var/log/nginx.
@@ -1172,16 +1151,15 @@ pm2:
     preflight with "oxmgr is not built yet".
 
 server:
-  see: [permissions, server-setup, cli.server-info, releases]
+  see: [permissions, cli.server-info, releases]
   text: |
-    A Linux server reachable over SSH, nothing else. shipdeck installs no system package except
-    what guided setup adds: tar, zstd, coreutils, sudo, curl. The agent is a separate binary in
-    /var/lib/shipdeck/agent, prepared on every connection.
+    A Linux server reachable over SSH, nothing else. shipdeck installs no system package. The
+    agent is a separate binary in /var/lib/shipdeck/agent, installed on the first connection and
+    updated when needed.
 
     During a deploy it makes, under `server.dir`: releases/, backups/, shared/, and current as a
     symlink. The first deploy creates the folder if the user may, else with sudo, and hands it
-    back to the user. Nothing outside `server.dir` changes except /etc/systemd/system for units
-    and /etc/sudoers.d for the sudo rule.
+    back to the user. Nothing outside `server.dir` changes except /etc/systemd/system for units.
 
     Disk: a deploy needs room for the archive plus the unpacked release. Preflight refuses under
     100 MiB free and names the size a release needs when it can.
@@ -1193,59 +1171,24 @@ server:
     agent version.
 
 permissions:
-  see: [server-setup, cli.setup, systemd, pm2]
+  see: [systemd, pm2, server]
   text: |
-    shipdeck logs in as one user, and everything runs as that user except the few root commands
-    it must run. That account is root, or it has password-free sudo.
+    Any SSH user may log in, root included. The one need: the user can become root without a
+    password. That is the `root` account, or a user with full password-free sudo (NOPASSWD: ALL).
 
-    With systemd, these need root, for one process name <process> in <dir>:
-      systemctl daemon-reload
-      systemctl enable <process>
-      systemctl restart <process>
-      install -m 0644 <dir>/current/.shipdeck/<process>.service
-        /etc/systemd/system/<process>.service
-      journalctl -u <process> -n 30 --no-pager
-    and, for the TUI's controls and log:
-      systemctl stop <process>
-      systemctl start <process>
-      systemctl disable <process>
-      journalctl -u <process> -f -n 200 --no-pager
-    Preflight requires the first group; the second is only needed by the controls, so a server set
-    up before them still deploys.
+    The reason: shipdeck installs and updates its agent on every server, and the agent does its
+    file work as root. A sudo rule limited to some commands is not supported.
 
-    With PM2 there is no sudo rule: the app runs as the SSH user, and guided setup starts that
-    user's PM2 at boot instead.
+    To give a user full password-free sudo, run this as root on the server (here the user is
+    `deploy`):
+      echo 'deploy ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/deploy
+      chmod 0440 /etc/sudoers.d/deploy
+      visudo -c
 
-    `shipdeck setup --access commands` installs exactly the commands above, checked by visudo
-    first; `--access full` grants password-free sudo for everything. Both are one file in
-    /etc/sudoers.d. Running setup again updates the rule without changing anything else.
+    shipdeck checks this before anything else, with `sudo -n`. A user that fails the check stops
+    the run with this text and the same example. Nothing is changed on the server first.
 
-    The agent needs root or password-free sudo to install and start, since it lives in
-    /var/lib/shipdeck/agent. A connection that cannot become root stops with the account and the
-    missing right; shipdeck does not run operations around it.
-
-server-setup:
-  see: [permissions, cli.setup, server]
-  text: |
-    scripts/server-setup.sh is the one-time root script, for servers prepared by hand:
-      curl -fsSL https://raw.githubusercontent.com/Naz-Ovh/shipdeck/<tag>/scripts/server-setup.sh \
-        | bash -s -- --user deploy --dir /opt/my-api --service my-api --key 'ssh-ed25519 AAAA...'
-    Fill in your own values: the SSH user, server.dir and the process name from the deploy file,
-    and your public key. Not root? Put `sudo` before `bash`.
-
-    It creates the deploy user, authorizes its key, creates the deployment folder owned by that
-    user, and installs the sudo rule shipdeck needs, checked by visudo first. With
-    --manager pm2 there is no sudo rule: it starts that user's PM2 at boot instead.
-
-    Every argument is validated before anything happens: names use letters, digits, `.`, `_` and
-    `-`; --dir is absolute with no `..`; --service is the name without .service. Running it again
-    changes nothing in place and brings an older rule up to date.
-
-    The script at a tag installs units from current/.shipdeck/<service>.service. A server
-    prepared before config format 2 needs it run once more.
-
-    `shipdeck setup` does the same work from your PC (see cli.setup); the script stays for the
-    servers prepared that way.
+    With PM2 the app runs as the SSH user; the agent still needs root to install itself.
 
 presets:
   see: [cli.init, examples]
@@ -1392,8 +1335,9 @@ troubleshooting:
     ✘ a deploy or rollback is already running
       shipdeck holds a project lock. Wait for the other run, or inspect it with `shipdeck work`.
 
-    ✘ <user> may not run <n> of the commands shipdeck needs as root
-      Run `shipdeck setup`, or scripts/server-setup.sh, as root on the server.
+    ✘ <user> cannot become root without a password
+      shipdeck needs root to install its agent. Use root, or give the user password-free sudo; see
+      permissions for the sudoers line.
 
     ✘ the server has no zstd; install it (apt install zstd, or dnf install zstd)
       Preflight names the package: tar, zstd and sha256sum are how releases are unpacked and

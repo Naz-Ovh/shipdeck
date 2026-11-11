@@ -1,4 +1,4 @@
-//! Globs for `pipeline.pack.files` and `pipeline.backup.files`, matched by the `fast-glob` crate, the
+//! Globs for `files`, `exclude` and the backup step's lists, matched by the `fast-glob` crate, the
 //! syntax of fast-glob and Tailwind: `*` and `?` stay inside one folder,
 //! `**` is zero or more folders, `[a-z]` and `[!x]`, `{js,ts}` (nested),
 //! and `\` escapes. Names starting with a dot match like any other.
@@ -15,7 +15,7 @@ use fast_glob::{ErrorKind, glob_match, validate};
 
 #[derive(Debug, Clone)]
 pub struct Pattern {
-    /// As written in shipdeck.yaml.
+    /// As written in the config.
     pub text: String,
     /// It started with `!`.
     pub negated: bool,

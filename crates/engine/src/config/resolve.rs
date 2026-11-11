@@ -5,11 +5,11 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use super::names::{file_name, split_args};
-use super::paths::{self, Form};
+use super::paths;
 use super::placeholders::{self, AppValues, Values};
 use super::types::{
-    App, AppHealthStep, DeployFile, FileEntry, HealthStep, Keep, KeepUp, Oxmgr, Pm2, Process,
-    RollbackMode, Systemd,
+    App, AppHealthStep, DeployFile, FileEntry, Keep, KeepUp, Oxmgr, Pm2, Process, RollbackMode,
+    Systemd,
 };
 use super::{Problem, ReleaseSteps};
 use crate::ssh::Endpoint;
@@ -135,12 +135,6 @@ impl Deployment {
             .map(|(name, _)| name.as_str())
     }
 
-    /// Whether every app serves files and none runs.
-    #[must_use]
-    pub fn has_process(&self) -> bool {
-        self.deploy.apps.values().any(|app| app.process.is_some())
-    }
-
     /// The release settings for the whole deploy.
     #[must_use]
     pub fn release(&self) -> &super::Release {
@@ -245,18 +239,6 @@ impl Deployment {
             FileEntry::To(mapped) => &mapped.path,
         };
         Some(paths::local(&self.project, &self.config_dir, written))
-    }
-
-    /// The binary's own file name, which is its place when `to` is absent.
-    #[must_use]
-    pub fn binary_name(&self, app: &str) -> Option<String> {
-        match self.binary(app)? {
-            FileEntry::Path(path) => Some(file_name(path)),
-            FileEntry::To(mapped) => Some(match &mapped.to {
-                Some(to) => file_name(to),
-                None => file_name(&mapped.path),
-            }),
-        }
     }
 
     /// Where the binary lands inside the app folder: `to`, or its file name.
@@ -380,12 +362,6 @@ impl Deployment {
         self.steps().health.timeout_secs
     }
 
-    /// The release's health commands.
-    #[must_use]
-    pub fn release_health(&self) -> &HealthStep {
-        &self.steps().health
-    }
-
     /// An app's health commands and URL.
     #[must_use]
     pub fn app_health(&self, app: &str) -> Option<&AppHealthStep> {
@@ -501,13 +477,6 @@ impl Deployment {
     ) -> anyhow::Result<String> {
         placeholders::expand(text, &self.values(release, version, app))
             .map_err(|why| anyhow::anyhow!("{why}"))
-    }
-
-    /// The files a form writes at its path from the project folder, if it is
-    /// written as a project path.
-    #[must_use]
-    pub fn is_project_path(text: &str) -> bool {
-        paths::form(text) == Form::Project
     }
 }
 

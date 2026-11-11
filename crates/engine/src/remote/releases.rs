@@ -287,7 +287,7 @@ for d in releases/*/; do
   [ -d \"$d\" ] || continue
   id=$(basename \"$d\")
   kb=$(du -sk \"$d\" 2>/dev/null | cut -f1)
-  js=$(tr -d '\\n\\t' < \"$d/release.json\" 2>/dev/null)
+  js=$(tr -d '\\n\\t' < \"$d.shipdeck/release.json\" 2>/dev/null)
   printf 'open\\t%s\\t%s\\t%s\\n' \"$id\" \"$kb\" \"$js\"
 done
 for f in backups/*.tar.zst; do

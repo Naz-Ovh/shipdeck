@@ -1,4 +1,4 @@
-use super::{binary_path, launch_command, list_script, probe_script, version_dir};
+use super::{access_message, binary_path, launch_command, list_script, probe_script, version_dir};
 
 #[test]
 fn versioned_paths_are_fixed_under_var_lib() {
@@ -73,4 +73,22 @@ fn the_upload_receiver_runs_with_root_and_the_same_identity() {
     assert!(command.contains("--receive"));
     assert!(command.contains("/tmp/.shipdeck-upload-token/pending"));
     assert!(!command.contains(">>"));
+}
+
+#[test]
+fn the_access_error_says_what_is_needed_and_how_to_grant_it() {
+    let message = access_message("deploy", "sudo: a password is required");
+    assert!(message.starts_with("deploy cannot become root without a password"));
+    assert!(message.contains("(sudo: a password is required)"));
+    assert!(message.contains("echo 'deploy ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/deploy"));
+    assert!(message.contains("visudo -c"));
+    assert!(!message.contains("setup"));
+    assert!(!access_message("deploy", "").contains("()"));
+}
+
+#[test]
+fn a_dotted_user_gets_a_sudoers_file_sudo_reads() {
+    let message = access_message("john.doe", "");
+    assert!(message.contains("echo 'john.doe ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/john_doe"));
+    assert!(message.contains("chmod 0440 /etc/sudoers.d/john_doe"));
 }

@@ -22,8 +22,8 @@ release. A missing agent is installed under `/var/lib/shipdeck/agent/v<version>/
 then started through sudo on an SSH channel.
 
 The agent uses stdin/stdout for requests and stderr for diagnostics. It opens no port and
-exits on disconnect. The account needs root or password-free sudo; a missing right stops the
-connection before anything changes.
+exits on disconnect. The account needs root or full password-free sudo; without it the connection
+stops before anything changes, and the error shows how to grant it.
 
 If preparation or the handshake fails, the connection stops. The engine does not use an
 incompatible agent or a plain SSH fallback to bypass the rules. Your configured server
@@ -79,7 +79,7 @@ and inspect services and the live release.
 
 The agent runs as root because it manages protected files, systemd, and system dependencies.
 App and PM2 commands use an explicit service user. Release files keep the deploy user's
-ownership. Guided setup changes privileges only through its access choice. There is no
+ownership. Shipdeck never changes the server's sudo rules. There is no
 detached worker to finish deployments after disconnect.
 
 nginx management and oxmgr are parsed and checked, but not built: a deploy that uses either

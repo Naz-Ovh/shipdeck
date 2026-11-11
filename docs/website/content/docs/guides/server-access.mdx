@@ -1,31 +1,55 @@
 ---
 title: Server access
-description: The SSH user and service permissions.
+description: Which SSH user shipdeck needs, and how to give it password-free sudo.
 ---
 
 Shipdeck logs in as `server.ssh.user`. That user must already exist and accept
-your key or password. The first connection prepares the agent, so the account
-must be root or have password-free sudo (`NOPASSWD`). The agent then runs as
-root from `/var/lib/shipdeck/agent/v<version>/agent`. App and PM2 commands still
-run as the configured user.
+your key or password. Any user may log in, root included.
 
-## Required permissions
+## The one rule
 
-- Root, or password-free sudo for the agent installer and its `sh` commands.
-  The installer writes only under `/var/lib/shipdeck/agent` and removes older agent
-  versions there. A rule limited to the five service commands cannot prepare or
-  start the agent; root or full password-free sudo is required.
-- Write to `server.dir`, or permission to create it.
-- For **systemd**, permission to install the unit, reload systemd, enable,
-  restart, stop, start, and inspect its journal. Removing a systemd process
-  from a later release also requires disabling its unit.
+The user must be able to become root **without a password**. That is either:
+
+- the `root` user, or
+- a user with full password-free sudo: `NOPASSWD: ALL`.
+
+**Why:** the first connection installs the agent, and later connections update it.
+The agent lives in `/var/lib/shipdeck/agent` and does its file work as root. Both
+need root every time. A sudo rule limited to some commands is not supported.
+
+There is no setup command and no setup script. The first connection installs the
+agent on its own.
+
+## Give a user password-free sudo
+
+Run this as root on the server. Here the user is `deploy`:
+
+```sh
+echo 'deploy ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/deploy
+chmod 0440 /etc/sudoers.d/deploy
+visudo -c
+```
+
+sudo skips a file in `/etc/sudoers.d/` whose name has a dot. For a user such as
+`john.doe`, name the file `john_doe`.
+
+`visudo -c` checks the sudoers files. Fix any error it prints before you log out.
+
+Shipdeck checks the access first, with `sudo -n`. When it fails, the connection
+stops before anything changes, and the error shows this same example.
+
+## Other permissions
+
+- Write to `server.dir`, or permission to create it. Root, or full password-free
+  sudo, can always create it.
 - For **PM2**, a usable PM2 installation for the process user (the SSH user by
   default) and write access to the deploy folder. PM2 operations run as that
   user through `runuser`, not as the root agent.
 - Read access to the release for `systemd.user`, if different from the SSH user.
 
-Service commands use `sudo -n` for a non-root user: deployment never waits for a
-sudo prompt. Missing permissions stop preflight or the requested control action.
+The agent runs as root from `/var/lib/shipdeck/agent/v<version>/agent`. App and
+PM2 commands still run as the configured user. Commands that need root run with
+`sudo -n` for a non-root user, so a deploy never waits for a sudo prompt.
 
 The built-in systemd unit blocks access to home folders. Install a runtime
 system-wide or provide a custom template if the process needs one from a home
@@ -38,8 +62,7 @@ The agent install needs outbound HTTPS, `curl` or `wget`, `sha256sum`, `awk`,
 `tar`, `find`, `install`, `stat`, `chown`, `chmod`, `mktemp`, and either
 `flock` or `mkdir` for the install lock. It also needs `timeout`. Your app needs
 its own runtime and process manager. Preflight names missing tools before
-activation. If the account cannot run the required sudo commands, the
-connection stops with the account and the missing permission.
+activation.
 
 Logging in as root runs file operations and your server commands as root.
 With another user, custom commands run as that user; they may explicitly invoke

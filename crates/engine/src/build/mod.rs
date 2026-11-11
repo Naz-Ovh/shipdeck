@@ -175,3 +175,7 @@ fn cargo_progress(line: &str) -> Option<(u64, u64, String)> {
         crates.to_string(),
     ))
 }
+
+#[cfg(test)]
+#[path = "build_test.rs"]
+mod tests;

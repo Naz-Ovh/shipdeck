@@ -13,8 +13,7 @@ use shipdeck_protocol::message::event::Event;
 use shipdeck_protocol::message::method;
 use shipdeck_protocol::message::request::{
     DeployStart, EventsRead, EventsReadResult, OperationStarted, ReleasesList, ReleasesListResult,
-    RollbackStart, ServerInfoGet, ServerSetup, SetupAccess, SetupReport, WorkCleanup,
-    WorkCleanupResult, WorkGet, WorkReport,
+    RollbackStart, ServerInfoGet, WorkCleanup, WorkCleanupResult, WorkGet, WorkReport,
 };
 use shipdeck_protocol::wire::Id;
 
@@ -314,45 +313,6 @@ impl Console {
         }
     }
 
-    /// Prepares a server once, through guided setup.
-    pub async fn setup(
-        &mut self,
-        projects: &[DeployableInfo],
-        name: &str,
-        access: SetupAccess,
-        sudo_password: Option<String>,
-    ) -> ExitCode {
-        let project = match find(projects, name) {
-            Ok(found) => found,
-            Err(err) => return self.fail(&err),
-        };
-        let handle = self.connection.handle();
-        let asked = ServerSetup {
-            deployable: project.slug.clone(),
-            access,
-            sudo_password,
-        };
-        match self
-            .settle(handle.request::<_, SetupReport>(method::SERVER_SETUP, &asked))
-            .await
-        {
-            Ok(report) => {
-                println!("System: {}", report.os);
-                println!("User: {}", report.user);
-                println!("Folder: {}", report.dir);
-                println!("Access: {}", report.access);
-                if !report.installed.is_empty() {
-                    println!("Installed: {}", report.installed.join(", "));
-                }
-                for note in report.notes {
-                    eprintln!("{note}");
-                }
-                ExitCode::SUCCESS
-            }
-            Err(err) => self.fail(&err.reason()),
-        }
-    }
-
     /// Waits for one typed request, answering login questions meanwhile.
     async fn settle<F, T>(&mut self, request: F) -> Result<T, Error>
     where
@@ -605,7 +565,7 @@ pub(crate) fn find<'a>(
         [] => {
             let known: Vec<&str> = projects.iter().map(|p| p.slug.as_str()).collect();
             Err(if known.is_empty() {
-                format!("no deployable named {name}: the deploy root has none")
+                format!("no deployable named {name}: the root file lists none")
             } else {
                 format!("no deployable named {name}; there is {}", known.join(", "))
             })

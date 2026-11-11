@@ -51,8 +51,8 @@ server:
 | Keyword | Used for |
 | --- | --- |
 | `HostName` | the address to connect to (`%h` expands to the alias) |
-| `Port` | the port, when `ssh.port` is not set |
-| `User` | the user, when `ssh.user` is not set |
+| `Port` | the port, when `server.ssh.port` is not set |
+| `User` | the user, when `server.ssh.user` is not set |
 | `IdentityFile` | the key tried when you pass neither `--key-file` nor `--password`; only the first one counts |
 | `Include` | read in place, relative to `~/.ssh`, with `*` and `?` in file names |
 
@@ -223,7 +223,7 @@ shipdeck opens one SSH session per endpoint (host, port, user and key) and reuse
 
 ## Deploying as any SSH user
 
-shipdeck deploys as `server.ssh.user`, whoever that is. When the user is literally `root`, nothing goes through sudo. Any other user needs write access to `server.dir` (or the right to create it) and passwordless sudo for five commands per process, plus four more to stop, start or follow it from the TUI. [Server access](/docs/guides/server-access) covers the options and the setup script.
+shipdeck deploys as `server.ssh.user`, whoever that is. When the user is literally `root`, nothing goes through sudo. Any other user needs full passwordless sudo (`NOPASSWD: ALL`), because the agent is installed and updated as root. [Server access](/docs/guides/server-access) shows the sudoers line.
 
 ## Next
 

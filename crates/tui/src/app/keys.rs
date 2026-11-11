@@ -2,8 +2,6 @@
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use shipdeck_protocol::message::request::SetupAccess;
-
 use super::{App, Fetch, Modal, Screen, Tone};
 use crate::command::{self, CommandLine};
 use shipdeck_engine::remote::{Control, Kind};
@@ -179,18 +177,10 @@ impl App {
             Err(why) => return self.notify(why, Tone::Warn),
         };
         let Some(action) = command.control() else {
-            return match command {
-                command::Command::Logs => self.open_logs(index),
-                command::Command::Setup => {
-                    if self.setting_up.contains(&index) {
-                        self.notify("Guided setup is already running", Tone::Warn);
-                    } else {
-                        self.modals
-                            .push_back(Modal::SetupAccess { deployable: index });
-                    }
-                }
-                _ => {}
-            };
+            if command == command::Command::Logs {
+                self.open_logs(index);
+            }
+            return;
         };
         if self.op_running_on(index) {
             let slug = &self.deployables[index].slug;
@@ -321,8 +311,6 @@ impl App {
             Some(Modal::ConfirmRollback { .. }) => self.on_confirm_rollback_key(key, ctrl_c),
             Some(Modal::ConfirmControl { .. }) => self.on_confirm_control_key(key, ctrl_c),
             Some(Modal::ConfirmCleanup { .. }) => self.on_confirm_cleanup_key(key, ctrl_c),
-            Some(Modal::SetupAccess { .. }) => self.on_setup_access_key(key, ctrl_c),
-            Some(Modal::SetupPassword { .. }) => self.on_setup_password_key(key, ctrl_c),
             Some(Modal::AskRollback { .. }) => self.on_ask_rollback_key(key),
             Some(Modal::AskUnchanged { .. }) => self.on_ask_unchanged_key(key, ctrl_c),
             Some(Modal::Notice { .. }) => self.on_notice_key(key, ctrl_c),
@@ -453,71 +441,6 @@ impl App {
             }
             None => {}
         }
-    }
-
-    fn on_setup_access_key(&mut self, key: KeyEvent, ctrl_c: bool) {
-        let Some(Modal::SetupAccess { deployable }) = self.modals.front() else {
-            return;
-        };
-        let index = *deployable;
-        let access = match key.code {
-            KeyCode::Char('f' | 'F') => SetupAccess::Full,
-            KeyCode::Char('c' | 'C') => SetupAccess::Commands,
-            KeyCode::Esc => {
-                self.modals.pop_front();
-                return;
-            }
-            _ if ctrl_c => {
-                self.modals.pop_front();
-                return;
-            }
-            _ => return,
-        };
-        self.modals.pop_front();
-        self.modals.push_back(Modal::SetupPassword {
-            deployable: index,
-            access,
-            input: String::new(),
-        });
-    }
-
-    fn on_setup_password_key(&mut self, key: KeyEvent, ctrl_c: bool) {
-        let Some(Modal::SetupPassword {
-            deployable,
-            access,
-            input,
-        }) = self.modals.front_mut()
-        else {
-            return;
-        };
-        let index = *deployable;
-        let access = *access;
-        let password = match key.code {
-            KeyCode::Enter => Some(std::mem::take(input)),
-            KeyCode::Esc => {
-                self.modals.pop_front();
-                return;
-            }
-            _ if ctrl_c => {
-                self.modals.pop_front();
-                return;
-            }
-            KeyCode::Backspace => {
-                input.pop();
-                return;
-            }
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                input.clear();
-                return;
-            }
-            KeyCode::Char(c) => {
-                input.push(c);
-                return;
-            }
-            _ => return,
-        };
-        self.modals.pop_front();
-        self.start_setup(index, access, password.filter(|value| !value.is_empty()));
     }
 
     /// Opens the cleanup question with exactly what the server reported.

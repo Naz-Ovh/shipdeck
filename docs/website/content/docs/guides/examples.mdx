@@ -217,7 +217,7 @@ apps:
 - The manager is the block: `pm2:` instead of `systemd:`.
 - `options` are PM2's own app settings. Shipdeck refuses the ones it writes itself: name,
   cwd, script, args, interpreter and env.
-- With PM2 there is no sudo rule; guided setup starts that user's PM2 at boot instead.
+- With PM2 the app runs as the SSH user; the agent still needs root to install itself.
 
 ## Static
 

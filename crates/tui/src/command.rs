@@ -1,5 +1,5 @@
 //! The `:` command line on the Deployables screen, as in vim: `:logs`,
-//! `:restart`, `:stop`, `:start`, and `:setup` for the selected deployable.
+//! `:restart`, `:stop` and `:start` for the selected deployable.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -15,25 +15,17 @@ use super::theme::{self, ACCENT};
 pub enum Command {
     Logs,
     Restart,
-    Setup,
     Stop,
     Start,
 }
 
 impl Command {
-    pub const ALL: [Command; 5] = [
-        Self::Logs,
-        Self::Restart,
-        Self::Setup,
-        Self::Stop,
-        Self::Start,
-    ];
+    pub const ALL: [Command; 4] = [Self::Logs, Self::Restart, Self::Stop, Self::Start];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Logs => "logs",
             Self::Restart => "restart",
-            Self::Setup => "setup",
             Self::Stop => "stop",
             Self::Start => "start",
         }
@@ -42,7 +34,7 @@ impl Command {
     /// What it does to the service; `None` for `:logs`, which only reads.
     pub fn control(self) -> Option<Control> {
         match self {
-            Self::Logs | Self::Setup => None,
+            Self::Logs => None,
             Self::Restart => Some(Control::Restart),
             Self::Stop => Some(Control::Stop),
             Self::Start => Some(Control::Start),
@@ -59,7 +51,7 @@ pub fn parse(input: &str) -> Result<Command, String> {
         .ok_or_else(|| format!("Not a command: :{name}. Try {}", known()))
 }
 
-/// `:logs, :restart, :setup, :stop or :start`
+/// `:logs, :restart, :stop or :start`
 fn known() -> String {
     let names: Vec<String> = Command::ALL
         .iter()
