@@ -582,21 +582,6 @@ installed. PM2 7 requires Node.js 18 or newer. To install the tested release,
 run `npm install -g pm2@7.0.4`; when upgrading an existing PM2 installation,
 run `pm2 update` as the deploy user to update its running daemon too.
 
-## service.template
-
-Without one, shipdeck uses a hardened unit: `Restart=always`, read-only
-system, writes allowed only to `<dir>/shared`. To change it, copy that unit
-from `crates/engine/src/bundle/default.service` into `service.template` and
-edit it. Placeholders:
-
-`{{name}}` `{{tag}}` `{{id}}` `{{version}}` `{{git}}` `{{dir}}` `{{service}}`
-`{{user}}` `{{exec}}` (the whole `ExecStart=` command) `{{binary}}`
-`{{env}}` (the `EnvironmentFile=` and `Environment=` lines)
-`{{workdir}}` (the live working folder)
-
-An unknown placeholder stops the deploy at Preflight; `{{binary}}` does too
-when there is no `pipeline.pack.binary`.
-
 ## The agent
 
 On each connection the engine checks the installed `shipdeck-agent` version

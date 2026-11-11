@@ -532,13 +532,14 @@ comment in `default.service` was updated anyway.
   Format 2 keeps it in `.shipdeck/`. The end-to-end test always used the
   agent, so this path was not run.
 - **P3: `default.service` is unused.** It also holds old placeholders such as
-  `{{service}}` and `{{id}}`. Delete it, or wire it in.
+  `{{service}}` and `{{id}}`. Delete it, or wire it in. *Resolved: deleted.*
 - **P3: `unreachable!` in the CLI.** `naming.rs` `slug_of` panics on a case
   that cannot happen. Have `Target::resolved` return the path itself for a
   file, so the type rules the case out.
 - **P3: the old key in a feature page.**
   [deployment-config.md](../feature/deployment-config.md) line 589 still says
-  `service.template`.
+  `service.template`. *Resolved: the section, which only described the deleted
+  file, is removed.*
 
 ### Seen, not a finding
 
