@@ -66,7 +66,7 @@ impl Run<'_> {
     }
 
     /// Restart: bring each process up on the new release.
-    pub(super) async fn step_restart(&mut self, server: &Server) -> Result<(), Ended> {
+    pub(super) async fn step_restart(&mut self) -> Result<(), Ended> {
         self.start(Step::Restart, "restarting the processes");
         let restarted = Box::pin(async {
             self.exec(Step::Restart).step(Step::Restart, None).await?;
@@ -92,7 +92,6 @@ impl Run<'_> {
             }
             Ok(count) => {
                 self.finish(Step::Restart, crate::config::count(count, "process"));
-                let _ = server;
                 Ok(())
             }
             Err(err) => Err(self.recover(Step::Restart, err).await),

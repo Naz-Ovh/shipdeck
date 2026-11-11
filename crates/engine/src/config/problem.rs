@@ -155,24 +155,51 @@ impl Paint {
 #[must_use]
 pub fn render(files: &[FileProblems], base: &Path, color: bool, outcome: &str) -> String {
     let paint = Paint { on: color };
+    // A file that was never read has nothing to point at: the message alone
+    // says what is wrong, such as the folder with no root file.
+    if files.iter().all(|file| file.source.is_none()) {
+        let mut out = String::new();
+        let _ = writeln!(out, "{} {}", paint.red("✘"), paint.bold(outcome));
+        for file in files {
+            for problem in &file.problems {
+                let _ = writeln!(
+                    out,
+                    "  {}{} {}",
+                    paint.red("error"),
+                    paint.bold(":"),
+                    paint.wrap("1", &paint.keys(&problem.message, "1"))
+                );
+                if !problem.label.is_empty() {
+                    let _ = writeln!(out, "  = {}", paint.keys(&problem.label, "1"));
+                }
+                if let Some(help) = &problem.help
+                    && !help.is_empty()
+                {
+                    let _ = writeln!(out, "  = help: {help}");
+                }
+            }
+        }
+        return out;
+    }
     let count: usize = files.iter().map(|f| f.problems.len()).sum();
     let mut out = String::new();
-    let files_text = if files.len() == 1 {
-        "1 shipdeck.yaml file has".to_string()
-    } else {
-        format!("{} shipdeck.yaml files have", files.len())
-    };
+    // The heading names the file the problems are in, which is not always
+    // `shipdeck.yaml`: `-c` can name any file.
     let problems_text = if count == 1 {
         "1 problem".to_string()
     } else {
         format!("{count} problems")
     };
-    let _ = writeln!(
-        out,
-        "{} {}",
-        paint.red("✘"),
-        paint.bold(&format!("{outcome}: {files_text} {problems_text}"))
-    );
+    let heading = if files.len() == 1 {
+        let name = files
+            .first()
+            .map(|file| short_name(&file.path))
+            .unwrap_or_default();
+        format!("{outcome}: {problems_text} in {name}")
+    } else {
+        format!("{outcome}: {problems_text} in {} files", files.len())
+    };
+    let _ = writeln!(out, "{} {}", paint.red("✘"), paint.bold(&heading));
     for file in files {
         let shown = file.path.strip_prefix(base).unwrap_or(&file.path);
         let short = short_name(&file.path);

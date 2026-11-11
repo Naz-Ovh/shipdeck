@@ -7,7 +7,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{HighlightSpacing, List, ListItem, Paragraph, Wrap};
 
-use shipdeck_engine::config::{Command, Deployment, Manager, Program, RollbackMode};
+use shipdeck_engine::config::{Command, Deployment, Program, RollbackMode};
 use shipdeck_engine::human;
 use shipdeck_engine::release::ReleaseName;
 use shipdeck_engine::ssh::Login;
@@ -194,7 +194,7 @@ fn apps_section(lines: &mut Vec<Line<'static>>, deployment: &Deployment) {
         let kind = if app.process.is_some() {
             let manager = deployment
                 .manager(name)
-                .map_or("no manager", Manager::label);
+                .map_or("no manager", |manager| manager.label());
             format!("process · {manager} · {}", deployment.process_name(name))
         } else {
             "static".to_string()

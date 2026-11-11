@@ -1017,15 +1017,15 @@
         },
         "folder": {
           "default": "",
-          "description": "The deploy file on this PC.",
+          "description": "The deploy file on this PC, or the root file an inline deploy lives in.",
           "type": "string"
         },
         "host": {
-          "description": "`ssh.host` from `shipdeck.yaml`: an alias or an address.",
+          "description": "`ssh.host`: an alias or an address.",
           "type": "string"
         },
         "name": {
-          "description": "The `name` from `shipdeck.yaml`.",
+          "description": "The `name` of the deploy file.",
           "type": "string"
         },
         "port": {
@@ -1037,7 +1037,7 @@
           "type": "integer"
         },
         "slug": {
-          "description": "The folder's name; what every other message calls the project.",
+          "description": "The deploy's name, from the root file or the deploy file.",
           "type": "string"
         },
         "user": {
@@ -2633,6 +2633,20 @@
     "WorkspaceOpen": {
       "description": "`workspace/open`: pick the folder shipdeck runs in, and how to log in.",
       "properties": {
+        "config": {
+          "description": "The root file named by `--config`; the folder's own root file is not looked for.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "deploy_files": {
+          "description": "Deploy files named on the command line. Each is read as it is, and no root file is needed.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "login": {
           "$ref": "#/definitions/Login"
         },
@@ -2644,13 +2658,6 @@
         "root": {
           "description": "The folder shipdeck runs in: the project folder.",
           "type": "string"
-        },
-        "shipdeckfile": {
-          "description": "A deploy file named by `--shipdeckfile`; the project file is not read.",
-          "type": [
-            "string",
-            "null"
-          ]
         }
       },
       "required": [

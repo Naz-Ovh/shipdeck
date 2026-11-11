@@ -31,6 +31,21 @@ fn a_report_names_the_file_line_and_help() {
 }
 
 #[test]
+fn the_heading_names_the_file_it_reports_on() {
+    let files = vec![FileProblems {
+        path: PathBuf::from("/work/ops/noroot.yaml"),
+        source: Some("deploys: {}\n".into()),
+        problems: vec![Problem::new("`root` is missing")],
+    }];
+    let text = render(&files, Path::new("/work"), false, "shipdeck did not start");
+    assert!(text.contains("noroot.yaml"), "{text}");
+    assert!(
+        !text.contains("shipdeck.yaml"),
+        "the old name is still there: {text}"
+    );
+}
+
+#[test]
 fn colour_adds_escape_codes() {
     let text = render(&files(), Path::new("/work"), true, "shipdeck did not start");
     assert!(text.contains("\u{1b}["), "{text}");

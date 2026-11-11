@@ -27,7 +27,7 @@ commands. One deploy can hold several apps that switch together as one release.
    shipdeck init my-api --preset rust --manager systemd --host prod
    ```
 
-   That writes `shipdeck.yaml` (the project file), `deploy.yaml` (the deploy
+   That writes `shipdeck.yaml` (the root file), `deploy.yaml` (the deploy
    file), an empty `.env`, and a `.gitignore`. `prod` is an SSH alias; set its
    user and `IdentityFile` in your SSH config, or use a server address and pass
    `--key` when connecting. Edit `deploy.yaml`: check the source folder, build

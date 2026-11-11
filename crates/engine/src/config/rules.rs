@@ -41,7 +41,6 @@ pub fn check(deploy: &DeployFile, root: Option<&Node>) -> Vec<Problem> {
     rules.top();
     rules.release();
     rules.apps();
-    rules.steps();
     rules.placeholders();
     rules.problems
 }
@@ -192,12 +191,10 @@ impl Rules<'_> {
         self.patterns(
             &["release", "steps", "backup", "include"],
             &steps.backup.include,
-            "include",
         );
         self.patterns(
             &["release", "steps", "backup", "exclude"],
             &steps.backup.exclude,
-            "exclude",
         );
         self.commands(
             &["release", "steps"],
@@ -226,11 +223,6 @@ impl Rules<'_> {
 }
 
 impl Rules<'_> {
-    fn steps(&mut self) {
-        let _ = &self.deploy.release.steps;
-        let _ = &self.deploy.apps;
-    }
-
     fn process_name(&self, app: &str) -> String {
         self.deploy
             .apps
@@ -254,12 +246,10 @@ impl Rules<'_> {
             Value::Scalar { text, .. } => {
                 let scope = self.scope(path);
                 if let Err(bad) = placeholders::check(text, scope) {
-                    let refs: Vec<&str> = path.iter().map(String::as_str).collect();
                     let mut problem = Problem::new(bad.message).at(Some(node.span)).label("here");
                     if let Some(help) = bad.help {
                         problem = problem.help(help);
                     }
-                    let _ = refs;
                     self.problems.push(problem);
                 }
             }

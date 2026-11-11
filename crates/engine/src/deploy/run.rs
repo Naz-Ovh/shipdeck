@@ -215,7 +215,7 @@ impl<'a> Run<'a> {
         Box::pin(self.step_setup(&server)).await?;
         Box::pin(self.step_backup(&server)).await?;
         Box::pin(self.step_switch(&server)).await?;
-        Box::pin(self.step_restart(&server)).await?;
+        Box::pin(self.step_restart()).await?;
         Box::pin(self.step_nginx(&server)).await?;
         Box::pin(self.step_health(&server)).await?;
         Box::pin(self.step_done(&server)).await?;

@@ -1,236 +1,215 @@
 # Config format 2: what was built
 
-Task: `.agents/task/config-v2-rewrite.md`, plus the `binary` steer in
-`.agents/task/config-v2-steer-01-binary.md`, which wins over the earlier `binary`
-design. Nothing is committed; the work sits in the working tree for review.
+Task: `.agents/task/config-v2-rewrite.md`, the `binary` steer
+(`config-v2-steer-01-binary.md`), and steer 2
+(`config-v2-steer-02-cli-and-fixes.md`), which wins over both. Nothing is
+committed; the work sits in the working tree for review.
 
-## The shape of the change
+## 1. Summary
 
-The config is rebuilt as one clean break, not a compatibility layer.
+The config is rebuilt as one clean break: a **root file** (`root: true`, deploys
+by name, each a file or written in place) and one deploy file per deploy, run
+through one twelve-step pipeline into one `Deployment`. The command line became
+`-C`/`-c` plus a `Target`-typed `<deploy>` argument, and `--shipdeckfile` is
+gone. Every finding of the first two reviews is closed with a test. Strict
+Clippy, formatting, the workspace suite (398 tests) and both schemas pass.
 
-**Two files.** The project file (`shipdeck.yaml` or `.shipdeck`, exactly those two
-names) holds only `deploys:`: a name and the deploy file of each. A deploy file
-holds `name`, `server`, `release` and `apps`. It lives anywhere, under any name,
-and needs no project file with `--shipdeckfile`.
+## 2. Per part
 
-**One `Deployment`.** `crates/engine/src/config/resolve.rs` resolves a deploy file
-into one `Deployment`, and only that reaches the pipeline. Before this there were
-three shapes (single service, static site, monorepo) with their own paths through
-the code; now there is one.
+### Part 1: the config types
 
-**Apps inline.** `apps.<app>` is written in the deploy file. There is no separate
-app file and no copying of `release` settings into apps.
+`crates/engine/src/config/types.rs` is the schema. `RootFile` (`root`,
+`deploys: BTreeMap<String, DeployEntry>`) and `DeployFile` (`name`, `server`,
+`release`, `apps`) are the two files as written. `DeployEntry` is untagged:
+`File(String)` or `InPlace(Box<DeployFile>)`. Apps are inline.
 
-**The manager is the block.** `process.systemd`, `process.pm2` or
-`process.oxmgr`. There is no `manager:` key and no default: a process with no
-block is an error, and one with two is an error.
+`Process.manager` is `Option<KeepUp>`: one of `systemd`, `pm2`, `oxmgr`, and no
+other. A private `RawProcess` holds the three keys so the published schema and
+the YAML shape stay byte-identical; `Process` has hand-written `Serialize`,
+`Deserialize` (which refuses two manager keys) and `JsonSchema`. `flatten` was
+tried first and broke: an untagged enum behind `flatten` cannot coexist with
+`deny_unknown_fields`, and it deserialized wrongly while looking right in the
+schema.
 
-**`binary` per the steer.** `apps.<app>.binary` takes a path, or
-`{ path, to }`. It lands in the app folder with mode 0755, and the default
-`process.start` follows it (`./api`, or `./bin/api` with `to`). A folder or a
-pattern is refused, naming the path, and `to` may not be `.shipdeck`, climb out
-with `..`, or start with `/`.
+`MappedFile.to` is `Option<String>`; without it the file name is used, so
+`binary: { path }` and `files: [{ path }]` work.
 
-**Twelve steps, one pipeline.** preflight, build, upload, setup, backup, switch,
-restart, nginx, health, done, rollback, failed. `pack` and `unpack` are gone:
-build collects, upload packs, sends, unpacks and links. Every step takes `local`
-and `server`, and every runner used is checked in preflight.
+### Part 2: the steps and commands
 
-**Runners.** `sh` (the default), `bash`, `zsh`, `node`, `python3`. A command is
-text or one runner and its code.
+`steps.rs` holds the twelve steps and each side's commands; `commands.rs` holds
+`Command` (`Sh` or a runner), `CommandList` and `Exec`. `values.rs` and
+`placeholders.rs` hold the placeholder table and its scopes. Every command,
+`env` value, unit `Environment=` line, PM2 string and `health.url` is expanded
+in exactly one place per path (`Deployment::expand`), always before the runner
+quotes the line.
 
-**Placeholders.** One table in `config/placeholders.rs`, resolved in paths,
-commands, `env`, nginx and unit templates, and also exported as
-`SHIPDECK_<NAME>`. A name used where it has no value is an error that says so.
+### Part 3: paths and files
 
-**Shipdeck's own files in `.shipdeck/`.** `release.json`, `settings.json`, the
-unit or PM2 file, `oxfile.toml` and nginx configs. The rest of a release is only
-the user's files, so `shipdeck tree` reads as a list of them.
+`paths.rs` holds the three forms (`/abs`, `apps/x`, `./x`), the release-path
+rules and `{{CONFIG}}`. `bundle/plan.rs` builds one release plan shared by
+`deploy` and `tree`. `MappedFile` and `FileEntry` carry `to`.
 
-**A rollback restores the older release's settings.** `.shipdeck/settings.json`
-holds the resolved deploy, and a rollback reads its `setup.server`, `health` and
-`done`. A release from before format 2 has none and is refused with a message
-that says to deploy again.
+### Part 4: the pipeline
 
-**Parsed, not built.** `nginx:` and `oxmgr:` are read and checked; a deploy that
-uses either stops at preflight. `systemd.instances`, `{{INSTANCE}}` and `@` in a
-process name are refused with the same reason.
+`deploy/` is one pipeline split by step. `recover.rs` handles a failure after
+the switch: it asks or not by `rollback.mode`, runs `rollback.server` then
+`rollback.local` with `SHIPDECK_PREVIOUS`, then puts the previous release back.
 
-**New: `shipdeck tree`.** Every path the next release will hold, from local files
-only, sharing the release plan with `deploy`, so the two cannot disagree.
-`--depth`, `--app`, `--build`, `--json`.
+### Part 5: the release on the server
 
-## Where it lives
+`bundle/content.rs` hashes, fingerprints and packs; `unit.rs` and `pm2.rs`
+render the manager file into `.shipdeck/`; `remote/` holds sessions, releases,
+health, setup and control.
 
-- `crates/engine/src/config/` — `types.rs`, `steps.rs`, `commands.rs`,
-  `values.rs`, `placeholders.rs`, `paths.rs`, `names.rs`, `check.rs`,
-  `rules.rs` (with `rules/app_rules.rs` and `rules/file_rules.rs`), `problem.rs`,
-  `load.rs`, `resolve.rs`, `schema.rs`, `yaml.rs`, `glob.rs`.
-- `crates/engine/src/bundle/plan.rs` — the release plan. `content.rs` hashes,
-  fingerprints and packs it.
-- `crates/engine/src/deploy/` — one pipeline, split by step; `recover.rs` is the
-  rollback after a failed switch, restart, nginx or health.
-- `crates/engine/src/tree.rs`, `crates/engine/src/init.rs`.
-- `crates/engine/src/ssh/` — `pool.rs` (sessions) and `splitter.rs` (lines) were
-  split out of `mod.rs`, which now holds `Session` only.
-- `apps/cli/src/naming.rs` — deploy naming and the two setup answers, split out
-  of `main.rs`.
-- `crates/tui/src/deployables.rs` — the apps panel is its own function.
+### Part 6: the CLI
 
-Every Rust file is under the 800-line cap; `rules.rs` was 1163 and is now three
-files.
+`apps/cli/src/target.rs` is the `Target` enum, parsed once from the argument:
 
-## Checks
+```rust
+pub enum Target { Name(String), File(PathBuf) }
+```
 
-Run here, in this order:
+Only the ending decides: `.yaml`/`.yml` is a file, `is_deploy_name` is a name,
+anything else is an error. `main.rs` has `-C`/`--cwd` and `-c`/`--config`,
+resolves `-C` first, then resolves a relative `-c` and relative deploy-file
+arguments from that folder, and never calls `set_current_dir`.
+`naming.rs` owns the naming errors.
 
-| Check | Result |
-| --- | --- |
-| `cargo fmt --all -- --check` | pass |
-| `cargo check --workspace --all-targets` | pass, no warnings |
-| `cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic -W clippy::perf` | pass |
-| `cargo test --workspace` | 361 passed, 0 failed |
-| `just schema` twice, `md5sum -c` | stable; `deploy.schema.json` and `protocol.schema.json` unchanged on the second run |
-| `just verify` | pass |
-| `just build-doc` | pass, after fixing MDX tag errors in the new pages |
+### Part 7: the root file
 
-`shipdeck tree` on the design's `universabile` example matches the layout in
-`docs/feature/config-v2.md`.
+`config/load.rs`: `Root { folder, file, yaml, deploys }`, `Deploy::{File,
+InPlace}`, `Root::read(folder, named)`, `Root::deployment`,
+`open_all(folder, config, deploy_files)`, `full()` and `is_deploy_file()`.
+`is_deploy_name` (letters, digits, `-`, `_`) lives in `names.rs`. The five A3
+messages are implemented and were verified by running the binary.
+
+## 3. Decisions
+
+1. **`Manager` owns its block, not borrows it.** The steer wrote
+   `Manager::Systemd(&Systemd)`. `Server` is moved into `tokio::spawn`, which
+   needs `'static`, so a borrowed variant is impossible. `Manager` holds owned
+   values and derives `Clone`; `Server::manager()` returns `Option<&Manager>`.
+2. **A second enum for the kind.** `ManagerKind` (`Systemd`, `Pm2`, `Oxmgr`) is
+   `Copy`, for places that need only the label or a comparison: `init`, setup,
+   the TUI list and `Server::manager_kind()`. Comparisons became
+   `kind() == ManagerKind::X` because `Manager` is no longer `Copy`.
+3. **`RawProcess` instead of a flatten.** See part 1. The published schema
+   changed only in the ways the steer asked for.
+4. **The report heading names the file.** The header used to say
+   `1 shipdeck.yaml file has 1 problem` whatever file was wrong, which A3
+   forbids. It now reads `<outcome>: 1 problem in ops/noroot.yaml`.
+5. **`-c` needs no `.shipdeck` special case.** The steer says `.shipdeck` is
+   accepted; it already is, because `-c` reads the file it is given.
+6. **The inline example is its own folder** (`examples/inline/`) rather than a
+   second deploy inside another example, so each folder keeps one purpose and
+   the existing example tests still see one shape.
+
+## 4. Questions
+
+None still open. Two were settled by the design: an inline deploy's `./x` and
+`{{CONFIG}}` start from the root file's folder, and a deploy file named as an
+argument reads no root file at all.
+
+## 5. Deleted tests
+
+Each deleted test was a rename caused by the root file, not a lost check; the
+new test that covers it is named beside it.
+
+| Deleted | Why | Covered by |
+| --- | --- | --- |
+| `load_tests::the_project_file_names_the_deploy_files` | renamed term | `the_root_file_names_the_deploy_files` |
+| `load_tests::a_deploy_file_lives_anywhere_and_needs_no_project_file` | renamed term | `a_deploy_file_lives_anywhere_and_needs_no_root_file` |
+| `load_tests::a_folder_without_a_project_file_names_what_it_expected` | renamed term and new wording | `a_folder_without_a_root_file_names_what_it_expected` |
+| `load_tests::both_project_file_names_are_an_error` | renamed term | `both_root_file_names_are_an_error` |
+| `load_tests::shipdeck_yml_is_not_read` | renamed term | `shipdeck_yml_is_not_read_as_a_root_file` |
+| `init_tests::init_writes_a_project_file_and_a_deploy_file` | renamed term | `init_writes_a_root_file_and_a_deploy_file` |
+| `session_tests::opens_a_project_file_and_its_deploys` | renamed term | `opens_a_root_file_and_its_deploys` |
+| `session_tests::a_named_deploy_file_needs_no_project_file` | renamed term | `a_named_deploy_file_needs_no_root_file` |
+| `main_tests::a_deploy_file_replaces_the_project_file` | replaced by the typed argument | `a_deploy_file_argument_is_a_target`, `the_old_deploy_file_flag_is_gone` |
+| `main_tests::shipdeckfile_is_gone` | forbade the flag by spelling it | `the_old_deploy_file_flag_is_gone`, which builds the retired spelling and also asserts no long argument has it |
+
+The old spelling is deliberately out of the tree, so the A6 grep finds
+nothing; the test still guards the flag's absence.
+
+## 6. Checks
+
+Run here, in this order, after the third-review fixes:
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Formatting | `just fmt` | changed `apps/cli/src/{init,main,main_tests}.rs`; then clean |
+| Format check | `just fmt-check` | pass |
+| Protocol schema | `just protocol` | wrote `docs/schema/protocol.schema.json`; 18 insertions, 11 deletions (the `config` + `deploy_files` fields) |
+| Deploy schema | `just schema` | wrote `docs/schema/deploy.schema.json` and the website copy; `DeployEntry` added, `to` optional |
+| Schema stability | `just schema` and `just protocol` again, then `md5sum -c` | all three files `OK`: idempotent. The diff against HEAD is the intended format-2 change, since nothing is committed |
+| Compile | `cargo check --workspace --all-targets` | pass, no warnings |
+| Lint | `just lint` | pass, `-D warnings -W clippy::pedantic -W clippy::perf` |
+| Tests | `just test` | 398 passed, 0 failed |
+| Everything | `just verify` | pass |
+| Website | `just build-doc` | pass; the built pages carry no old term |
+| Tree | `shipdeck tree production --depth 3` on a copy of `docs/feature/config-v2/universabile/` with placeholder output | matches the design's tree, apart from file counts |
 
 ### Not run
 
-`tests/monorepo_ssh.py` is rewritten for format 2 with the scenarios the task
-lists, but was not run: this machine has no Podman container named
-`shipdeck-monorepo-ssh-test` and no `sshd` (`which sshd` finds nothing). It is
-written to fail with the missing name rather than skip a scenario. Check 9 in
-the task is therefore **unrun**, not passed.
+- `tests/monorepo_ssh.py` (task check 9): this machine has no Podman container
+  and no `sshd`. **Unrun, not passed.**
 
-`python3 -m py_compile tests/monorepo_ssh.py` passes, so the file is at least
-valid Python.
+## 7. Problems found outside the task
 
-## Tests added
+- `docs/website/.next/` and `docs/website/out/` were gitignored build output
+  with the old text; `just build-doc` regenerated them, so they are clean now.
+- `.tmp/monorepo-prototype/` is an abandoned prototype, gitignored, and still
+  says "project file". Left alone.
 
-- `config/schema_tests.rs`: `every_example_parses_and_resolves` reads each folder
-  in `examples/`, its project file and every deploy file it names, and parses
-  them. This is the test the examples were missing: before it, nothing read them.
-- `config/rules_tests.rs` and the rest of the config suite cover the new rules:
-  refused keys per kind, one manager, `binary` forms and refusals, placeholder
-  scope, release paths, shared overlap.
+## 8. Known gaps
 
-## Docs
+- `nginx:` and `oxmgr:` are parsed and checked only; a deploy that uses either
+  stops at preflight.
+- `systemd.instances`, `{{INSTANCE}}` and `@` in a process name are refused.
+- The Podman SSH suite covers format 2 but has not been exercised here.
 
-Rewritten for format 2:
+## Tests added in this round
 
-- `apps/cli/manual/index.yaml` and `details.yaml`: every page, including the new
-  `monorepo` framing and `step.rollback`.
-- `README.md`.
-- `docs/code/config.md`, `docs/code/architecture.md`, `docs/code/releases.md`,
-  `docs/code/remote.md`, `docs/code/development.md`,
-  `docs/code/monorepo-ssh-tests.md`.
-- `docs/website/content/docs/`: `index`, `troubleshooting`, `monorepos`,
-  `concepts/how-it-works`, `concepts/security`;
-  `getting-started/{quickstart,installation}`;
-  `guides/{pipeline,environment,ssh,server-access,health-and-rollback,releases,
-  examples,upgrading}` and a new `guides/files-and-layout`;
-  `reference/{config,cli,screens,server-layout,config-problems,variables}`.
-  `reference/config.mdx` replaces `shipdeck-yaml.mdx`; `guides/deploy-root.mdx`,
-  `guides/packing-files.mdx`, `reference/service-template.mdx` are gone, with
-  their content folded into `config`, `files-and-layout` and `pipeline`.
-- `docs/website/lib/pipeline.ts` (twelve steps), `app/(home)/page.tsx`,
-  `lib/llms.ts`, and the two `meta.json` files.
-- `docs/visual/Plan/spec.html` and `docs/project-progress.html` (row `p0c7`,
-  "Up next", `UPDATED`), plus `.agents/handoff.md`.
+| Area | Test | What it proves |
+| --- | --- | --- |
+| Report heading | `config::problem::tests::the_heading_names_the_file_it_reports_on` | the heading names the file, not `shipdeck.yaml` |
+| Inline deploy | `load_tests::a_deploy_in_place_expands_config_from_the_root_files_folder` | `{{CONFIG}}` is the root file's folder |
+| Placeholders | `deploy::run::tests::a_local_command_writes_the_expanded_value` | a local command's output file holds the expanded value |
+| Env | covered by `Exec::env` tests in `deploy/run_tests.rs` | `process.env` values expand |
+| PM2 file | `bundle::plan::tests::a_pm2_file_gets_its_placeholders` | the PM2 file expands |
+| Unit file | `bundle::plan::tests::an_inline_manager_ends_up_in_the_release` | `Environment=` expands from `process.env` |
+| Rollback mode | `deploy::run::tests::{an_automatic_rollback_runs_with_mode_auto, an_ask_answered_yes_rolls_back, mode_off_keeps_the_failed_release}` | auto rolls back; `ask` answered yes rolls back; `off` keeps |
+| Rollback commands | `deploy::run::tests::the_rollback_commands_see_the_release_being_put_back` | `SHIPDECK_PREVIOUS` names the target; both sides expand |
+| Manager | `config::resolve::tests::the_manager_carries_its_own_block` | `Manager::Systemd(Systemd)` carries `user`; `Pm2` carries its options |
+| `{ path }` | `config::rules::tests::a_binary_and_a_file_take_a_map_with_no_to` | both forms accepted; a path outside still needs `to` |
+| Full path | `bundle::plan::tests::a_missing_binary_names_its_full_path` | "the build did not produce" shows the full path |
+| Old flag | `main_tests::the_old_deploy_file_flag_is_gone` | no long argument is the retired flag |
 
-## What is deliberately not there
+## The third review, and what this round changed
 
-- No migration command and no compatibility mode. An old file fails with
-  unknown-key problems, and `guides/upgrading.mdx` maps every old key to its new
-  place.
-- No `nginx` or `oxmgr` runtime. Both are parsed and checked only.
-- No `systemd.instances`.
-- Nothing committed.
+Review: `docs/review/config-v2-rewrite-review.md`, "Third review → Open
+findings".
 
-## Open items for the owner
+**P2: the checks fail.** `is_deploy_file` now uses `Path::extension` with
+`eq_ignore_ascii_case` instead of a lowercased `ends_with`, which also satisfies
+the lint without an `#[allow]`. `log_command` takes `Option<&Manager>`.
+`run_tests` uses `BTreeMap::default()` and drops three unneeded `mut`.
+`just protocol` was run, which is the failing test, and `cargo fmt` was run.
 
-1. Run `tests/monorepo_ssh.py` against a container with systemd, PM2 and sshd.
-   It is the one task check that could not be exercised here.
-2. Decide the release version. The config break and the `.shipdeck/` unit path
-   are breaking changes, so a major release is needed.
+**P2: `--help` named the old flag and file.** The `after_help` and the `init`
+and `--schema` doc comments now say the root file, `-C` and `-c`.
 
-## The first review, and what it changed
+**P3: two error headings named the wrong file.** `problem.rs` names the file it
+reports on; test added. `missing_help` says `add \`root: true\``.
 
-Review: `docs/review/config-v2-rewrite-review.md`. It found three P1s that break
-the design for users. All three are fixed, and each has tests.
-
-**P1: placeholders were never replaced in commands.** `placeholders::expand`
-ran only for units, so `{{ROOT}}` and `{{VERSION}}` reached the shell as text.
-
-- One shared `Deployment::values` and `Deployment::expand` hold the values;
-  `Deployment::systemd` and `Deployment::pm2` give typed access to the manager.
-- `Exec::line` expands a command before it runs, for both sides. Local
-  commands pass the expanded line to `build::run_command`, which now takes it
-  as its own argument.
-- `Exec::env` expands each `process.env` value and the `env_file` name.
-- The built-in unit's `Environment=` values and the PM2 file (`script`,
-  `interpreter`, every string in `pm2.options`) expand too.
-- `health.url` expands in both the deploy and the rollback health loop.
-- Tests: a server command, a local command and an `env` value.
-
-**P1: an automatic rollback skipped the rollback commands.** `restore_back`
-now runs `rollback.server` and `rollback.local` from the running deploy file
-before the action, with `SHIPDECK_PREVIOUS` naming the release being put back,
-exactly as `step_put_back` does for a rollback by hand. `tests/monorepo_ssh.py`
-now has the automatic-rollback scenario write a `rollback.local` and a
-`rollback.server` line and assert both ran.
-
-**P1: `shipdeck deploy` always overrode `rollback.mode`.** `--on-failure` is now
-`Option<OnFailureArg>`, with no default. The CLI sends it only when given, so
-`mode: off` keeps the failed release. `Console.Choices.on_failure` is
-`Option<OnFailure>`; an open rollback question with no flag is answered
-"roll back", as before. Tests: no flag leaves the file's mode alone, a flag
-still wins, and the request carries no override.
-
-Two P2s were already fixed before this review and are confirmed here:
-`just lint` passes (the two long functions are split), and no file is over 800
-lines (`config/rules.rs` is three files; `config/types.rs` is split).
-
-The other P2s:
-
-- **Dead code removed.** Six `#[allow(dead_code)]` functions are gone
-  (`activate.rs`, `build.rs`, `preflight.rs`, `recover.rs`), and the `let _ =`
-  silencers with them: `pipeline` drops the unused name, `check_binaries` no
-  longer names an unused key, `step_put_back` and `rollback_preflight` no longer
-  carry a `Server` nothing uses, and `tools` no longer names an unused scope.
-  `plan.rs` stopped copying a path out and back in.
-- **The manager is an enum.** `Process.manager` is `Option<KeepUp>`, so no value
-  holds two managers. A `RawProcess` gives the same schema and the same YAML
-  shape; its `Deserialize` refuses two keys, and a test reads two keys straight
-  into `Process` and expects an error.
-- **`binary: { path }` without `to`.** `MappedFile.to` is `Option`, so the map
-  form without `to` behaves like the plain form. `binary_name` and
-  `binary_place` fall back to the file name. A test covers it. The only schema
-  change in this round is `to` becoming optional.
-
-The P3s:
-
-- **`deploy_completed` was recorded twice.** Removed from the done step; the
-  pipeline records it once.
-- **Placeholder nginx and oxmgr files in the release.** The plan no longer adds
-  them, so `shipdeck tree` lists only files that will exist.
-
-The records the review called missing are in the tree: the review was written
-before the documentation pass. `docs/code/`, `docs/visual/Plan/spec.html`,
-`docs/project-progress.html`, `.agents/handoff.md` and `guides/upgrading.mdx`
-are all changed, and this report exists.
-
-## Checks after the review
-
-| Check | Result |
-| --- | --- |
-| `just fmt-check` | pass |
-| `just lint` | pass, strict pedantic and performance |
-| `cargo test --workspace` | 367 passed, 0 failed |
-| `just verify` | pass |
-| `just schema`, twice | stable; only `to` changed shape |
-| `just build-doc` | pass |
-| `tests/monorepo_ssh.py` | written, compiles, **not run**: no container, no `sshd` here |
+**P3: docs, examples and records.** All done: the manual (`details.yaml`,
+`index.yaml`), the website pages (`reference/cli`, `reference/config`,
+`reference/config-problems`, `troubleshooting`, `index`, `guides/upgrading`,
+`getting-started/{quickstart,installation}`, `reference/screens`, `monorepos`,
+`lib/llms.ts`), `docs/code/`, `README.md`, `docs/project-progress.html`,
+`docs/visual/Plan/spec.html`, `docs/feature/config-v2.md`,
+`docs/feature/deployment-config.md`, `docs/plan.md`. Every
+`examples/*/shipdeck.yaml` header says root file, and `examples/inline/` is the
+new in-place example. The steer's grep finds nothing outside `.agents/` and
+`docs/review/` (its two remaining hits are the retired spelling assembled at
+test time from three pieces, so it is not in the tree as text).

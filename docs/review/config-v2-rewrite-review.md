@@ -272,6 +272,159 @@ returns the text unchanged.
 - which old tests were deleted, and why. The deleted test files held 110
   tests.
 
+## Third review
+
+Reviewed on 2026-11-11 after steer 2,
+[config-v2-steer-02-cli-and-fixes.md](../../.agents/task/config-v2-steer-02-cli-and-fixes.md).
+
+**Scope:** the changes since checkpoint commit `57f11c7` on branch
+`config-v2`: 57 files. No file changed between 09:28:26 and the end of this
+review.
+
+### Checks run
+
+| Check | Result |
+| --- | --- |
+| `just fmt-check` | **Fail.** `apps/cli/src/` (`main.rs`, `init.rs`, `naming.rs`, `main_tests.rs`, `target_tests.rs`) is not formatted. |
+| `just lint` | **Fail.** 7 errors; see below. |
+| `just test` | **Fail.** 344 pass. One fails: `the_published_schema_is_current` in `crates/protocol`. |
+| `--schema` against `docs/schema/deploy.schema.json` | Same. |
+
+### Part B: status of each finding
+
+| Finding | Status | Evidence |
+| --- | --- | --- |
+| B1: placeholders in commands | **Fixed.** | The reproduction now writes `version=1.2.3` and the real project path. Test: `a_local_command_writes_the_expanded_value`. |
+| B2: an automatic rollback skips the rollback commands | **Fixed.** | `restore_back` runs them first. Tests: `an_automatic_rollback_runs_with_mode_auto`, `an_ask_answered_yes_rolls_back`, `the_rollback_commands_see_the_release_being_put_back`. |
+| B3: `--on-failure` overrides `rollback.mode` | **Fixed.** | The flag is an `Option`. Test: `mode_off_keeps_the_failed_release`. |
+| B4: unused code | **Fixed.** | The steer's grep finds nothing. |
+| B5: the manager as one choice | **Fixed.** | `resolve::Manager` carries its block. Test: `the_manager_carries_its_own_block`. |
+| B6: `{ path }` without `to` | **Fixed.** | Test: `a_binary_and_a_file_take_a_map_with_no_to`. |
+| B7: `deploy_completed` recorded twice | **Fixed.** | One call is left, in `run.rs`. |
+| B8: placeholder nginx and oxmgr files | **Fixed.** | They are no longer in the plan. |
+| B9: full paths in file errors | **Fixed.** | Test: `a_missing_binary_names_its_full_path`. |
+
+### Part A: the command line, run by hand
+
+| Case | Result |
+| --- | --- |
+| `tree prod` (a name) and `tree deploy.yaml` (a file) | Both work. |
+| `tree ./prod` and `tree prod.v2` | Refused, with the ending and name rule. |
+| `-C <dir> -c shipdeck.yaml` run from another folder | Works; `-c` starts from `-C`. |
+| `-c` naming a deploy file | Refused: "is a deploy file, not a root file", with the right help. |
+| A root file given as the deploy argument | Refused: "is a root file, not a deploy file". |
+| An unknown name | Names the root file and the names it lists. |
+| No root file in the folder | Names the folder and the two names it expected. |
+| A deploy written in the root file, through `-c ops/root.yaml` | `./note.txt` and `{{CONFIG}}` start from `ops/`. A problem points at its line in the root file. |
+
+### Open findings
+
+#### P2: the checks fail
+
+**Lint errors:**
+
+- `config/load.rs:342`: "case-sensitive file extension comparison", twice. The
+  code lowercases first, so the lint is a false alarm here. Rewrite the check
+  with `Path::extension` and `eq_ignore_ascii_case`, which also satisfies the
+  lint. Don't silence it with `#[allow]`.
+- `remote/control.rs:78`: an argument passed by value but not consumed.
+- `deploy/run_tests.rs:277, 286, 313, 348`: a `BTreeMap::default()` style
+  error, and three `mut` variables that don't need it.
+
+**The failing test:** `docs/schema/protocol.schema.json` is out of date, so
+`just protocol` was not run after the protocol messages changed.
+
+**Formatting:** `cargo fmt` was not run on `apps/cli/src/`.
+
+#### P2: `--help` still names the old flag and the old file
+
+**Where:** [main.rs:48-53](../../apps/cli/src/main.rs#L48-L53) and
+[main.rs:103](../../apps/cli/src/main.rs#L103).
+
+`shipdeck --help` still tells users about `--shipdeckfile` and "a project
+file".
+
+#### P3: two error headings name the wrong file
+
+When `-c` names a file without `root: true`, or names a deploy file, the
+heading says "1 shipdeck.yaml file has 1 problem". The file is
+`noroot.yaml` or `deploy.yaml`.
+
+The help for a missing `root` says "add `root:`". It should say
+"add `root: true`".
+
+#### P3: docs, examples and records were not updated (task A6 and "When it is done")
+
+**The old terms remain.** `--shipdeckfile` or "project file" is still in:
+
+- the CLI manual: `apps/cli/manual/details.yaml` (25 times) and `index.yaml`;
+- website pages: `reference/cli.mdx` (16), `troubleshooting.mdx` (7),
+  `reference/config.mdx`, `config-problems.mdx`, `index.mdx`, `upgrading.mdx`,
+  `quickstart.mdx` and `installation.mdx`;
+- `docs/code/config.md`, `README.md`, `docs/project-progress.html`;
+- the header comment of every `examples/*/shipdeck.yaml`.
+
+**Missing example:** no example has a deploy written in the root file.
+
+**Report and handoff:** neither has changed since the checkpoint. The report
+has no table for steer 2 and no list of deleted tests.
+
+## Fourth review
+
+Reviewed on 2026-11-11, after the agent said the third-review findings were
+fixed. No file changed after 09:56:11.
+
+### Checks run
+
+| Check | Result |
+| --- | --- |
+| `just fmt-check` | Pass. |
+| `just lint` | Pass. |
+| `just test` | Pass. 398 tests. |
+| `--schema` against `docs/schema/deploy.schema.json` | Same. The website copy is the same too. |
+
+### Status of the third-review findings
+
+| Finding | Status | Evidence |
+| --- | --- | --- |
+| P2: the checks fail | **Fixed.** | All four checks above pass. |
+| P2: `--help` names the old flag and file | **Fixed.** | `shipdeck --help` shows `-C`, `-c` and "root file". |
+| P3: error headings name the wrong file | **Fixed.** | Run by hand: "1 problem in noroot.yaml", and "add `root: true`". |
+| P3: docs, examples and records | **Mostly fixed.** | The old terms are gone outside `.agents/` and `docs/review/`. `examples/inline/` is added. The report and handoff are updated. Two gaps are listed below. |
+
+The agent's one deviation is accepted. `Manager` owns its block instead of
+borrowing it, because `Server` moves into `tokio::spawn`, which needs
+`'static`. The intent of B5 holds: two managers cannot be represented.
+
+### Open findings
+
+#### P3: the agent edited the design page
+
+The task says the design page decides, and the agent does not edit it. It
+changed three places in [config-v2.md](../feature/config-v2.md):
+
+1. The `oxfile.toml` and `nginx/*.conf` rows now say "Not written today".
+2. The nginx files are removed from the `shipdeck tree` example.
+3. The "What changes" row for `--shipdeckfile` no longer names the flag. This
+   was only to pass the steer's grep.
+
+Edits 1 and 2 mix today's build state into the target design. The design
+should keep showing where nginx files will land. The owner decides whether to
+keep or revert them.
+
+#### P3: deleted tests from the first round are not listed
+
+The report's "Deleted tests" table covers only this round's renames: 10
+tests. The first round deleted test files that held 110 tests. Those are not
+mapped to new tests, and no reason is given for dropping them. Most covered
+the old format, but the report should say so for each file.
+
+#### P3: the inline example's header explains internals
+
+[examples/inline/shipdeck.yaml](../../examples/inline/shipdeck.yaml) opens
+with six comment lines about checks, line numbers and path rules. The
+example rule is one plain sentence saying what the file is, plus a docs link.
+
 ## Limits
 
 These were not run in this review:

@@ -76,7 +76,7 @@ impl Session {
         self.reply(id, Err(error));
     }
 
-    /// `workspace/open`: read the project file or the named deploy file, and
+    /// `workspace/open`: read the root file or the named deploy files, and
     /// keep the pool the app logs in with.
     ///
     /// # Errors
@@ -91,30 +91,16 @@ impl Session {
                 format!("{} is not a folder", root.display()),
             ));
         }
+        let files: Vec<PathBuf> = params.deploy_files.iter().map(PathBuf::from).collect();
+        let named = params.config.as_ref().map(PathBuf::from);
+        let (found, failures) = config::open_all(&root, named.as_deref(), &files);
         let mut problems = Vec::new();
         let mut deployables: BTreeMap<String, Deployment> = BTreeMap::new();
-        if let Some(shipdeckfile) = &params.shipdeckfile {
-            let file = PathBuf::from(shipdeckfile);
-            match config::load_deploy(&root, &file, None) {
-                Ok(deployment) => {
-                    deployables.insert(deployment.slug.clone(), deployment);
-                }
-                Err(found) => problems.extend(convert::problems(&found)),
-            }
-        } else {
-            match config::Project::read(&root) {
-                Ok(project) => {
-                    for (name, file) in &project.deploys {
-                        match config::load_deploy(&root, file, Some(name)) {
-                            Ok(deployment) => {
-                                deployables.insert(name.clone(), deployment);
-                            }
-                            Err(found) => problems.extend(convert::problems(&found)),
-                        }
-                    }
-                }
-                Err(found) => problems.extend(convert::problems(&found)),
-            }
+        for deployment in found {
+            deployables.insert(deployment.slug.clone(), deployment);
+        }
+        for failure in &failures {
+            problems.extend(convert::problems(failure));
         }
         let answer = WorkspaceOpenResult {
             deployables: deployables.values().map(convert::deployable_info).collect(),

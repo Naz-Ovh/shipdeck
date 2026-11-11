@@ -6,7 +6,7 @@ use anyhow::Result;
 
 use super::{Server, pairs};
 use crate::build::{GlibcVersion, normalize_arch};
-use crate::config::Manager;
+use crate::config::{Manager, ManagerKind};
 use crate::ssh::sh_quote;
 
 #[derive(Debug, Clone)]
@@ -96,7 +96,7 @@ echo \"active=$(systemctl is-active {svc} 2>&1 | head -n1)\"
 {pm2}{lookups}{checks}",
             dir = self.q_dir(),
             svc = self.q_service(),
-            pm2 = if self.manager == Some(Manager::Pm2) {
+            pm2 = if self.manager_kind() == Some(ManagerKind::Pm2) {
                 "echo \"pm2=$(pm2 -v 2>/dev/null | tail -n1)\"\n"
             } else {
                 ""
@@ -119,9 +119,9 @@ echo \"active=$(systemctl is-active {svc} 2>&1 | head -n1)\"
         let systemd = get("active");
         let active = match self.manager {
             None => "static".into(),
-            Some(Manager::Systemd) => systemd.clone(),
-            Some(Manager::Pm2) => self.pm2_state().await?.0,
-            Some(Manager::Oxmgr) => "oxmgr".into(),
+            Some(Manager::Systemd(_)) => systemd.clone(),
+            Some(Manager::Pm2(_)) => self.pm2_state().await?.0,
+            Some(Manager::Oxmgr(_)) => "oxmgr".into(),
         };
         Ok(Facts {
             arch: normalize_arch(&get("arch")),
@@ -135,7 +135,7 @@ echo \"active=$(systemctl is-active {svc} 2>&1 | head -n1)\"
             content: content(&get("manifest")),
             active,
             systemd,
-            pm2_version: (self.manager == Some(Manager::Pm2)).then(|| get("pm2")),
+            pm2_version: (self.manager_kind() == Some(ManagerKind::Pm2)).then(|| get("pm2")),
             sudo_missing: values
                 .iter()
                 .filter(|(k, _)| *k == "sudo_missing")

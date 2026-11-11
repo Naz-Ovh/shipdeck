@@ -270,7 +270,7 @@ impl App {
         self.logs = Some(LogsView {
             id: None,
             deployable: index,
-            command: log_command(manager, &process),
+            command: log_command(manager.as_ref(), &process),
             lines: VecDeque::new(),
             scroll: 0,
             state: LogsState::Connecting,

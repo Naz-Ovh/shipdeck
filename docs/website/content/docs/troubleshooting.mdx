@@ -14,12 +14,13 @@ Every message below is what shipdeck prints. The fix follows the message.
     a caret under the spot, and a `= help:` hint. See
     [Config problems](/docs/reference/config-problems).
   </Accordion>
-  <Accordion title="has no project file; expected shipdeck.yaml or .shipdeck">
-    shipdeck reads the project file in the folder you run it in. Run it in that folder, or name
-    one deploy file with `--shipdeckfile=<path>`, which needs no project file.
+  <Accordion title="there is no root file in <folder>; expected shipdeck.yaml or .shipdeck">
+    shipdeck reads the root file in the project folder. Run it in that folder, name the folder
+    with `-C <dir>`, or name a root file with `-c <file>`. A deploy file named as a `DEPLOY`
+    argument needs no root file.
   </Accordion>
   <Accordion title="this folder has both shipdeck.yaml and .shipdeck">
-    Keep one project file name. `shipdeck.yml` is not read at all.
+    A folder holds one root file. Keep one of those two names. `shipdeck.yml` is not read at all.
   </Accordion>
   <Accordion title="unknown key `service`">
     Config format 2 has no `service`. A process is `apps.<app>.process`, with one of `systemd`,
@@ -33,8 +34,8 @@ Every message below is what shipdeck prints. The fix follows the message.
     Pass one login method. See [Login](/docs/guides/ssh).
   </Accordion>
   <Accordion title="No deploys yet">
-    The project file has no `deploys:`, or the list is empty. Add one, or pass
-    `--shipdeckfile`.
+    The root file has no `deploys:`, or the list is empty. Add one there, or name a deploy file
+    as a `DEPLOY` argument.
   </Accordion>
 </Accordions>
 
@@ -138,7 +139,7 @@ panel when they happen during a deploy.
     A binary and a file land at the same path. Rename one, or give the binary a `to`.
   </Accordion>
   <Accordion title="the project folder <path> does not exist">
-    The folder shipdeck runs in is gone. Run it where the project file is.
+    The folder shipdeck runs in, or the one named by `-C`, is gone. Run it where the root file is.
   </Accordion>
   <Accordion title="app api: the source folder <path> does not exist">
     `apps.<app>.source` points at a folder that is not there. With `source: .` the app uses the

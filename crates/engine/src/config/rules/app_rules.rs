@@ -73,12 +73,10 @@ impl Rules<'_> {
         self.patterns(
             &["apps", name, "steps", "backup", "include"],
             &app.steps.backup.include,
-            "include",
         );
         self.patterns(
             &["apps", name, "steps", "backup", "exclude"],
             &app.steps.backup.exclude,
-            "exclude",
         );
     }
 
@@ -121,7 +119,7 @@ impl Rules<'_> {
                 "letters, digits, `.`, `_` and `-`, with at least one letter",
             );
         }
-        self.start(name, app, process);
+        self.start(name, process);
         if process.start.is_none() && app.binary.is_none() {
             self.fail(
                 &["apps", name, "process"],
@@ -168,7 +166,7 @@ impl Rules<'_> {
     }
 
     /// `process.start`: one line, a closed quote, a program first.
-    fn start(&mut self, name: &str, app: &App, process: &Process) {
+    fn start(&mut self, name: &str, process: &Process) {
         let Some(start) = &process.start else {
             return;
         };
@@ -202,7 +200,6 @@ impl Rules<'_> {
                 "a name such as `node`, or a path such as `./my-app`",
             );
         }
-        let _ = app;
     }
 
     /// `binary`: a path, or a path and its place in the app folder.
@@ -262,7 +259,6 @@ impl Rules<'_> {
     }
 
     fn systemd(&mut self, name: &str, systemd: &crate::config::types::Systemd) {
-        let base = ["apps", name, "process", "systemd"];
         if systemd.instances.is_some() {
             self.fail(
                 &["apps", name, "process", "systemd", "instances"],
@@ -324,7 +320,6 @@ impl Rules<'_> {
                 }
             }
         }
-        let _ = base;
     }
 
     fn pm2(&mut self, name: &str, _app: &App, process: &Process, pm2: &crate::config::types::Pm2) {
@@ -415,7 +410,6 @@ impl Rules<'_> {
         let Some(nginx) = &app.nginx else {
             return;
         };
-        let base = ["apps", name, "nginx"];
         let static_app = app.static_site == Some(true);
         if nginx.domains.is_empty() {
             self.fail(
@@ -460,7 +454,6 @@ impl Rules<'_> {
                 );
             }
         }
-        let _ = base;
     }
 
     /// nginx's certificate provider and its email.

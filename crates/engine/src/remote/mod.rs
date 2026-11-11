@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, bail};
 
-use crate::config::{Deployment, Manager, release_path};
+use crate::config::{Deployment, Manager, ManagerKind, release_path};
 use crate::deploy::report::{LogKind, Reporter};
 use crate::release::is_safe_id;
 use crate::ssh::{Output, Session, Stream, sh_quote};
@@ -127,14 +127,20 @@ impl Server {
     }
 
     #[must_use]
-    pub fn manager(&self) -> Option<Manager> {
-        self.manager
+    pub fn manager(&self) -> Option<&Manager> {
+        self.manager.as_ref()
+    }
+
+    /// Which manager it is, without its settings.
+    #[must_use]
+    pub fn manager_kind(&self) -> Option<ManagerKind> {
+        self.manager.as_ref().map(Manager::kind)
     }
 
     /// As messages name the manager.
     #[must_use]
     pub fn manager_label(&self) -> &'static str {
-        match self.manager {
+        match &self.manager {
             Some(manager) => manager.label(),
             None => "static",
         }
@@ -177,13 +183,13 @@ impl Server {
     /// # Errors
     /// Returns an error for a static app, which has no process.
     pub fn agent_service(&self) -> Result<AgentService> {
-        let Some(manager) = self.manager else {
+        let Some(manager) = self.manager.as_ref() else {
             bail!("a static app has no process");
         };
         let manager = match manager {
-            Manager::Systemd => AgentManager::Systemd,
-            Manager::Pm2 => AgentManager::Pm2,
-            Manager::Oxmgr => bail!("oxmgr is not built yet"),
+            Manager::Systemd(_) => AgentManager::Systemd,
+            Manager::Pm2(_) => AgentManager::Pm2,
+            Manager::Oxmgr(_) => bail!("oxmgr is not built yet"),
         };
         Ok(AgentService {
             root: self.dir.clone(),
@@ -200,7 +206,7 @@ impl Server {
     #[must_use]
     pub fn sudo_commands(&self) -> Vec<String> {
         match self.manager {
-            Some(Manager::Systemd) => sudo_commands(&self.dir, &self.process),
+            Some(Manager::Systemd(_)) => sudo_commands(&self.dir, &self.process),
             _ => Vec::new(),
         }
     }
@@ -289,7 +295,7 @@ exit 1",
                 report.log(
                     LogKind::Warn,
                     format!(
-                        "unfinished project files: {}",
+                        "unfinished root files: {}",
                         inspection.unfinished.join(", ")
                     ),
                 );
@@ -363,7 +369,7 @@ echo \"current -> $(readlink current)\"",
     /// # Errors
     /// Returns an error when the unit cannot be installed or enabled.
     pub async fn install_unit(&self, report: &Reporter) -> Result<()> {
-        if self.manager != Some(Manager::Systemd) {
+        if self.manager_kind() != Some(ManagerKind::Systemd) {
             return Ok(());
         }
         let (dir, svc, sudo) = (&self.dir, &self.process, self.sudo());
@@ -388,14 +394,14 @@ echo \"current -> $(readlink current)\"",
     pub async fn restart(&self, report: &Reporter) -> Result<()> {
         match self.manager {
             None => return Ok(()),
-            Some(Manager::Pm2) => {
+            Some(Manager::Pm2(_)) => {
                 let script = self.pm2_script("startOrReload");
                 self.run(&format!("reload {} in pm2", self.process), &script, report)
                     .await?;
                 return Ok(());
             }
-            Some(Manager::Oxmgr) => bail!("oxmgr is not built yet"),
-            Some(Manager::Systemd) => {}
+            Some(Manager::Oxmgr(_)) => bail!("oxmgr is not built yet"),
+            Some(Manager::Systemd(_)) => {}
         }
         let script = format!("{}systemctl restart {}", self.sudo(), self.q_service());
         self.run(&format!("restart {}", self.process), &script, report)
@@ -582,16 +588,16 @@ echo {done}
     /// Returns an error when the log command cannot run.
     pub async fn journal(&self) -> Result<Vec<String>> {
         let script = match self.manager {
-            Some(Manager::Systemd) => format!(
+            Some(Manager::Systemd(_)) => format!(
                 "{}journalctl -u {} -n 30 --no-pager 2>&1",
                 self.sudo(),
                 self.q_service()
             ),
-            Some(Manager::Pm2) => format!(
+            Some(Manager::Pm2(_)) => format!(
                 "pm2 logs {} --lines 30 --nostream --raw 2>&1",
                 sh_quote(&self.process)
             ),
-            Some(Manager::Oxmgr) | None => {
+            Some(Manager::Oxmgr(_)) | None => {
                 bail!("a static site has no process logs; nginx keeps its own in /var/log/nginx")
             }
         };

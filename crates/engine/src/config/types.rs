@@ -1,19 +1,41 @@
-//! The project file and the deploy file as written, before paths are resolved.
+//! The root file and the deploy file as written, before paths are resolved.
 
 use std::collections::BTreeMap;
 
-use schemars::{JsonSchema, Schema, SchemaGenerator};
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize};
 
 use super::steps::{AppSteps, ReleaseSteps};
 
-/// The project file: its deploys, by name, and the deploy file of each.
+/// The root file: its deploys, by name, each a deploy file's path or a deploy
+/// written in place.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct ProjectFile {
-    /// Deploy names and the deploy file of each, a path on your PC.
-    pub deploys: BTreeMap<String, String>,
+pub struct RootFile {
+    /// Marks the file as a root file. A deploy file never holds it.
+    #[schemars(schema_with = "root_true")]
+    pub root: bool,
+    /// Deploy names, and the deploy file of each or the deploy itself.
+    pub deploys: BTreeMap<String, DeployEntry>,
+}
+
+/// The schema of `root`: the constant `true`.
+fn root_true(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({
+        "description": "Marks the file as a root file; a deploy file never holds it.",
+        "const": true
+    })
+}
+
+/// One entry of a root file: a deploy file's path, or the deploy in place.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum DeployEntry {
+    /// A deploy file's path on your PC.
+    File(String),
+    /// The deploy written in the root file.
+    InPlace(Box<DeployFile>),
 }
 
 /// One whole deploy: the server, the release and every app.
@@ -233,7 +255,7 @@ impl JsonSchema for Process {
 }
 
 /// A systemd unit: the built-in one with your own properties, or your own file.
-#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Systemd {
     /// The user the unit runs as. Default: the SSH user.
@@ -252,7 +274,7 @@ pub struct Systemd {
 }
 
 /// The systemd unit sections `options` writes into.
-#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SystemdOptions {
     /// `[Unit]` properties.
@@ -267,7 +289,7 @@ pub struct SystemdOptions {
 }
 
 /// A PM2 app: the file shipdeck writes, or your own ecosystem file.
-#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Pm2 {
     /// PM2 app properties, such as `instances` or `max_memory_restart`.
@@ -279,7 +301,7 @@ pub struct Pm2 {
 }
 
 /// An oxmgr app. Parsed and checked; not built yet.
-#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Oxmgr {
     /// oxfile app properties.

@@ -166,7 +166,6 @@ fn select(run: &Run<'_>, plan: &Plan, listing: &[ReleaseFile]) -> Picked {
                 .map(|(pattern, _)| format!("{name}: {}", pattern.text)),
         );
     }
-    let _ = &mut hits;
     Picked { paths, unmatched }
 }
 

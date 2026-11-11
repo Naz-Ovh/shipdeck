@@ -3,60 +3,66 @@
 ## Config format 2 — 2026-11-11
 
 The config, the release layout and the deploy pipeline were rebuilt to the
-design in `docs/feature/config-v2.md`, plus the `binary` steer in
-`.agents/task/config-v2-steer-01-binary.md`. The old format is gone, not kept
-beside the new one: an old file fails with unknown-key problems and there is no
-migration command.
+design in `docs/feature/config-v2.md`, the `binary` steer
+(`.agents/task/config-v2-steer-01-binary.md`) and steer 2
+(`.agents/task/config-v2-steer-02-cli-and-fixes.md`), which wins over both.
+The old format is gone, not kept beside the new one: an old file fails with
+unknown-key problems and there is no migration command.
 
 ### What the tree holds now
 
-- **Config.** `crates/engine/src/config/` is rebuilt around `ProjectFile` and
-  `DeployFile` (`types.rs`), placeholders (`placeholders.rs`), the three path
-  forms (`paths.rs`), the value rules (`rules.rs`), and one resolved
-  `Deployment` (`resolve.rs`) that everything after loading uses. `load.rs`
-  reads the project file and each deploy file in three passes.
-- **One pipeline.** `deploy/` is preflight, build, upload, backup, activation
-  and recovery, over one `Deployment` with a list of apps. `deploy/mod.rs`,
-  `deploy/stages.rs` and the `deploy/multiple*.rs` files are merged away.
+- **Config.** `crates/engine/src/config/` is built around `RootFile`
+  (`root: true`, `deploys`) and `DeployFile` (`types.rs`), placeholders
+  (`placeholders.rs`), the three path forms (`paths.rs`), the value rules
+  (`rules.rs`), and one resolved `Deployment` (`resolve.rs`). `load.rs` reads
+  the root file, or the files named on the command line, in three passes.
+  `DeployEntry` is a deploy file's path or the deploy written in place.
+- **The manager.** `Process.manager: Option<KeepUp>` in the written type; after
+  resolve, `Manager::{Systemd(Systemd), Pm2(Pm2), Oxmgr(Oxmgr)}` carries its
+  block. `ManagerKind` is the `Copy` label used by `init`, setup and the TUI.
+  It owns rather than borrows because `Server` is moved into `tokio::spawn`.
+- **One pipeline.** `deploy/` is preflight, build, upload, setup, backup, switch,
+  restart, nginx, health, done, rollback, failed, over one `Deployment` with a
+  list of apps.
 - **Release plan.** `bundle/plan.rs` computes every path the next release holds;
   `deploy` and `shipdeck tree` both use it. `bundle/content.rs` hashes it,
   fingerprints it and packs it.
 - **Layout.** Shipdeck's files live in `.shipdeck/` in each release:
-  `release.json`, `settings.json`, `<process>.service`, `<process>.pm2.json`,
-  `oxfile.toml`, `nginx/<name>-<app>.conf`. `scripts/server-setup.sh` installs
-  units from `current/.shipdeck/$SERVICE.service`.
-- **Commands.** `shipdeck deploy <deploy>`, `rollback`, `releases`,
-  `server-info`, `work`, `events`, `setup`, and the new `tree`. `--shipdeckfile`
-  names one deploy file; without it the project file is read.
+  `release.json`, `settings.json`, `<process>.service`, `<process>.pm2.json`.
+  Nginx and oxmgr files are not written until those parts are built.
+- **Commands.** `shipdeck -C <dir> -c <file> deploy <deploy>`, plus `rollback`,
+  `releases`, `server-info`, `work`, `events`, `setup` and `tree`. A `<deploy>`
+  is a name from the root file, or a `.yaml`/`.yml` file; `Target` is parsed
+  once. `--shipdeckfile` is removed.
 - **Parse only.** `nginx:` and `oxmgr:` are read and checked; a deploy that uses
   either stops at preflight. `systemd.instances`, `{{INSTANCE}}` and `@` in a
   process name are refused.
 
-### After the first review
+### Reviews 1 to 3
 
-The review is `docs/review/config-v2-rewrite-review.md`. Fixed there:
-
-- placeholders now expand in commands, `process.env` values, the PM2 file
-  and `health.url`, through one `Deployment::expand`;
-- an automatic rollback runs `rollback.server` and `rollback.local` first;
-- `--on-failure` is optional, so `mode: off` is used unless the flag is given;
-- the manager is `Process.manager: Option<KeepUp>`; `RawProcess` keeps the
-  schema and refuses two keys;
-- `binary: { path }` without `to` works;
-- dead code and `let _ =` silencers are gone;
-- one `deploy_completed` event, not two;
-- no placeholder nginx or oxmgr files in the release.
+The review is `docs/review/config-v2-rewrite-review.md`. Every finding is fixed
+and has a test; the report has the per-item table. In short: placeholders expand
+in commands, `process.env`, the PM2 file, unit `Environment=` and `health.url`
+through one `Deployment::expand`; an automatic rollback runs
+`rollback.server` then `rollback.local` with `SHIPDECK_PREVIOUS`; `--on-failure`
+is optional; dead code and `let _ =` silencers are gone; one `deploy_completed`;
+no placeholder files; full paths in file errors. The third review's check
+failures are fixed (extension check, `log_command`, test lints, `just protocol`,
+`cargo fmt`), `--help` and the report headings say root file, and every doc,
+example and record is updated, including the new `examples/inline/`.
 
 ### Checks
 
-`cargo fmt --all -- --check`, `cargo check --workspace --all-targets`,
-`cargo test --workspace` (all pass), strict pedantic and performance Clippy, and
-`just schema` with no diff in `docs/schema` all passed. `shipdeck tree` on a
-copy of `docs/feature/config-v2/universabile/` matches the design's tree.
+`just fmt`, `just protocol`, `just schema` (twice; `md5sum -c` all `OK`),
+`cargo check --workspace --all-targets`, strict pedantic and performance
+Clippy, `cargo test --workspace` (398 passed, 0 failed), `just verify` and
+`just build-doc` all passed. `shipdeck tree` on a copy of
+`docs/feature/config-v2/universabile/` matches the design's tree.
 
-`just build-doc` was not run. The Podman SSH suite (`tests/monorepo_ssh.py`) was
-rewritten for the new format with every scenario the task lists, but it was not
-run: this machine has no container and no `sshd`.
+`just build-doc` passed after the latest website edits. The Podman SSH suite
+(`tests/monorepo_ssh.py`) is rewritten for the new format with every scenario
+the task lists, but it was **not run**: this machine has no container and no
+`sshd`.
 
 ### Docs
 

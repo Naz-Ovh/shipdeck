@@ -1,0 +1,20 @@
+# The root file: `root: true`, and its deploys by name.
+# Rules: docs/feature/config-v2.md
+#
+# `production` is a deploy file. `staging` is written in place, in this file:
+# the same keys and the same checks, with its problems shown at their line
+# here. Its `./x` paths and `{{CONFIG}}` start from this file's folder.
+
+root: true
+deploys:
+  production: deploy.yaml
+  staging:
+    name: static-demo
+    server:
+      ssh: { host: staging }
+      dir: /var/www/staging
+    apps:
+      site:
+        source: .
+        files: [dist]
+        static: true

@@ -233,7 +233,7 @@ impl Run<'_> {
         }
     }
 
-    fn exec_rollback_commands(&self, target: &str) -> Exec<'_> {
+    pub(super) fn exec_rollback_commands(&self, target: &str) -> Exec<'_> {
         let mut exec = self.exec(Step::Rollback);
         exec.previous = Some(target.to_string());
         exec
@@ -269,7 +269,12 @@ impl Run<'_> {
     }
 
     /// `rollback.mode`: auto rolls back; ask waits for an answer.
-    async fn should_roll_back(&self, step: Step, err: &anyhow::Error, previous: &str) -> bool {
+    pub(super) async fn should_roll_back(
+        &self,
+        step: Step,
+        err: &anyhow::Error,
+        previous: &str,
+    ) -> bool {
         match self.deployment.rollback_mode() {
             RollbackMode::Auto => true,
             RollbackMode::Off => false,

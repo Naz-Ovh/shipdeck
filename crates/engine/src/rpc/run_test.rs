@@ -16,12 +16,12 @@ apps:
     process: { start: node dist/main.js, systemd: {} }
 ";
 
-/// Writes a project file and its one deploy, under `root`.
+/// Writes a root file and its one deploy, under `root`.
 fn write_project(root: &std::path::Path) {
     std::fs::create_dir_all(root.join("deploy")).unwrap();
     std::fs::write(
         root.join("shipdeck.yaml"),
-        "deploys:\n  web: deploy/web.yaml\n",
+        "root: true\ndeploys:\n  web: deploy/web.yaml\n",
     )
     .unwrap();
     std::fs::write(root.join("deploy/web.yaml"), SAMPLE).unwrap();
@@ -277,7 +277,8 @@ async fn an_app_using_the_protocol_crate_talks_to_the_engine() {
     write_project(&root);
     let opened = app
         .workspace_open(&WorkspaceOpen {
-            shipdeckfile: None,
+            config: None,
+            deploy_files: Vec::new(),
             root: root.to_str().unwrap().to_string(),
             login: Login::Auto,
             no_shell_env: false,

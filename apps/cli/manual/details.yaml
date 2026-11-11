@@ -22,9 +22,9 @@ overview:
     and which on the server.
 
     Terms used everywhere in this manual:
-    - project folder: the folder you run shipdeck in. It holds the project file.
-    - project file: shipdeck.yaml or .shipdeck in the project folder. It lists the deploys by
-      name and the deploy file of each.
+    - project folder: the folder you run shipdeck in, or the one named by -C.
+    - root file: shipdeck.yaml or .shipdeck in the project folder; -c names another one. It
+      holds `root: true` and lists the deploys by name, each a deploy file or written in place.
     - deploy file: one whole deploy in one file: the server, the release and every app. It can
       live anywhere, under any name.
     - app: one running program or one static site, under `apps.<app>` in the deploy file.
@@ -62,7 +62,7 @@ quickstart:
        known: `ssh deploy@prod`.
     2. The first time, prepare the server: either run scripts/server-setup.sh as root (see
        server-setup), or let `shipdeck setup` do it (see cli.setup).
-    3. Write a project and a deploy file, or let init do it:
+    3. Write a root file and a deploy file, or let init do it:
          shipdeck init my-api --preset nodejs --host prod --manager systemd
        That writes shipdeck.yaml, deploy.yaml, an empty .env and a .gitignore.
     4. Fill in the values marked with `#` or a comment, then look over the deploy:
@@ -71,7 +71,7 @@ quickstart:
     6. Later, put an older release back: `shipdeck releases my-api` lists them, and
        `shipdeck rollback my-api <release>` makes one live again.
 
-    A minimal deploy file, beside the project file:
+    A minimal deploy file, beside the root file:
       name: my-api
       server:
         ssh: { host: prod, user: deploy }
@@ -88,9 +88,22 @@ quickstart:
             health:
               url: http://127.0.0.1:3000/
 
-    The project file, for one deploy:
+    The root file, for one deploy:
+      root: true
       deploys:
         production: deploy.yaml
+
+    A deploy can also be written in the root file, in place of a file's path:
+      root: true
+      deploys:
+        staging:
+          name: my-api
+          server: { ssh: { host: prod, user: deploy }, dir: /opt/staging }
+          apps:
+            my-api:
+              source: .
+              files: [dist]
+              static: true
 
     Then `shipdeck deploy production`. Everything else has a default; `shipdeck man configs`
     lists every property.
@@ -103,11 +116,12 @@ agents:
       SHIPDECK_SSH_KEY and SHIPDECK_PASSWORD answer the login. `--trust-new-host` accepts a new
       host key once; a changed key is still refused.
     - Read the exit code (see exit-codes); do not parse the log text. The log may change.
-    - Point at the project folder with the working directory, or name one deploy file with
-      --shipdeckfile. With neither a project file nor --shipdeckfile, shipdeck stops and says
-      which file it expected.
-    - `shipdeck deploy <deploy>` takes one or more deploy names. Without one it uses the only
-      deploy of the project, and refuses when there are several.
+    - Point at the project folder with -C, or with the working directory. -c names another root
+      file. With no root file and no deploy file named, shipdeck stops and says which names it
+      expected.
+    - `shipdeck deploy <deploy>` takes one or more deploys. A name comes from the root file; an
+      argument ending in .yaml or .yml is a deploy file, and needs no root file. Without one it
+      uses the only deploy of the root file, and refuses when there are several.
     - A config mistake is reported with its file, line and column, and the run stops before any
       connection. Treat any non-zero exit as "nothing is live that was not live before", except
       codes 3 and 5 (see exit-codes).
@@ -164,11 +178,14 @@ cli:
     the binary.
 
     Choosing what to read:
-      shipdeck                                  the TUI, on the project file in this folder
-      shipdeck deploy production                the project file, then that deploy's file
-      shipdeck --shipdeckfile=scripts/p.yaml deploy    that deploy file only
-    --shipdeckfile works with every server command and with `tree`. It is not needed when the
-    project file lists one deploy.
+      shipdeck                                  the TUI, on the root file in this folder
+      shipdeck deploy production                the root file, then that deploy
+      shipdeck deploy scripts/p.yaml            that deploy file only; no root file is read
+      shipdeck -C apps/api deploy production    as if started in apps/api
+      shipdeck -c ops/root.yaml deploy staging  another root file; the folder does not change
+
+    A <DEPLOY> argument is a name from the root file, or a file ending in .yaml or .yml. Only
+    the ending decides: ./production is refused, not read as either.
 
     The commands:
       deploy <DEPLOY>...      build and deploy, one after another; the first failure stops the rest
@@ -179,12 +196,13 @@ cli:
       events [DEPLOY]         the events saved on the server, oldest first
       setup [DEPLOY]          guided one-time server preparation
       tree [DEPLOY]           every path of the next release; never connects
-      init                    write a project file and a deploy file
+      init                    write a root file and a deploy file
       engine                  the protocol loop an app drives; not for people
       man                     this manual
 
     Flags, on every command:
-      --shipdeckfile PATH     use this deploy file instead of the project file
+      -C, --cwd DIR           the project folder; every relative path starts there
+      -c, --config FILE       the root file to read, instead of shipdeck.yaml or .shipdeck
       --key PATH              log in with a private key file
       --key-text TEXT         log in with a key's text (it shows in `ps`)
       --password PASSWORD     log in with a password (it lands in history)
@@ -197,8 +215,9 @@ cli:
 cli.tui:
   see: [cli, service-control, cli.rollback]
   text: |
-    `shipdeck` with no command opens the TUI on the project file in the current folder. It lists
-    the deploys of that file and follows what the engine reports.
+    `shipdeck` with no command opens the TUI on the root file in the project folder. It lists
+    the deploys of that file, including ones written in place, and follows what the engine
+    reports.
 
     Screens, by Tab or 1, 2, 3:
     - Deploys: every deploy, what is live on its server, and the selected one's apps, steps and
@@ -342,7 +361,7 @@ cli.init:
   see: [presets, quickstart, cli.schema]
   text: |
     `shipdeck init <NAME> [--preset P] [--manager systemd|pm2] [--host H] [--user U]
-    [--project PATH]` writes a project file, a deploy file, an empty .env and a .gitignore in the
+    [--project PATH]` writes a root file, a deploy file, an empty .env and a .gitignore in the
     folder you run it in.
 
     It asks for what the flags leave out, when there is a terminal to ask in; without one, name,
@@ -350,7 +369,7 @@ cli.init:
     start (see presets). The manager chooses the process block: `systemd: {}` or `pm2: {}`.
 
     What it writes is checked as a launch would check it before anything is written, so init never
-    writes a config shipdeck would refuse. An existing project file is never replaced.
+    writes a config shipdeck would refuse. An existing root file is never replaced.
 
     Then: fill in the deploy file, `shipdeck tree <NAME>` to see what ships, and
     `shipdeck deploy <NAME>`.
@@ -358,7 +377,7 @@ cli.init:
 cli.schema:
   see: [config, cli.init]
   text: |
-    `shipdeck --schema` prints the JSON Schema of the project file and the deploy file. The same
+    `shipdeck --schema` prints the JSON Schema of the root file and the deploy file. The same
     file is published at each release:
       https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v<version>/docs/schema/deploy.schema.json
     The first line `init` writes points at it, so editors complete keys, show a field's meaning,
@@ -451,15 +470,21 @@ config:
   text: |
     Two files make a deploy.
 
-    The project file is shipdeck.yaml or .shipdeck in the folder you run shipdeck in, exactly those
-    two names; shipdeck.yml is not read, and having both is an error. It holds one thing:
+    The root file is shipdeck.yaml or .shipdeck in the project folder, exactly those two names;
+    shipdeck.yml is not read, and having both is an error. -c names another one. It holds
+    `root: true` and the deploys by name:
+      root: true
       deploys:
         production: scripts/deploy/production.yaml
         staging: scripts/deploy/staging.yaml
-    Each value is the deploy file of that deploy, a path on your PC.
+    Each value is a deploy file's path on your PC, or the deploy written in place as a map. A
+    deploy written in place follows every rule of a deploy file: the same keys and the same
+    checks, its problems point at their line in the root file, and its `./x` paths and
+    `{{CONFIG}}` start from the root file's folder.
 
     The deploy file is one whole deploy: `name`, `server`, `release` and `apps`. It can live
-    anywhere, under any name, and needs no project file when you name it with --shipdeckfile.
+    anywhere, under any name, and needs no root file when you name it with `-c` or as a <DEPLOY>
+    argument ending in .yaml or .yml.
 
     Paths on your PC, in either file, take one of three forms:
       /opt/x        absolute
@@ -669,8 +694,8 @@ config.problems:
     - a process app with `nginx` needs `proxy_pass`; a static app needs root and index.
     - `tls` is `none` or a map with `provider` and `email`.
     - the folder has both shipdeck.yaml and .shipdeck: keep one.
-    - no project file here; expected shipdeck.yaml or .shipdeck: run shipdeck in that folder, or
-      name a deploy file with --shipdeckfile.
+    - no root file here; expected shipdeck.yaml or .shipdeck: run shipdeck in that folder, -C it,
+      or name a root file with -c.
 
 config.template:
   see: [systemd, pm2]
@@ -1184,7 +1209,7 @@ server-setup:
 presets:
   see: [cli.init, examples]
   text: |
-    What `shipdeck init --preset` writes. Every preset writes a project file, a deploy file, an
+    What `shipdeck init --preset` writes. Every preset writes a root file, a deploy file, an
     empty .env and a .gitignore, then you fill in the values.
 
       nodejs    build: npm ci, npm run build; ships dist and the manifests; server runs
@@ -1204,7 +1229,7 @@ presets:
 examples:
   see: [config, presets, recipes, monorepo]
   text: |
-    Complete files for every shape live in examples/ in the repository, each with a project file
+    Complete files for every shape live in examples/ in the repository, each with a root file
     and a deploy file:
       node/        a Node.js app with a build and server-side installs
       go/          one static binary, nothing to install on the server
@@ -1213,6 +1238,7 @@ examples:
       pm2/         PM2 in cluster mode, no sudo
       static/      files shipped and switched; serving is yours
       monorepo/    one release with a process app and a static site
+      inline/      a deploy written in the root file itself, beside one in a deploy file
 
     A small deploy file with a bit of everything:
       name: shop
@@ -1300,9 +1326,9 @@ troubleshooting:
   text: |
     The messages people hit, and what they mean.
 
-    ✘ no project file here; expected shipdeck.yaml or .shipdeck
-      shipdeck reads the project file in the folder you run it in, or the deploy file you name with
-      --shipdeckfile. Run it in that folder, or name the file.
+    ✘ no root file here; expected shipdeck.yaml or .shipdeck
+      shipdeck reads the root file in the project folder. Run it there, name the folder with -C,
+      or name a root file with -c.
 
     ✘ this folder has both shipdeck.yaml and .shipdeck
       Keep one. shipdeck.yml is not read at all.

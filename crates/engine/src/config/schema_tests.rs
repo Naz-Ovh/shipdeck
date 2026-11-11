@@ -28,7 +28,7 @@ fn the_design_examples_parse() {
     }
 }
 
-/// Every folder in `examples/`, with its project file and deploy file.
+/// Every folder in `examples/`, with its root file and deploy files.
 #[test]
 fn every_example_parses_and_resolves() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -41,18 +41,25 @@ fn every_example_parses_and_resolves() {
         }
         seen += 1;
         let name = folder.file_name().unwrap().to_string_lossy().to_string();
-        let project = crate::config::load::Project::read(&folder)
+        let root = crate::config::load::Root::read(&folder, None)
             .unwrap_or_else(|problems| panic!("{name}: {problems:#?}"));
-        assert!(!project.deploys.is_empty(), "{name} names no deploy");
-        for (deploy, file) in &project.deploys {
-            let text = std::fs::read_to_string(file)
-                .unwrap_or_else(|err| panic!("{name}: {}: {err}", file.display()));
-            let parsed = crate::config::parse_deploy(&text)
-                .unwrap_or_else(|problems| panic!("{name}/{deploy}: {problems:#?}"));
-            assert!(!parsed.apps.is_empty(), "{name}/{deploy} has no apps");
+        assert!(!root.deploys.is_empty(), "{name} names no deploy");
+        for (deploy, entry) in &root.deploys {
+            match entry {
+                crate::config::Deploy::File(file) => {
+                    let text = std::fs::read_to_string(file)
+                        .unwrap_or_else(|err| panic!("{name}: {}: {err}", file.display()));
+                    let parsed = crate::config::parse_deploy(&text)
+                        .unwrap_or_else(|problems| panic!("{name}/{deploy}: {problems:#?}"));
+                    assert!(!parsed.apps.is_empty(), "{name}/{deploy} has no apps");
+                }
+                crate::config::Deploy::InPlace(parsed) => {
+                    assert!(!parsed.apps.is_empty(), "{name}/{deploy} has no apps");
+                }
+            }
         }
     }
-    assert!(seen >= 7, "the examples folder lost one of its folders");
+    assert!(seen >= 8, "the examples folder lost one of its folders");
 }
 
 #[test]

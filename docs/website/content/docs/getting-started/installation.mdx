@@ -180,7 +180,7 @@ shipdeck 0.3.1
 
 ## Editor completion
 
-shipdeck generates a JSON Schema for the project file and the deploy file, and publishes it with every release tag. Put this line at the top of a config file, and any editor that uses the YAML language server (the VS Code YAML extension, Neovim, Zed, JetBrains IDEs) gives you completion, descriptions and errors as you type:
+shipdeck generates a JSON Schema for the root file and the deploy file, and publishes it with every release tag. Put this line at the top of a config file, and any editor that uses the YAML language server (the VS Code YAML extension, Neovim, Zed, JetBrains IDEs) gives you completion, descriptions and errors as you type:
 
 ```yaml title="deploy.yaml"
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v<version>/docs/schema/deploy.schema.json
@@ -207,6 +207,6 @@ shipdeck --schema > deploy.schema.json
 ## Next
 
 <Cards>
-  <Card title="Quickstart" href="/docs/getting-started/quickstart" description="Write a project file and a deploy file, and run your first deploy." />
+  <Card title="Quickstart" href="/docs/getting-started/quickstart" description="Write a root file and a deploy file, and run your first deploy." />
   <Card title="Command line" href="/docs/reference/cli" description="Every flag, the login options and exit codes." />
 </Cards>

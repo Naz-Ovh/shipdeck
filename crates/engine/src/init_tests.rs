@@ -4,7 +4,7 @@ fn new(preset: Preset) -> NewDeployable {
     NewDeployable {
         name: "shop".into(),
         preset,
-        manager: Manager::Systemd,
+        manager: ManagerKind::Systemd,
         host: "prod".into(),
         user: Some("deploy".into()),
         project: ".".into(),
@@ -27,14 +27,14 @@ fn every_preset_writes_a_valid_deploy_file() {
 #[test]
 fn a_pm2_preset_writes_the_pm2_block() {
     let mut deploy = new(Preset::Node);
-    deploy.manager = Manager::Pm2;
+    deploy.manager = ManagerKind::Pm2;
     let yaml = deploy.yaml();
     assert!(yaml.contains("      pm2: {}"), "{yaml}");
     assert!(!yaml.contains("systemd"), "{yaml}");
 }
 
 #[test]
-fn init_writes_a_project_file_and_a_deploy_file() {
+fn init_writes_a_root_file_and_a_deploy_file() {
     let dir = std::env::temp_dir().join(format!("shipdeck-init-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -42,11 +42,11 @@ fn init_writes_a_project_file_and_a_deploy_file() {
     let yaml = check(&dir, &deploy).unwrap();
     let written = write(&dir, &deploy.name, &yaml).unwrap();
     assert_eq!(written.len(), 4, "{written:?}");
-    let project = crate::config::Project::read(&dir).unwrap();
-    assert_eq!(
-        project.deploy_file("shop"),
-        Some(dir.join(DEPLOY_FILE).as_path())
-    );
+    let root = crate::config::Root::read(&dir, None).unwrap();
+    assert!(matches!(
+        root.deploys.get("shop"),
+        Some(crate::config::Deploy::File(file)) if file == &dir.join(DEPLOY_FILE)
+    ));
     let loaded = crate::config::load_deploy(&dir, &dir.join(DEPLOY_FILE), Some("shop")).unwrap();
     assert_eq!(loaded.name(), "shop");
     std::fs::remove_dir_all(&dir).unwrap();

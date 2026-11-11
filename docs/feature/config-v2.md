@@ -185,10 +185,12 @@ only your files.
 | `.shipdeck/settings.json` | Always. The resolved config, for rollback. |
 | `.shipdeck/<process>.service` | A systemd app. |
 | `.shipdeck/<process>.pm2.json` | A PM2 app without its own ecosystem file. |
-| `.shipdeck/oxfile.toml` | Any oxmgr app. |
-| `.shipdeck/nginx/<name>-<app>.conf` | Any app with `nginx:`. |
+| `.shipdeck/oxfile.toml` | An oxmgr app, once oxmgr is built. Not written today. |
+| `.shipdeck/nginx/<name>-<app>.conf` | An app with `nginx:`, once nginx is built. Not written today. |
 
-Keeping the nginx file in the release lets a rollback restore routing too.
+Keeping the nginx file in the release, once it is written, lets a rollback restore
+routing too. Until then a deploy with `nginx:` or `oxmgr:` stops at preflight, so the
+plan holds no placeholder for either.
 
 ### Shared folders
 
@@ -733,11 +735,6 @@ $ shipdeck tree production --depth 3
 /opt/universabile/releases/<id>   (current after the switch)
 .
 ├── .shipdeck/                                     generated
-│   ├── nginx/
-│   │   ├── universabile-admin.conf
-│   │   ├── universabile-server.conf
-│   │   ├── universabile-vendor.conf
-│   │   └── universabile-website.conf
 │   ├── release.json
 │   ├── settings.json
 │   ├── universabile-server.pm2.json
@@ -774,7 +771,7 @@ missing patterns, and exits with 1.
 | --- | --- |
 | A deploy root scanned for subfolders with `shipdeck.yaml` | One root file (`root: true`) in the project folder, or `-c <file>` |
 | A deploy root as a command argument | A deploy name, or a deploy file ending in `.yaml` or `.yml` |
-| `--shipdeckfile` (format 2 draft) | Removed: name the deploy file as the argument |
+| The format 2 draft's deploy-file flag | Removed: name the deploy file as the argument |
 | No way to run from another folder | `--cwd` (`-C`) |
 | A deploy is a folder | A deploy is one file, anywhere |
 | `shipdeck.yml` also accepted | `shipdeck.yaml` or `.shipdeck` only |

@@ -1,7 +1,7 @@
 //! `shipdeck engine`: the process an app starts, and the pipe it holds.
 
 use std::io::IsTerminal;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use anyhow::{Context, Result, bail};
@@ -80,12 +80,17 @@ impl Engine {
         root: &Path,
         login: &Login,
         no_shell_env: bool,
-        shipdeckfile: Option<&Path>,
+        config: Option<&Path>,
+        deploy_files: &[PathBuf],
     ) -> Result<WorkspaceOpenResult> {
         self.connection
             .workspace_open(&WorkspaceOpen {
                 root: root.display().to_string(),
-                shipdeckfile: shipdeckfile.map(|file| file.display().to_string()),
+                config: config.map(|file| file.display().to_string()),
+                deploy_files: deploy_files
+                    .iter()
+                    .map(|file| file.display().to_string())
+                    .collect(),
                 login: login.clone(),
                 no_shell_env,
             })
@@ -100,6 +105,7 @@ impl Engine {
 }
 
 /// This program, run as the engine, with its three streams wired up.
+#[cfg(windows)]
 fn line(gitshell: Option<&Path>) -> Result<std::process::Command> {
     let program = std::env::current_exe().context("finding this program")?;
     let mut command = std::process::Command::new(program);
@@ -110,12 +116,23 @@ fn line(gitshell: Option<&Path>) -> Result<std::process::Command> {
         // Its warnings are the app's to print; the protocol is on stdout.
         .stderr(Stdio::inherit());
     own_group(&mut command);
-    #[cfg(windows)]
     if let Some(path) = gitshell {
         command.env(GITSHELL_ENV, path);
     }
-    #[cfg(not(windows))]
-    let _ = gitshell;
+    Ok(command)
+}
+
+/// This program, run as the engine. Windows' `gitshell` flag has no use here.
+#[cfg(not(windows))]
+fn line(_: Option<&Path>) -> Result<std::process::Command> {
+    let program = std::env::current_exe().context("finding this program")?;
+    let mut command = std::process::Command::new(program);
+    command
+        .arg("engine")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+    own_group(&mut command);
     Ok(command)
 }
 

@@ -1,5 +1,6 @@
-# The project file: its deploys by name.
+# The root file: `root: true`, and its deploys by name.
 # Rules: docs/feature/config-v2.md
 
+root: true
 deploys:
   production: deploy.yaml

@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.1/docs/schema/deploy.schema.json
+# Every field: https://github.com/Naz-Ovh/shipdeck/tree/main/docs/feature/config-v2.md
+
+# The other deploy of this root file: a deploy file beside it. `staging` is
+# written in the root file itself.
+name: static-site
+server:
+  ssh: { host: prod, user: deploy }
+  dir: /var/www/static
+
+apps:
+  site:
+    source: .
+    files: [dist]
+    static: true

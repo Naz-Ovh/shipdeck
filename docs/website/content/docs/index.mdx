@@ -27,10 +27,11 @@ From your repository root, create a deployment:
 shipdeck init my-api --preset rust --manager systemd --host prod
 ```
 
-That writes a **project file** (`shipdeck.yaml`) and a **deploy file** (`deploy.yaml`). The
-project file lists the deploys of this repository:
+That writes a **root file** (`shipdeck.yaml`) and a **deploy file** (`deploy.yaml`). The
+root file lists the deploys of this repository:
 
 ```yaml
+root: true
 deploys:
   production: deploy.yaml
 ```
@@ -67,7 +68,7 @@ pass `--key`. The SSH user must already exist.
 shipdeck
 ```
 
-In the terminal UI the deploys of your project file are listed. Select one and press Enter.
+In the terminal UI the deploys of your root file are listed. Select one and press Enter.
 `c` connects, `r` opens releases, `D` inspects a release, and `:logs` follows logs. Select an
 older release and press Enter to roll back.
 

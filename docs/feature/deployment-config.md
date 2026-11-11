@@ -360,7 +360,7 @@ fast-glob and Tailwind:
 
 - Names starting with a dot match like any other; `.git` is never shipped.
 - In `deploy`, `shipdeck.yaml` and `service.template` are never shipped.
-- A file from `deploy` replaces a project file at the same path (the log says so).
+- A file from `deploy` replaces a source file at the same path (the log says so).
 - Quote a pattern that starts with `!` or `*`: YAML reads those as a tag or an alias.
 - Every `include` pattern must find something after the build, or the deploy stops at Build (Preflight for `deploy`).
 - `.env*` files always get mode `0600`; links inside folders stay links.

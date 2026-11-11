@@ -59,11 +59,11 @@ same run.
 
 | Message | When | Fix |
 | --- | --- | --- |
-| `this folder has both shipdeck.yaml and .shipdeck` | one folder holds both project file names | Keep one of them. |
-| `has no project file; expected shipdeck.yaml or .shipdeck` | the folder you ran shipdeck in has neither | Run it in the project folder, or name a deploy file with `--shipdeckfile`. |
+| `this folder has both shipdeck.yaml and .shipdeck` | one folder holds both root file names | Keep one of them. |
+| `there is no root file in <folder>; expected shipdeck.yaml or .shipdeck` | the project folder has neither | Run it there, name the folder with `-C`, or name a root file with `-c`. |
 | `cannot read it: <os error>` | the file cannot be read | Fix its permissions. |
 
-`shipdeck.yml` is not read at all. A deploy file lives where it lives; only the project file
+`shipdeck.yml` is not read at all. A deploy file lives where it lives; only the root file
 name is fixed. See [Config](/docs/reference/config).
 
 ## YAML syntax

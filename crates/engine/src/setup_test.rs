@@ -165,7 +165,7 @@ fn script_accepts_valid_values() {
     }
 }
 
-fn process(name: &str, manager: Manager) -> SetupProcess {
+fn process(name: &str, manager: ManagerKind) -> SetupProcess {
     SetupProcess {
         name: name.into(),
         manager: Some(manager),
@@ -175,7 +175,7 @@ fn process(name: &str, manager: Manager) -> SetupProcess {
 
 #[test]
 fn guided_script_offers_both_kinds_of_access() {
-    let api = process("api", Manager::Systemd);
+    let api = process("api", ManagerKind::Systemd);
     let commands = guided_script(
         "/opt/api",
         std::slice::from_ref(&api),
@@ -192,7 +192,7 @@ fn guided_script_offers_both_kinds_of_access() {
 
 #[test]
 fn guided_script_starts_pm2_at_boot() {
-    let web = process("web", Manager::Pm2);
+    let web = process("web", ManagerKind::Pm2);
     let script = guided_script("/opt/web", &[web], SetupAccess::Commands);
     assert!(script.contains("pm2 startup systemd"));
     assert!(!script.contains("SHIPDECK_COMMANDS"));

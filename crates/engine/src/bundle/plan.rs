@@ -351,8 +351,13 @@ fn add_binary(deployment: &Deployment, name: &str, plan: &mut Plan) -> Result<()
     let Some(place) = deployment.binary_place(name) else {
         return Ok(());
     };
-    let metadata = std::fs::metadata(&local)
-        .with_context(|| format!("the build did not produce {written}"))?;
+    let full = crate::config::full(&local);
+    let metadata = std::fs::metadata(&local).with_context(|| {
+        format!(
+            "the build did not produce {written}, which is {}",
+            full.display()
+        )
+    })?;
     if metadata.is_dir() {
         bail!("the binary {written} is a folder; `binary` names one file");
     }
@@ -398,7 +403,7 @@ fn add_generated(
             continue;
         };
         match manager {
-            crate::config::Manager::Systemd => {
+            crate::config::Manager::Systemd(_) => {
                 let path = unit_file(deployment, name);
                 if let Some(text) = super::unit::render(
                     deployment,
@@ -409,14 +414,14 @@ fn add_generated(
                     generated(plan, bytes(&path, text.into_bytes()))?;
                 }
             }
-            crate::config::Manager::Pm2 => {
+            crate::config::Manager::Pm2(_) => {
                 if deployment.pm2_ecosystem(name).is_none() {
                     let path = pm2_file(deployment, name);
                     let text = super::pm2::render(deployment, name, release)?;
                     generated(plan, bytes(&path, text.into_bytes()))?;
                 }
             }
-            crate::config::Manager::Oxmgr => {}
+            crate::config::Manager::Oxmgr(_) => {}
         }
     }
     Ok(())
@@ -674,8 +679,9 @@ fn found_kind(child: &Path, meta: &std::fs::Metadata, path: &str) -> Result<Foun
 
 /// Walks a path outside the project folder: one file, or a folder's contents.
 fn walk_direct(root: &Path) -> Result<Vec<Found>> {
+    let full = crate::config::full(root);
     let meta = std::fs::symlink_metadata(root)
-        .with_context(|| format!("{} does not exist", root.display()))?;
+        .with_context(|| format!("{} does not exist", full.display()))?;
     let mut items = Vec::new();
     if meta.is_dir() {
         walk_direct_in(root, root, &mut items)?;

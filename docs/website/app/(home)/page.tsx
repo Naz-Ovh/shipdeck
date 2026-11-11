@@ -160,7 +160,7 @@ export default function HomePage() {
             <p className="sd-eyebrow">One file per deploy</p>
             <h2 className="sd-heading mt-3 text-[1.9rem] text-sd-ink">One file says what runs where.</h2>
             <p className="mt-4 text-sd-ink-soft leading-relaxed">
-              A deploy is one file: the server, the release and every app. Your project file lists them by name, so
+              A deploy is one file: the server, the release and every app. Your root file lists them by name, so
               every deploy shows up on the first screen. A JSON Schema gives your editor completion for every field.
             </p>
             <div className="mt-6 overflow-hidden rounded-xl border border-sd-line bg-sd-1">

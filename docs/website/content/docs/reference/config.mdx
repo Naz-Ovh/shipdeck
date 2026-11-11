@@ -1,32 +1,53 @@
 ---
 title: Config
-description: The project file, the deploy file, path rules and how shipdeck checks them.
+description: The root file, the deploy file, path rules and how shipdeck checks them.
 ---
 
-shipdeck reads two kinds of file. A **project file** lists the deploys of a repository.
+shipdeck reads two kinds of file. A **root file** lists the deploys of a repository.
 A **deploy file** is one whole deploy: the server, the release and every app.
 
-## The project file
+## The root file
 
-`shipdeck.yaml` or `.shipdeck`, in the folder you run shipdeck in. Exactly those two
-names: `shipdeck.yml` is not read, and having both is an error.
+`shipdeck.yaml` or `.shipdeck`, in the project folder. Exactly those two names:
+`shipdeck.yml` is not read, and having both is an error. `-c` names another one, and `-C`
+moves the project folder.
 
 ```yaml title="shipdeck.yaml"
+root: true
 deploys:
   production: scripts/deploy/production.yaml
   staging: scripts/deploy/staging.yaml
 ```
 
-Each value is that deploy's deploy file, a path on your PC. `shipdeck deploy production`
-reads this file, then `production`'s deploy file.
+`root: true` is required; without it, the file is not a root file. Each value is that
+deploy's deploy file, a path on your PC. `shipdeck deploy production` reads this file,
+then `production`'s deploy file.
+
+### A deploy written in place
+
+A value can be the deploy itself, as a map, instead of a file's path:
+
+```yaml title="shipdeck.yaml"
+root: true
+deploys:
+  staging:
+    name: shop
+    server: { ssh: { host: staging }, dir: /var/www/staging }
+    apps:
+      site: { source: ., files: [dist], static: true }
+```
+
+A deploy written in place follows every rule of a deploy file: the same keys, the same
+checks, its problems point at their line in the root file, and its `./x` paths and
+`{{CONFIG}}` start from the root file's folder.
 
 ## The deploy file
 
-One file per deploy. It can live anywhere, under any name, and it needs no project
-file when you name it with `--shipdeckfile`:
+One file per deploy. It can live anywhere, under any name, and it needs no root file
+when you name it as a `DEPLOY` argument, or with `-c`:
 
 ```sh
-shipdeck --shipdeckfile=scripts/deploy/production.yaml deploy
+shipdeck deploy scripts/deploy/production.yaml
 ```
 
 It has four parts:

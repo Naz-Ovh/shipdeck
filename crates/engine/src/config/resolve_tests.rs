@@ -48,8 +48,38 @@ fn paths_and_process_names_follow_the_design() {
     assert_eq!(deployment.app_names(), ["admin", "web"]);
     assert!(deployment.is_static("admin"));
     assert!(!deployment.is_static("web"));
-    assert_eq!(deployment.manager("web"), Some(Manager::Systemd));
+    assert_eq!(
+        deployment.manager("web").map(|manager| manager.kind()),
+        Some(ManagerKind::Systemd)
+    );
     assert_eq!(deployment.manager("admin"), None);
+}
+
+#[test]
+fn the_manager_carries_its_own_block() {
+    let yaml = SAMPLE.replace(
+        "process: { start: node dist/main.js, systemd: {} }",
+        "process:\n      start: node dist/main.js\n      systemd: { user: web }",
+    );
+    let systemd_deploy = deployment(&yaml);
+    let Some(crate::config::Manager::Systemd(settings)) = systemd_deploy.manager("web") else {
+        panic!("not systemd: {:?}", systemd_deploy.manager("web"));
+    };
+    assert_eq!(settings.user.as_deref(), Some("web"));
+    assert_eq!(systemd_deploy.run_user("web"), "web");
+
+    let pm2 = SAMPLE.replace(
+        "process: { start: node dist/main.js, systemd: {} }",
+        "process: { start: node dist/main.js, pm2: { options: { instances: 2 } } }",
+    );
+    let pm2_deploy = deployment(&pm2);
+    let Some(crate::config::Manager::Pm2(settings)) = pm2_deploy.manager("web") else {
+        panic!("not PM2: {:?}", pm2_deploy.manager("web"));
+    };
+    assert_eq!(
+        settings.options.get("instances"),
+        Some(&serde_json::json!(2))
+    );
 }
 
 #[test]

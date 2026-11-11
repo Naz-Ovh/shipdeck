@@ -199,9 +199,8 @@ fn nodes(plan: &Plan) -> Node {
 fn insert(root: &mut Node, path: &str, leaf: Node) {
     let parts: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
     let mut node = root;
-    for (index, part) in parts.iter().enumerate() {
-        node = node.children.entry((*part).to_string()).or_default();
-        let _ = index;
+    for part in parts {
+        node = node.children.entry(part.to_string()).or_default();
     }
     let (kind, origin, local, mode, size, target) = (
         leaf.kind,

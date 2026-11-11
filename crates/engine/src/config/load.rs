@@ -1,4 +1,4 @@
-//! Reading the project file and the deploy files it names.
+//! Reading the root file and the deploy files it names.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -6,93 +6,135 @@ use std::path::{Path, PathBuf};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use super::names::is_plain_name;
+use super::names::is_deploy_name;
 use super::paths;
 use super::problem::{FileProblems, Problem};
 use super::resolve::Deployment;
 use super::rules;
-use super::types::{DeployFile, ProjectFile};
+use super::types::{DeployEntry, DeployFile, RootFile};
 use super::{check, schema, yaml};
 use crate::ssh::Endpoint;
 
-/// The project file names, in the order the message names them.
-pub const PROJECT_NAMES: [&str; 2] = ["shipdeck.yaml", ".shipdeck"];
+/// The root file names, in the order the message names them.
+pub const ROOT_NAMES: [&str; 2] = ["shipdeck.yaml", ".shipdeck"];
 
-/// The project file of the folder shipdeck runs in.
+/// The root file of the project folder.
 #[derive(Debug, Clone)]
-pub struct Project {
-    /// The folder shipdeck runs in.
+pub struct Root {
+    /// The project folder.
     pub folder: PathBuf,
-    /// The project file.
+    /// The root file.
     pub file: PathBuf,
-    /// The project file's text.
+    /// The root file's text.
     pub yaml: String,
-    /// Its deploys: name, and the deploy file of each.
-    pub deploys: BTreeMap<String, PathBuf>,
+    /// Its deploys: name, and the deploy file of each or the deploy itself.
+    pub deploys: BTreeMap<String, Deploy>,
 }
 
-impl Project {
-    /// Reads the project file in `folder`, or says the file it expected.
+/// One deploy of a root file: a file on your PC, or the deploy written in
+/// the root file.
+#[derive(Debug, Clone)]
+pub enum Deploy {
+    /// A deploy file, at its full path.
+    File(PathBuf),
+    /// A deploy written in the root file.
+    InPlace(Box<DeployFile>),
+}
+
+impl Root {
+    /// Reads the root file in `folder`, or the file `named`, or says the
+    /// names it expected.
     ///
     /// # Errors
-    /// Returns the problems when there is no project file, both names exist,
-    /// or the file cannot be used.
-    pub fn read(folder: &Path) -> Result<Self, FileProblems> {
-        let found: Vec<PathBuf> = PROJECT_NAMES
-            .iter()
-            .map(|name| folder.join(name))
-            .filter(|path| path.is_file())
-            .collect();
-        let path = match found.as_slice() {
-            [one] => one.clone(),
-            [] => {
-                return Err(FileProblems::without_source(
-                    folder.join(PROJECT_NAMES[0]),
-                    Problem::new(format!(
-                        "{} has no project file; expected {} or {}",
-                        folder.display(),
-                        PROJECT_NAMES[0],
-                        PROJECT_NAMES[1]
-                    ))
-                    .help("run shipdeck in the folder that holds it, or name a deploy file with --shipdeckfile"),
-                ));
-            }
-            _ => {
-                return Err(FileProblems::without_source(
-                    found[0].clone(),
-                    Problem::new(format!(
-                        "this folder has both {} and {}",
-                        PROJECT_NAMES[0], PROJECT_NAMES[1]
-                    ))
-                    .help("keep one of them"),
-                ));
-            }
+    /// Returns the problems when there is no root file, both names exist, or
+    /// the file cannot be used.
+    pub fn read(folder: &Path, named: Option<&Path>) -> Result<Self, FileProblems> {
+        let path = match named {
+            Some(path) => path.to_path_buf(),
+            None => find(folder)?,
         };
+        if !path.is_file() {
+            return Err(FileProblems::without_source(
+                path.clone(),
+                Problem::new(format!("{} does not exist", path.display())),
+            ));
+        }
         let text = read(&path)?;
-        let file: ProjectFile =
-            parse_document(&text, &schema::project()).map_err(|problems| FileProblems {
-                path: path.clone(),
-                source: Some(text.clone()),
-                problems,
-            })?;
-        let mut problems = Vec::new();
+        let problems = |found: Vec<Problem>| FileProblems {
+            path: path.clone(),
+            source: Some(text.clone()),
+            problems: found,
+        };
+        let node = yaml::parse(&text).map_err(|problem| problems(vec![problem]))?;
+        // A deploy file named by `-c` is a mistake worth naming precisely.
+        if node.find(&["deploys"]).is_none() && node.find(&["name"]).is_some() {
+            let shown = path.file_name().map_or_else(
+                || path.display().to_string(),
+                |name| name.to_string_lossy().into_owned(),
+            );
+            return Err(problems(vec![
+                Problem::new(format!(
+                    "{} is a deploy file, not a root file",
+                    path.display()
+                ))
+                .help(format!("run `shipdeck deploy {shown}`")),
+            ]));
+        }
+        let file: RootFile = parse_document(&text, &schema::root_file()).map_err(problems)?;
+        if !file.root {
+            return Err(problems(vec![
+                Problem::new(format!("{} is not a root file", path.display()))
+                    .at(node.span_of(&["root"]))
+                    .label("`root` is false")
+                    .help("a root file needs `root: true`"),
+            ]));
+        }
+        let from = path
+            .parent()
+            .map_or_else(|| folder.to_path_buf(), Path::to_path_buf);
+        let mut found = Vec::new();
         let mut deploys = BTreeMap::new();
-        for (name, written) in &file.deploys {
-            if !is_plain_name(name) {
-                problems.push(Problem::new(format!(
-                    "deploy name {name:?} is not a plain name"
-                )));
+        for (name, entry) in &file.deploys {
+            let at = &["deploys", name.as_str()];
+            if !is_deploy_name(name) {
+                found.push(
+                    Problem::new(format!("deploy name {name:?} is not a deploy name"))
+                        .at(node.key_span(at))
+                        .label("not allowed")
+                        .help("letters, digits, `-` and `_`"),
+                );
                 continue;
             }
-            let file = paths::local(folder, folder, written);
-            deploys.insert(name.clone(), file);
+            match entry {
+                DeployEntry::File(written) => {
+                    if !is_deploy_file(written) {
+                        found.push(
+                            Problem::new(format!("{written:?} does not end in .yaml or .yml"))
+                                .at(node.span_of(at))
+                                .label("not a deploy file")
+                                .help("a deploy file's name ends in .yaml or .yml"),
+                        );
+                        continue;
+                    }
+                    let file = paths::local(&from, &from, written);
+                    if !file.is_file() {
+                        found.push(
+                            Problem::new(format!("{} does not exist", file.display()))
+                                .at(node.span_of(at))
+                                .label("no such file"),
+                        );
+                        continue;
+                    }
+                    deploys.insert(name.clone(), Deploy::File(file));
+                }
+                DeployEntry::InPlace(deploy) => {
+                    found.extend(check_in_place(deploy, &node, at));
+                    deploys.insert(name.clone(), Deploy::InPlace(deploy.clone()));
+                }
+            }
         }
-        if !problems.is_empty() {
-            return Err(FileProblems {
-                path,
-                source: Some(text),
-                problems,
-            });
+        if !found.is_empty() {
+            return Err(problems(found));
         }
         Ok(Self {
             folder: folder.to_path_buf(),
@@ -102,14 +144,98 @@ impl Project {
         })
     }
 
-    /// The deploy file of a deploy, when the project lists it.
-    #[must_use]
-    pub fn deploy_file(&self, name: &str) -> Option<&Path> {
-        self.deploys.get(name).map(PathBuf::as_path)
+    /// The deployment of a deploy the root file lists.
+    ///
+    /// # Errors
+    /// Returns the problems when the deploy or its login cannot be used.
+    pub fn deployment(&self, name: &str) -> Result<Deployment, FileProblems> {
+        match self.deploys.get(name) {
+            Some(Deploy::File(file)) => load_deploy(&self.folder, file, Some(name)),
+            Some(Deploy::InPlace(deploy)) => load_in_place(self, name, deploy),
+            None => Err(FileProblems::without_source(
+                self.file.clone(),
+                Problem::new(format!(
+                    "{} has no deploy named {name}",
+                    self.file.display()
+                )),
+            )),
+        }
     }
 }
 
-/// Reads and checks a deploy file.
+/// The root file of `folder`: its one name, or the error that names both.
+fn find(folder: &Path) -> Result<PathBuf, FileProblems> {
+    let found: Vec<PathBuf> = ROOT_NAMES
+        .iter()
+        .map(|name| folder.join(name))
+        .filter(|path| path.is_file())
+        .collect();
+    match found.as_slice() {
+        [one] => Ok(one.clone()),
+        [] => Err(FileProblems::without_source(
+            folder.join(ROOT_NAMES[0]),
+            Problem::new(format!("there is no root file in {}", folder.display()))
+                .label(format!("expected {} or {}", ROOT_NAMES[0], ROOT_NAMES[1]))
+                .help(
+                    "run shipdeck in the folder that holds one, name it with --config, \
+                     or name a deploy file ending in .yaml or .yml",
+                ),
+        )),
+        _ => Err(FileProblems::without_source(
+            found[0].clone(),
+            Problem::new(format!(
+                "this folder has both {} and {}",
+                ROOT_NAMES[0], ROOT_NAMES[1]
+            ))
+            .help("keep one of them"),
+        )),
+    }
+}
+
+/// Every deploy of a run: the named deploy files, or the root file's deploys.
+///
+/// Returns the deploys and the problems, so one bad file does not hide the
+/// rest.
+#[must_use]
+pub fn open_all(
+    folder: &Path,
+    config: Option<&Path>,
+    deploy_files: &[PathBuf],
+) -> (Vec<Deployment>, Vec<FileProblems>) {
+    let mut deploys = Vec::new();
+    let mut problems = Vec::new();
+    if deploy_files.is_empty() {
+        return match Root::read(folder, config) {
+            Ok(root) => {
+                for name in root.deploys.keys() {
+                    match root.deployment(name) {
+                        Ok(deployment) => deploys.push(deployment),
+                        Err(found) => problems.push(found),
+                    }
+                }
+                (deploys, problems)
+            }
+            Err(found) => (deploys, vec![found]),
+        };
+    }
+    for file in deploy_files {
+        match load_deploy(folder, file, None) {
+            Ok(deployment) => deploys.push(deployment),
+            Err(found) => problems.push(found),
+        }
+    }
+    (deploys, problems)
+}
+
+/// The problems of a deploy written in the root file, at its lines there.
+fn check_in_place(deploy: &DeployFile, root: &yaml::Node, at: &[&str]) -> Vec<Problem> {
+    let Some(node) = root.find(at) else {
+        return Vec::new();
+    };
+    rules::check(deploy, Some(node))
+}
+
+/// Reads and checks a deploy file at its full path.
 ///
 /// # Errors
 /// Returns every problem in the file, each with its line.
@@ -119,15 +245,19 @@ pub fn load_deploy(
     slug: Option<&str>,
 ) -> Result<Deployment, FileProblems> {
     let text = read(file)?;
-    let deploy = parse_deploy(&text).map_err(|problems| FileProblems {
-        path: file.to_path_buf(),
-        source: Some(text.clone()),
-        problems,
-    })?;
+    let deploy = match parse_deploy(&text) {
+        Ok(deploy) => deploy,
+        Err(problems) => {
+            return Err(FileProblems {
+                path: file.to_path_buf(),
+                source: Some(text),
+                problems: root_in_deploy(file, problems),
+            });
+        }
+    };
     let config_dir = file
         .parent()
-        .map(Path::to_path_buf)
-        .map_or_else(|| project.to_path_buf(), |path| path.clone());
+        .map_or_else(|| project.to_path_buf(), Path::to_path_buf);
     let endpoint = Endpoint::resolve(&deploy.server.ssh).map_err(|err| FileProblems {
         path: file.to_path_buf(),
         source: Some(text.clone()),
@@ -145,7 +275,56 @@ pub fn load_deploy(
     })
 }
 
-/// Reads a deploy file's text, or says why not.
+/// The problems of a deploy file that holds `root`, named as the mistake it is.
+fn root_in_deploy(file: &Path, problems: Vec<Problem>) -> Vec<Problem> {
+    let holds_root = problems
+        .iter()
+        .any(|problem| problem.message.contains("`root`"));
+    if !holds_root {
+        return problems;
+    }
+    vec![
+        Problem::new(format!(
+            "{} is a root file, not a deploy file",
+            file.display()
+        ))
+        .help(format!("name it with `-c {}`", file.display())),
+    ]
+}
+
+/// A deploy written in the root file, as a deployment.
+///
+/// Its `./x` paths and `{{CONFIG}}` start from the root file's folder.
+///
+/// # Errors
+/// Returns the problems when the deploy cannot log in like this.
+pub fn load_in_place(
+    root: &Root,
+    name: &str,
+    deploy: &DeployFile,
+) -> Result<Deployment, FileProblems> {
+    let project = &root.folder;
+    let config_dir = root
+        .file
+        .parent()
+        .map_or_else(|| project.clone(), Path::to_path_buf);
+    let endpoint = Endpoint::resolve(&deploy.server.ssh).map_err(|err| FileProblems {
+        path: root.file.clone(),
+        source: Some(root.yaml.clone()),
+        problems: vec![Problem::new(format!("{err:#}")).label("cannot log in like this")],
+    })?;
+    Ok(Deployment {
+        slug: name.to_string(),
+        file: root.file.clone(),
+        project: project.clone(),
+        config_dir,
+        yaml: root.yaml.clone(),
+        endpoint,
+        deploy: deploy.clone(),
+    })
+}
+
+/// Reads a file's text, or says why not, with its full path.
 ///
 /// # Errors
 /// Returns the read error as a problem.
@@ -153,8 +332,23 @@ pub fn read(path: &Path) -> Result<String, FileProblems> {
     std::fs::read_to_string(path).map_err(|err| {
         FileProblems::without_source(
             path.to_path_buf(),
-            Problem::new(format!("cannot read it: {err}")),
+            Problem::new(format!("cannot read {}: {err}", full(path).display())),
         )
+    })
+}
+
+/// The full path of `path`, for a message about a file on this PC.
+#[must_use]
+pub fn full(path: &Path) -> PathBuf {
+    std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Whether a file is written as a deploy file: its name ends in `.yaml` or
+/// `.yml`. Only the ending decides.
+#[must_use]
+pub fn is_deploy_file(text: &str) -> bool {
+    Path::new(text).extension().is_some_and(|extension| {
+        extension.eq_ignore_ascii_case("yaml") || extension.eq_ignore_ascii_case("yml")
     })
 }
 

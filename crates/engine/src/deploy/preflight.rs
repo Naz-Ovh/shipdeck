@@ -10,7 +10,7 @@ use super::report::{LogKind, Reporter, Unit};
 use super::run::{Ended, Run};
 use super::steps::{Step, all_scopes};
 use crate::build;
-use crate::config::{Deployment, Manager, Program};
+use crate::config::{Deployment, Manager, ManagerKind, Program};
 use crate::human;
 use crate::remote::{Facts, PM2_NEWEST_MAJOR, ReleaseEntry, Server, parse_version};
 use crate::ssh::{Pool, ShellEnv};
@@ -133,7 +133,7 @@ impl Run<'_> {
         if self
             .deployment
             .process_apps()
-            .any(|(_, manager)| manager == Manager::Oxmgr)
+            .any(|(_, manager)| manager.kind() == ManagerKind::Oxmgr)
         {
             bail!("oxmgr is not built yet");
         }
@@ -194,7 +194,7 @@ impl Run<'_> {
         }
         for name in self.deployment.deploy.apps.keys() {
             match self.deployment.manager(name) {
-                Some(Manager::Pm2) => {
+                Some(Manager::Pm2(_)) => {
                     tools.insert("pm2".into());
                     if self.deployment.pm2_ecosystem(name).is_none()
                         && let Some((Program::Tool(tool), _)) = self.deployment.start(name)
@@ -202,7 +202,7 @@ impl Run<'_> {
                         tools.insert(tool);
                     }
                 }
-                Some(Manager::Systemd) => {
+                Some(Manager::Systemd(_)) => {
                     if let Some((Program::Tool(tool), _)) = self.deployment.start(name) {
                         tools.insert(tool);
                     }
@@ -322,7 +322,7 @@ impl Run<'_> {
         if self
             .deployment
             .process_apps()
-            .any(|(_, manager)| manager == Manager::Systemd)
+            .any(|(_, manager)| manager.kind() == ManagerKind::Systemd)
         {
             for name in self.deployment.process_apps().map(|(name, _)| name) {
                 if let Some((Program::Tool(tool), _)) = self.deployment.start(name)
@@ -357,7 +357,7 @@ impl Run<'_> {
             self.report.log(LogKind::Success, format!("pm2 {version}"));
         }
         for name in self.deployment.deploy.apps.keys() {
-            if self.deployment.manager(name) == Some(Manager::Pm2) {
+            if self.deployment.manager(name).map(|m| m.kind()) == Some(ManagerKind::Pm2) {
                 let process = self.deployment.process_name(name);
                 if matches!(
                     facts.systemd.as_str(),
@@ -445,7 +445,7 @@ impl Run<'_> {
         }
         if restored
             .process_apps()
-            .any(|(_, manager)| manager == Manager::Oxmgr)
+            .any(|(_, manager)| manager.kind() == ManagerKind::Oxmgr)
         {
             bail!("oxmgr is not built yet");
         }

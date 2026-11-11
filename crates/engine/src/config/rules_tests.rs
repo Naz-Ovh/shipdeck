@@ -390,6 +390,24 @@ fn a_binary_takes_both_forms() {
 }
 
 #[test]
+fn a_binary_and_a_file_take_a_map_with_no_to() {
+    let binary = SAMPLE.replace(
+        "    files: [web/dist]",
+        "    files: [web/dist]\n    binary: { path: target/release/api }",
+    );
+    assert!(messages(&binary).is_empty(), "{:?}", messages(&binary));
+    let file = SAMPLE.replace("    files: [web/dist]", "    files: [{ path: web/dist }]");
+    assert!(messages(&file).is_empty(), "{:?}", messages(&file));
+    // A path outside the project still needs `to`.
+    let outside = SAMPLE.replace(
+        "    files: [web/dist]",
+        "    files: [{ path: ../elsewhere }]",
+    );
+    let found = messages(&outside);
+    assert!(found.iter().any(|m| m.contains("needs `to`")), "{found:?}");
+}
+
+#[test]
 fn a_binary_to_is_a_release_path() {
     for to in ["/bin/api", "../api", ".shipdeck/api"] {
         let yaml = SAMPLE.replace(

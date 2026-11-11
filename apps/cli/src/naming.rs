@@ -8,46 +8,87 @@ use shipdeck_protocol::message::request::SetupAccess;
 
 use crate::AccessArg;
 use crate::init;
+use crate::target::Target;
 
-/// The deploy names a deploy command runs.
+/// Where the root file is, for a message that has to name it.
+pub struct Where<'a> {
+    /// The root file, or the name the folder would hold.
+    pub root_file: &'a std::path::Path,
+}
+
+/// The deploy slugs a deploy command runs, in the order given.
+///
+/// A name must be one the root file lists; a file is the deploy the engine
+/// read from it.
 pub fn resolve_names(
     projects: &[DeployableInfo],
-    names: Vec<String>,
+    where_: &Where<'_>,
+    targets: &[Target],
 ) -> Result<Vec<String>, String> {
-    if !names.is_empty() {
-        return Ok(names);
+    if targets.is_empty() {
+        return match projects {
+            [one] => Ok(vec![one.slug.clone()]),
+            [] => Err(format!("{} lists no deploys", where_.root_file.display())),
+            _ => Err(format!("name the deploy to run: {}", listed(projects))),
+        };
     }
-    match projects {
-        [one] => Ok(vec![one.slug.clone()]),
-        [] => Err("no deploy to run".into()),
-        _ => Err(format!(
-            "name the deploy to run: {}",
-            projects
-                .iter()
-                .map(|project| project.slug.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )),
+    targets
+        .iter()
+        .map(|target| slug_of(projects, where_, target))
+        .collect()
+}
+
+/// The deploy slug a command runs against.
+pub fn resolve_name(
+    projects: &[DeployableInfo],
+    where_: &Where<'_>,
+    target: Option<&Target>,
+) -> Result<String, String> {
+    match target {
+        Some(target) => slug_of(projects, where_, target),
+        None => match projects {
+            [one] => Ok(one.slug.clone()),
+            [] => Err(format!("{} lists no deploys", where_.root_file.display())),
+            _ => Err(format!("name the deploy: {}", listed(projects))),
+        },
     }
 }
 
-/// The deploy name a command runs against.
-pub fn resolve_name(projects: &[DeployableInfo], name: Option<&str>) -> Result<String, String> {
-    if let Some(name) = name {
-        return Ok(name.to_string());
-    }
-    match projects {
-        [one] => Ok(one.slug.clone()),
-        [] => Err("the project has no deploys".into()),
-        _ => Err(format!(
-            "name the deploy: {}",
+/// The slug of `target`: a name the root file lists, or the deploy a file
+/// holds.
+fn slug_of(
+    projects: &[DeployableInfo],
+    where_: &Where<'_>,
+    target: &Target,
+) -> Result<String, String> {
+    match target {
+        Target::Name(name) if projects.iter().any(|project| &project.slug == name) => {
+            Ok(name.clone())
+        }
+        Target::Name(name) => Err(format!(
+            "{} has no deploy named {name}; it lists {}. A deploy file's name ends in \
+             .yaml or .yml",
+            where_.root_file.display(),
+            listed(projects)
+        )),
+        Target::File(path) => {
+            let wanted = path.display().to_string();
             projects
                 .iter()
-                .map(|project| project.slug.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )),
+                .find(|project| project.folder == wanted)
+                .map(|project| project.slug.clone())
+                .ok_or_else(|| format!("{wanted} has no deploy the engine could read"))
+        }
     }
+}
+
+/// The deploy slugs, for a message that asks the reader to name one.
+fn listed(projects: &[DeployableInfo]) -> String {
+    projects
+        .iter()
+        .map(|project| project.slug.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Prints an error and ends as a failure.

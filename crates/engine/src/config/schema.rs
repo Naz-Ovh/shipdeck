@@ -1,11 +1,11 @@
-//! The JSON Schema for the project file and the deploy file, generated from
+//! The JSON Schema for the root file and the deploy file, generated from
 //! their types. It is published in `docs/schema/` at each release tag, for
 //! editor completion, and every file is checked against it when read.
 
 use schemars::generate::SchemaSettings;
 use serde_json::Value;
 
-use super::types::{DeployFile, ProjectFile};
+use super::types::{DeployFile, RootFile};
 
 /// The file in the shipdeck repository, published with each release.
 pub const FILE_NAME: &str = "docs/schema/deploy.schema.json";
@@ -31,17 +31,17 @@ pub fn deploy() -> Value {
     root::<DeployFile>("deploy file")
 }
 
-/// The schema of the project file.
+/// The schema of the root file.
 #[must_use]
-pub fn project() -> Value {
-    root::<ProjectFile>("project file")
+pub fn root_file() -> Value {
+    root::<RootFile>("root file")
 }
 
 /// The schema of either file, which is what the published file holds.
 #[must_use]
 pub fn published() -> Value {
     let mut deploy = deploy();
-    let mut project = project();
+    let mut project = root_file();
     let mut all = definitions(&mut deploy);
     all.extend(definitions(&mut project));
     for schema in [&mut deploy, &mut project] {
@@ -53,7 +53,7 @@ pub fn published() -> Value {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "$id": url(),
         "title": "shipdeck",
-        "description": "The project file (shipdeck.yaml or .shipdeck) and the deploy file.",
+        "description": "The root file (shipdeck.yaml or .shipdeck) and the deploy file.",
         "oneOf": [project, deploy],
         "definitions": all,
     })

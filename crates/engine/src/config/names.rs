@@ -37,13 +37,23 @@ pub fn is_unit_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "._@-".contains(c))
 }
 
-/// A user, app or deploy name: letters, digits, `.`, `_` and `-`.
+/// A user or app name: letters, digits, `.`, `_` and `-`.
 #[must_use]
 pub fn is_plain_name(name: &str) -> bool {
     !name.is_empty()
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+}
+
+/// A deploy name: letters, digits, `_` and `-`. No dot, so a name never
+/// looks like a file name.
+#[must_use]
+pub fn is_deploy_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_-".contains(c))
 }
 
 /// `node`, `/usr/bin/node` or `bin/server`: safe in a shell word and a unit

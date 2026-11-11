@@ -131,7 +131,7 @@ The panel on the right shows the selected deploy, read from its deploy file:
 - **PIPELINE:** one row per configured step item: the commands of each step, with `local`, `server` or `check` beside them, the `pack` lists (`binary`, `project`, `deploy`, `leaves`), what the `backup` `takes` and `leaves` (or a faint `none: keep.compressed is 0`), how `health` waits, and the `failed` `policy`: `asks, then rolls back after 30s` or `rolls back at once`.
 - **POLICY:** `keeps` (`5 unpacked + 15 compressed`, from `release.steps.backup.keep`), the release's `shared` folders, the rollback `mode`, and how many apps the deploy has.
 
-With no deploys, the screen shows `No deploys yet` and the project file it looked for.
+With no deploys, the screen shows `No deploys yet` and the root file it looked for.
 
 | Key | Action |
 | --- | --- |

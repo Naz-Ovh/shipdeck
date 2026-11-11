@@ -43,7 +43,7 @@ What changed, in short:
 
 | Old | Format 2 |
 | --- | --- |
-| A deploy root scanned for subfolders with `shipdeck.yaml` | One project file in the folder you run shipdeck in |
+| A deploy root scanned for subfolders with `shipdeck.yaml` | One root file in the project folder (`-C` moves it, `-c` names another) |
 | A deploy is a folder | A deploy is one file, anywhere |
 | `shipdeck.yml` also accepted | `shipdeck.yaml` or `.shipdeck` only |
 | App files (`apps: {admin: _admin.yaml}`) | Apps inline in the deploy file |
@@ -84,12 +84,15 @@ The whole design, with every rule and the reasoning, is in
 
 ### Doing it
 
-1. Add a project file in the folder you run shipdeck in:
+1. Add a root file in the project folder:
 
    ```yaml title="shipdeck.yaml"
+   root: true
    deploys:
      production: scripts/deploy/production.yaml
    ```
+
+   A deploy's value can also be the deploy itself, written in place, instead of a file's path.
 
 2. Turn each old deploy folder's `shipdeck.yaml` into one deploy file: `name`, `server`, and
    one entry per app under `apps`. `shipdeck init` writes a working file to start from.
@@ -117,6 +120,6 @@ before anything runs.
 ## Next
 
 <Cards>
-  <Card title="Config" href="/docs/reference/config" description="The project file, the deploy file, and every rule." />
+  <Card title="Config" href="/docs/reference/config" description="The root file, the deploy file, and every rule." />
   <Card title="Config problems" href="/docs/reference/config-problems" description="Every message shipdeck prints for a file it cannot use." />
 </Cards>

@@ -1,6 +1,6 @@
 ---
 title: Quickstart
-description: Install Shipdeck, write a project file and a deploy file, deploy, and inspect or roll back a release.
+description: Install Shipdeck, write a root file and a deploy file, deploy, and inspect or roll back a release.
 ---
 
 Shipdeck builds locally, stages a checked release over SSH, then switches the live folder
@@ -44,7 +44,7 @@ From your app repository root:
 shipdeck init my-api --preset rust --manager systemd --host prod
 ```
 
-This writes four files in the current folder: `shipdeck.yaml` (the project file),
+This writes four files in the current folder: `shipdeck.yaml` (the root file),
 `deploy.yaml` (the deploy file), an empty `.env`, and a `.gitignore` that keeps the `.env`
 out of git. Edit `deploy.yaml`:
 
@@ -98,7 +98,7 @@ no connection.
 shipdeck
 ```
 
-The TUI lists the deploys of your project file. Select **my-api**, press Enter, and confirm.
+The TUI lists the deploys of your root file. Select **my-api**, press Enter, and confirm.
 Shipdeck validates the config, builds locally, transfers and checks files, runs setup, saves
 a backup, switches `current`, restarts, and checks health. The old release remains live
 during preparation; your custom commands can still have outside effects.

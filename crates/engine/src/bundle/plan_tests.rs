@@ -236,3 +236,89 @@ apps:
     assert!(format!("{error:#}").contains("two files"), "{error:#}");
     std::fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn a_pm2_file_gets_its_placeholders() {
+    let root = std::env::temp_dir().join(format!("shipdeck-pm2-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    write(&root, "app/main.js", "x");
+    let yaml = "\
+name: shop
+server: { ssh: { host: example.com, user: deploy }, dir: /opt/shop }
+apps:
+  web:
+    source: app
+    files: [app/main.js]
+    process:
+      start: node main.js
+      env: { DATA: '{{ROOT}}/data' }
+      pm2:
+        options:
+          instances: 2
+          log_dir: '{{APP_CURRENT}}/logs' 
+";
+    let deployment = deployment(yaml, &root);
+    let release = ReleaseName::parse("v1.2.3-abc1234-20260101.120000").unwrap();
+    let text = crate::bundle::pm2::render(&deployment, "web", &release).unwrap();
+    assert!(
+        text.contains("\"/opt/shop/current/apps/web/logs\""),
+        "{text}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_inline_manager_ends_up_in_the_release() {
+    let root = std::env::temp_dir().join(format!("shipdeck-unit-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let yaml = "\
+name: shop
+server: { ssh: { host: example.com, user: deploy }, dir: /opt/shop }
+apps:
+  web:
+    process:
+      start: node main.js
+      env: { DATA: '{{ROOT}}/data' }
+      systemd: { user: web }
+";
+    let deployment = deployment(yaml, &root);
+    let release = ReleaseName::parse("v1.2.3-abc1234-20260101.120000").unwrap();
+    let text = crate::bundle::unit::render(&deployment, "web", &release, None)
+        .unwrap()
+        .unwrap();
+    assert!(
+        text.contains("Environment=\"DATA=/opt/shop/data\""),
+        "{text}"
+    );
+    assert!(text.contains("User=web"), "{text}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_missing_binary_names_its_full_path() {
+    let root = std::env::temp_dir().join(format!("shipdeck-nobinary-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    write(&root, "app/main.js", "x");
+    let yaml = "\
+name: shop
+server: { ssh: { host: example.com, user: deploy }, dir: /opt/shop }
+apps:
+  web:
+    source: app
+    files: [app/main.js]
+    binary: target/release/api
+    process: { systemd: {} }
+";
+    let deployment = deployment(yaml, &root);
+    let name = ReleaseName::parse("v1.2.3-abc1234-20260101.120000").unwrap();
+    let error = release_plan(&deployment, &name, b"{}", b"{}", &BTreeMap::new()).unwrap_err();
+    let text = format!("{error:#}");
+    assert!(
+        text.contains(&root.display().to_string()),
+        "no full path: {text}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

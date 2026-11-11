@@ -1,4 +1,4 @@
-# Config: the project file, the deploy file, the schema, the manual, the examples
+# Config: the root file, the deploy file, the schema, the manual, the examples
 
 Everything people read or write about config format 2 moves together. A change in one usually
 touches all four.
@@ -7,7 +7,7 @@ touches all four.
 
 - The config types in `crates/engine/src/config` are the schema; there is no second definition
   to keep in step.
-- `types.rs` holds the two files as written: `ProjectFile` and `DeployFile` with `Server`,
+- `types.rs` holds the two files as written: `RootFile` and `DeployFile` with `Server`,
   `Release`, `App`, `Process`, the managers, `Nginx`, `FileEntry`, `Command` and the step
   structs.
 - `placeholders.rs` holds every `{{NAME}}`, where it has a value, and the environment names.
@@ -28,8 +28,8 @@ Reading goes in three passes, so every problem in a file is reported at once:
 3. `rules.rs` checks the values: required and refused keys per app kind, one manager, reserved
    properties, names, release paths, and every placeholder in its scope.
 
-`load.rs` adds the project file, and turns a clean deploy file plus its endpoint into a
-`Deployment`. Only `Deployment` reaches the pipeline.
+`load.rs` reads the root file (or the files named on the command line), and turns a clean
+deploy file plus its endpoint into a `Deployment`. Only `Deployment` reaches the pipeline.
 
 ## Errors
 
@@ -46,6 +46,7 @@ Reading goes in three passes, so every problem in a file is reported at once:
 
 ## The examples
 
-- `examples/<kind>/` holds a project file (`shipdeck.yaml`) and a deploy file (`deploy.yaml`).
+- `examples/<kind>/` holds a root file (`shipdeck.yaml`) and a deploy file (`deploy.yaml`).
+- `examples/inline/` writes one deploy in the root file itself, beside one in a deploy file.
 - A test reads every example, so a change to the format breaks it there first.
 - A new field goes into the README table, an example, and `apps/cli/manual/configs.yaml`.

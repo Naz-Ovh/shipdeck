@@ -27,7 +27,7 @@ hardening is unchanged.
 
 The suite covers, in order:
 
-- a deploy of a project file with a systemd API, a PM2 worker and a static site;
+- a deploy from a root file with a systemd API, a PM2 worker and a static site;
 - release files and `to`, and `.shipdeck/` for shipdeck's own files;
 - shared folder links, and data kept across releases;
 - app order (name order) and release commands before app commands;

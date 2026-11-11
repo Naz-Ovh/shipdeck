@@ -11,7 +11,7 @@ use inquire::error::InquireError;
 use inquire::validator::Validation;
 use inquire::{Select, Text};
 
-use shipdeck_engine::config::{self, Manager};
+use shipdeck_engine::config::{self, ManagerKind};
 use shipdeck_engine::init::{self, NewDeployable, Preset};
 use shipdeck_engine::ssh::ssh_config;
 
@@ -20,7 +20,7 @@ pub struct Given {
     pub root: PathBuf,
     pub name: Option<String>,
     pub preset: Option<Preset>,
-    pub manager: Option<Manager>,
+    pub manager: Option<ManagerKind>,
     pub host: Option<String>,
     pub user: Option<String>,
     pub project: Option<PathBuf>,
@@ -125,7 +125,7 @@ fn answers(root: &Path, given: Given) -> Result<NewDeployable, Stop> {
                 .prompt()?
                 .0
         }
-        None => Manager::Systemd,
+        None => ManagerKind::Systemd,
     };
     let host = match given.host {
         Some(host) => host,
@@ -198,7 +198,7 @@ fn ask_user(host: &str) -> Result<Option<String>, Stop> {
     Ok((from_alias.as_deref() != Some(&user)).then_some(user))
 }
 
-const MANAGERS: [Manager; 2] = [Manager::Systemd, Manager::Pm2];
+const MANAGERS: [ManagerKind; 2] = [ManagerKind::Systemd, ManagerKind::Pm2];
 
 /// A choice in a list, with a few words on what it means.
 #[derive(Clone, Copy)]
@@ -210,12 +210,14 @@ impl fmt::Display for Shown<Preset> {
     }
 }
 
-impl fmt::Display for Shown<Manager> {
+impl fmt::Display for Shown<ManagerKind> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.0 {
-            Manager::Systemd => f.write_str("systemd  a unit installed and restarted with sudo"),
-            Manager::Pm2 => f.write_str("pm2      runs as the SSH user, no sudo"),
-            Manager::Oxmgr => f.write_str("oxmgr    parsed and checked; not built yet"),
+            ManagerKind::Systemd => {
+                f.write_str("systemd  a unit installed and restarted with sudo")
+            }
+            ManagerKind::Pm2 => f.write_str("pm2      runs as the SSH user, no sudo"),
+            ManagerKind::Oxmgr => f.write_str("oxmgr    parsed and checked; not built yet"),
         }
     }
 }

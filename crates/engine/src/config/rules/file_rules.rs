@@ -31,11 +31,6 @@ impl Rules<'_> {
                 }
             }
         }
-        for (step, local, server) in steps {
-            for (side, list) in [("local", local), ("server", server)] {
-                let _ = (step, side, list);
-            }
-        }
     }
 
     pub(super) fn health(&mut self, base: &[&str], health: Option<&HealthStep>, _has_url: bool) {
@@ -71,7 +66,7 @@ impl Rules<'_> {
         }
     }
 
-    pub(super) fn patterns(&mut self, base: &[&str], patterns: &[String], list: &str) {
+    pub(super) fn patterns(&mut self, base: &[&str], patterns: &[String]) {
         for (index, text) in patterns.iter().enumerate() {
             let index = index.to_string();
             let mut path = base.to_vec();
@@ -89,7 +84,6 @@ impl Rules<'_> {
                 );
             }
         }
-        let _ = list;
     }
 
     pub(super) fn shared(&mut self, base: &[&str], shared: &[String]) {

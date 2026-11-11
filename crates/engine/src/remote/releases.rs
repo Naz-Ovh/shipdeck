@@ -259,9 +259,9 @@ echo \"active=$(systemctl is-active {svc} 2>&1 | head -n1)\"",
         let current = get("current");
         let active = match self.manager {
             None => "static".into(),
-            Some(Manager::Systemd) => get("active"),
-            Some(Manager::Pm2) => self.pm2_state().await?.0,
-            Some(Manager::Oxmgr) => "oxmgr".into(),
+            Some(Manager::Systemd(_)) => get("active"),
+            Some(Manager::Pm2(_)) => self.pm2_state().await?.0,
+            Some(Manager::Oxmgr(_)) => "oxmgr".into(),
         };
         Ok(Status {
             dir_exists: get("dir") == "yes",

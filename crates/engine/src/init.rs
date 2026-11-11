@@ -1,4 +1,4 @@
-//! `shipdeck init`: a project file and a deploy file, written from a preset.
+//! `shipdeck init`: a root file and a deploy file, written from a preset.
 //! What it writes goes through the same checks as a launch.
 
 use std::fmt;
@@ -6,11 +6,11 @@ use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
-use crate::config::{DeployFile, FileProblems, Manager, parse_deploy};
+use crate::config::{DeployFile, FileProblems, ManagerKind, parse_deploy};
 
 /// The `.env` every preset ships; it starts empty and stays out of git.
 const ENV_FILE: &str = ".env";
-/// The deploy file's name, beside the project file.
+/// The deploy file's name, beside the root file.
 const DEPLOY_FILE: &str = "deploy.yaml";
 /// Where the README lists every field.
 const DOCS: &str = concat!(env!("CARGO_PKG_REPOSITORY"), "#the-deploy-file");
@@ -97,7 +97,7 @@ pub struct NewDeployable {
     /// The deploy's name, also the default process name.
     pub name: String,
     pub preset: Preset,
-    pub manager: Manager,
+    pub manager: ManagerKind,
     /// An address or an alias from `~/.ssh/config`.
     pub host: String,
     /// Left out to use the alias's `User`.
@@ -217,9 +217,9 @@ impl NewDeployable {
             );
         }
         match self.manager {
-            Manager::Systemd => y.raw("      systemd: {}"),
-            Manager::Pm2 => y.raw("      pm2: {}"),
-            Manager::Oxmgr => y.raw("      oxmgr: {}"),
+            ManagerKind::Systemd => y.raw("      systemd: {}"),
+            ManagerKind::Pm2 => y.raw("      pm2: {}"),
+            ManagerKind::Oxmgr => y.raw("      oxmgr: {}"),
         }
         y.raw("    steps:");
         if let Some(setup) = self.setup() {
@@ -435,27 +435,27 @@ pub fn check(root: &Path, new: &NewDeployable) -> Result<String, FileProblems> {
     Ok(yaml)
 }
 
-/// Writes the project file, the deploy file, an empty `.env` and a
+/// Writes the root file, the deploy file, an empty `.env` and a
 /// `.gitignore`. Files already there are left alone.
 ///
 /// # Errors
 /// Returns an error when a config file is already there, or one cannot be
 /// written.
 pub fn write(root: &Path, name: &str, yaml: &str) -> Result<Vec<PathBuf>> {
-    let project_file = root.join(crate::config::PROJECT_NAMES[0]);
-    if project_file.exists() {
-        bail!("{} already exists", project_file.display());
+    let root_file = root.join(crate::config::ROOT_NAMES[0]);
+    if root_file.exists() {
+        bail!("{} already exists", root_file.display());
     }
     let deploy = root.join(DEPLOY_FILE);
-    let project_yaml = format!(
-        "# The project file: its deploys, by name.\n# Every field: {DOCS}\n\ndeploys:\n  {}: {}\n",
+    let root_yaml = format!(
+        "# The root file: `root: true`, and its deploys by name.\n# Every field: {DOCS}\n\nroot: true\ndeploys:\n  {}: {}\n",
         quote(name),
         DEPLOY_FILE
     );
-    std::fs::write(&project_file, project_yaml)
-        .with_context(|| format!("writing {}", project_file.display()))?;
+    std::fs::write(&root_file, root_yaml)
+        .with_context(|| format!("writing {}", root_file.display()))?;
     std::fs::write(&deploy, yaml).with_context(|| format!("writing {}", deploy.display()))?;
-    let mut written = vec![project_file, deploy];
+    let mut written = vec![root_file, deploy];
     for (file, text) in [(ENV_FILE, ""), (".gitignore", ".env\n")] {
         let path = root.join(file);
         if path.exists() {

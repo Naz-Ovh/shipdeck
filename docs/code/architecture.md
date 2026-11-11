@@ -5,7 +5,7 @@ workspace: the engine does the work, the frontends show what it reports.
 
 ## Crates and apps
 
-- `crates/engine/` (`shipdeck-engine`): `config` (the project file and the
+- `crates/engine/` (`shipdeck-engine`): `config` (the root file and the
   deploy file: the types that are the JSON Schema, the line-aware YAML tree,
   the launch check, placeholders, paths, globs), `build` (version, local
   commands, runners, ELF checks), `bundle` (the release plan: paths, hashes,

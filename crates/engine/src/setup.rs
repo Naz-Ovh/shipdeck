@@ -10,7 +10,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use shipdeck_protocol::message::request::{SetupAccess, SetupReport};
 
-use crate::config::Manager;
+use crate::config::ManagerKind;
 use crate::remote::{control_commands, sudo_commands};
 use crate::ssh::{Session, sh_quote};
 
@@ -58,8 +58,8 @@ mod tests;
 pub struct SetupProcess {
     /// The systemd unit or PM2 app.
     pub name: String,
-    /// The manager, or `None` for a static app.
-    pub manager: Option<Manager>,
+    /// Which manager it is, or `None` for a static app.
+    pub manager: Option<ManagerKind>,
     /// The user that runs it.
     pub user: String,
 }
@@ -140,11 +140,11 @@ pub async fn guided(
 /// The script guided setup runs; every value it carries is checked before.
 fn guided_script(dir: &str, processes: &[SetupProcess], access: SetupAccess) -> String {
     let mut script = String::from(BASE_SCRIPT);
-    if has_manager(processes, Manager::Systemd) {
+    if has_manager(processes, ManagerKind::Systemd) {
         script.push_str("need systemctl systemd\n");
     }
     script.push_str(&PACKAGES_AND_DIR.replace("{dir}", &sh_quote(dir)));
-    if has_manager(processes, Manager::Systemd) {
+    if has_manager(processes, ManagerKind::Systemd) {
         match access {
             SetupAccess::Full => script.push_str(FULL_SUDO_SCRIPT),
             SetupAccess::Commands => {
@@ -152,14 +152,14 @@ fn guided_script(dir: &str, processes: &[SetupProcess], access: SetupAccess) -> 
             }
         }
     }
-    if has_manager(processes, Manager::Pm2) {
+    if has_manager(processes, ManagerKind::Pm2) {
         script.push_str(PM2_SCRIPT);
     }
     script.push_str(FINAL_SCRIPT);
     script
 }
 
-fn has_manager(processes: &[SetupProcess], manager: Manager) -> bool {
+fn has_manager(processes: &[SetupProcess], manager: ManagerKind) -> bool {
     processes
         .iter()
         .any(|process| process.manager == Some(manager))
@@ -169,7 +169,7 @@ fn has_manager(processes: &[SetupProcess], manager: Manager) -> bool {
 fn command_list(dir: &str, processes: &[SetupProcess]) -> String {
     let mut commands = Vec::new();
     for process in processes {
-        if process.manager == Some(Manager::Systemd) {
+        if process.manager == Some(ManagerKind::Systemd) {
             commands.extend(sudo_commands(dir, &process.name));
             commands.extend(control_commands(&process.name));
         }

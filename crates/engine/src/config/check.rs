@@ -637,6 +637,7 @@ fn similar(a: &str, b: &str) -> bool {
 fn missing_help(path: &[String]) -> String {
     match dotted(path).as_str() {
         "name" => "add `name: shop` at the top".into(),
+        "root" => "add `root: true`".into(),
         "server" => "add `server: { ssh: { host: my-server }, dir: /opt/shop }`".into(),
         "server.ssh" => "add `ssh: { host: my-server }`".into(),
         "server.ssh.host" => {

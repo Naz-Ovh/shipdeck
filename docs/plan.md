@@ -30,7 +30,7 @@ live.
 | What is committed | `shipdeck.yaml` and extra files are committed; `.env` and other secrets are gitignored |
 | Any app | `pipeline.pack` ships a `binary` (checked against the server's CPU and glibc), `files`, or both. `service.start` says what the service runs (`node dist/main.js`); a bare program name is found on the server at preflight and written into the unit with its full path |
 | Pipeline | Eleven steps under `pipeline:`: preflight, build, pack, upload, unpack, setup, backup, switch, restart, health, done, plus failed. Each step that can run commands has `run` (and `check` where something must pass) with `local` and `server` sides; a step accepts only the sides it can run (build is local only, setup server only, upload/unpack/switch/restart none) |
-| Files | `pipeline.pack.files.include` and `exclude`, each split into `project` (the source) and `deploy` (next to shipdeck.yaml). fast-glob/Tailwind patterns; a leading `!` leaves out (include) or keeps (exclude). `.git` never ships; a deploy file replaces a project file at the same path |
+| Files | `pipeline.pack.files.include` and `exclude`, each split into `project` (the source) and `deploy` (next to shipdeck.yaml). fast-glob/Tailwind patterns; a leading `!` leaves out (include) or keeps (exclude). `.git` never ships; a deploy file replaces a source file at the same path |
 | Service environment | `service.env_file: .env` becomes `EnvironmentFile=` and is loaded for server commands too (read like systemd: no expansion); `service.env` adds single variables |
 | Shared folders | `service.shared: [uploads]` lives in `shared/` and is linked into every release at unpack |
 | Server location | `/opt/<app>` |

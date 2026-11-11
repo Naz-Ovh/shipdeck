@@ -43,7 +43,7 @@ fn processes(deployment: &Deployment) -> Vec<SetupProcess> {
         .process_apps()
         .map(|(name, manager)| SetupProcess {
             name: deployment.process_name(name),
-            manager: Some(manager),
+            manager: Some(manager.kind()),
             user: deployment.run_user(name),
         })
         .collect()

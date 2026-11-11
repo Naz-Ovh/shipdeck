@@ -79,8 +79,8 @@ fi"
             }
         };
         let (script, pm2) = match self.manager {
-            None | Some(Manager::Oxmgr) => (http, None),
-            Some(Manager::Systemd) => (
+            None | Some(Manager::Oxmgr(_)) => (http, None),
+            Some(Manager::Systemd(_)) => (
                 format!(
                     "echo \"state=$(systemctl is-active {svc} 2>&1 | head -n1)\"
 echo \"restarts=$(systemctl show -p NRestarts --value {svc} 2>/dev/null)\"
@@ -88,7 +88,7 @@ echo \"restarts=$(systemctl show -p NRestarts --value {svc} 2>/dev/null)\"
                 ),
                 None,
             ),
-            Some(Manager::Pm2) => (http, Some(self.pm2_state().await?)),
+            Some(Manager::Pm2(_)) => (http, Some(self.pm2_state().await?)),
         };
         let out = self.session.exec(&script).await?;
         let values = pairs(&out.stdout);
@@ -104,8 +104,8 @@ echo \"restarts=$(systemctl show -p NRestarts --value {svc} 2>/dev/null)\"
             "skipped" | "" => HttpCheck::Skipped,
             other => HttpCheck::Failed(other.strip_prefix("fail:").unwrap_or(other).to_string()),
         };
-        let (state, restarts) = match (self.manager, pm2) {
-            (None | Some(Manager::Oxmgr), _) => ("active".to_string(), None),
+        let (state, restarts) = match (self.manager.as_ref(), pm2) {
+            (None | Some(Manager::Oxmgr(_)), _) => ("active".to_string(), None),
             (_, Some(found)) => found,
             (_, None) => (get("state").to_string(), get("restarts").parse().ok()),
         };

@@ -49,9 +49,10 @@ Rules that keep it predictable:
 - A static app in a mixed deploy is skipped by restart; the others still restart.
 
 Deploying only one app is not a mode: it is a deploy with one app. When you want a single app
-to move on its own, give it its own deploy file and list both in the project file:
+to move on its own, give it its own deploy file and list both in the root file:
 
 ```yaml
+root: true
 deploys:
   api: deploy/api.yaml
   web: deploy/web.yaml

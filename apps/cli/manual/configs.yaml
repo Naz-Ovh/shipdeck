@@ -1,15 +1,18 @@
-# Every property of the project file and the deploy file, in the same
-# shape. A test keeps this list exactly the JSON Schema's properties.
+# Every property of the root file and the deploy file, in the same shape.
+# A test keeps this list exactly the JSON Schema's properties.
 
 apps:
   type: "map"
   brief: "The apps of the deploy, by name"
 deploys:
   type: "map"
-  brief: "Deploy names and the deploy file of each, a path on your PC."
+  brief: "Deploy names, and the deploy file of each or the deploy written in place."
 name:
   type: "text"
   brief: "The deploy's name; the default process name starts with it."
+root:
+  type: "true"
+  brief: "Marks the file as a root file. Always `true`, and required. A deploy file never holds it."
 release:
   brief: "The whole release: files that belong to no app, and the release commands."
   fields:

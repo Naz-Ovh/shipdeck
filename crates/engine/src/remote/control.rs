@@ -9,7 +9,7 @@ use anyhow::{Result, bail};
 
 use super::Server;
 use crate::agent::AgentLogEvent;
-use crate::config::Manager;
+use crate::config::{Manager, ManagerKind};
 use crate::setup;
 use crate::ssh::sh_quote;
 use shipdeck_protocol::message::agent::AgentServiceAction;
@@ -65,21 +65,23 @@ fn systemctl(action: Control, service: &str) -> String {
 
 /// What follows the log: the journal through `sudo` (empty for root), or
 /// PM2's own logs.
-fn log_script(manager: Option<Manager>, service: &str, pm2_app: &str, sudo: &str) -> String {
+fn log_script(manager: Option<&Manager>, service: &str, pm2_app: &str, sudo: &str) -> String {
     match manager {
-        Some(Manager::Systemd) => format!("{sudo}{}", journal_follow(&sh_quote(service))),
-        Some(Manager::Pm2) => format!("pm2 logs {} --raw --lines {LOG_LINES}", sh_quote(pm2_app)),
-        Some(Manager::Oxmgr) | None => String::new(),
+        Some(Manager::Systemd(_)) => format!("{sudo}{}", journal_follow(&sh_quote(service))),
+        Some(Manager::Pm2(_)) => {
+            format!("pm2 logs {} --raw --lines {LOG_LINES}", sh_quote(pm2_app))
+        }
+        Some(Manager::Oxmgr(_)) | None => String::new(),
     }
 }
 
 /// What follows `service`'s log, as a screen names it.
 #[must_use]
-pub fn log_command(manager: Option<Manager>, process: &str) -> String {
+pub fn log_command(manager: Option<&Manager>, process: &str) -> String {
     match manager {
-        Some(Manager::Systemd) => journal_follow(process),
-        Some(Manager::Pm2) => format!("pm2 logs {process} --raw --lines {LOG_LINES}"),
-        Some(Manager::Oxmgr) | None => "a static site has no process logs".to_string(),
+        Some(Manager::Systemd(_)) => journal_follow(process),
+        Some(Manager::Pm2(_)) => format!("pm2 logs {process} --raw --lines {LOG_LINES}"),
+        Some(Manager::Oxmgr(_)) | None => "a static site has no process logs".to_string(),
     }
 }
 
@@ -92,7 +94,7 @@ impl Server {
         if self.manager.is_none() {
             return Ok(());
         }
-        if self.manager == Some(Manager::Systemd) {
+        if self.manager_kind() == Some(ManagerKind::Systemd) {
             self.check_sudo(|service| systemctl(Control::Stop, service))
                 .await?;
             self.check_sudo(|service| format!("systemctl disable {service}"))
@@ -111,9 +113,9 @@ impl Server {
         }
         self.check_stop_permission().await?;
         let script = match self.manager {
-            Some(Manager::Oxmgr) => bail!("oxmgr is not built yet"),
+            Some(Manager::Oxmgr(_)) => bail!("oxmgr is not built yet"),
             None => return Ok(()),
-            Some(Manager::Systemd) => format!(
+            Some(Manager::Systemd(_)) => format!(
                 "set -e\nstate=$(systemctl show {} -p LoadState --value)\nif [ \"$state\" != not-found ]; then {}systemctl stop {}; {}systemctl disable {}; fi",
                 self.q_service(),
                 self.sudo(),
@@ -121,7 +123,7 @@ impl Server {
                 self.sudo(),
                 self.q_service()
             ),
-            Some(Manager::Pm2) => format!(
+            Some(Manager::Pm2(_)) => format!(
                 "set -e\npids=$(pm2 pid {})\nif [ -n \"$pids\" ]; then pm2 delete {}; fi\npm2 save --force",
                 sh_quote(&self.process),
                 sh_quote(&self.process)
@@ -154,14 +156,14 @@ impl Server {
         }
         let script = match self.manager {
             None => return Ok(()),
-            Some(Manager::Oxmgr) => bail!("oxmgr is not built yet"),
-            Some(Manager::Systemd) => {
+            Some(Manager::Oxmgr(_)) => bail!("oxmgr is not built yet"),
+            Some(Manager::Systemd(_)) => {
                 self.check_sudo(|service| systemctl(action, service))
                     .await?;
                 let command = systemctl(action, &self.q_service());
                 format!("{}{command}", self.sudo())
             }
-            Some(Manager::Pm2) => match action {
+            Some(Manager::Pm2(_)) => match action {
                 Control::Stop => format!("pm2 stop {}", sh_quote(&self.process)),
                 Control::Start if self.pm2_state().await?.0 == "active" => return Ok(()),
                 Control::Start => self.pm2_script("start"),
@@ -212,10 +214,15 @@ impl Server {
                 }
             }
         }
-        if self.manager == Some(Manager::Systemd) {
+        if self.manager_kind() == Some(ManagerKind::Systemd) {
             self.check_sudo(journal_follow).await?;
         }
-        let script = log_script(self.manager, &self.process, &self.process, self.sudo());
+        let script = log_script(
+            self.manager.as_ref(),
+            &self.process,
+            &self.process,
+            self.sudo(),
+        );
         self.session.follow(&script, on_line, stop).await
     }
 

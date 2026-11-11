@@ -492,6 +492,127 @@
       ],
       "description": "One command, or a list of them run in order, stopping at the first failure."
     },
+    "DeployEntry": {
+      "anyOf": [
+        {
+          "description": "A deploy file's path on your PC.",
+          "type": "string"
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/DeployFile"
+            }
+          ],
+          "description": "The deploy written in the root file."
+        }
+      ],
+      "description": "One entry of a root file: a deploy file's path, or the deploy in place."
+    },
+    "DeployFile": {
+      "additionalProperties": false,
+      "description": "One whole deploy: the server, the release and every app.",
+      "properties": {
+        "apps": {
+          "additionalProperties": {
+            "$ref": "#/definitions/App"
+          },
+          "description": "The apps of the deploy, by name. They run in name order.",
+          "type": "object"
+        },
+        "name": {
+          "description": "The deploy's name; the default process name starts with it.",
+          "type": "string"
+        },
+        "release": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Release"
+            }
+          ],
+          "default": {
+            "exclude": [],
+            "files": [],
+            "shared": [],
+            "steps": {
+              "backup": {
+                "exclude": [],
+                "include": [],
+                "keep": null,
+                "local": [],
+                "server": []
+              },
+              "build": {
+                "local": [],
+                "server": [],
+                "version_from": null
+              },
+              "done": {
+                "local": [],
+                "server": []
+              },
+              "failed": {
+                "local": [],
+                "server": []
+              },
+              "health": {
+                "local": [],
+                "server": [],
+                "timeout_secs": 20,
+                "url": null
+              },
+              "nginx": {
+                "local": [],
+                "server": []
+              },
+              "preflight": {
+                "local": [],
+                "requires": [],
+                "server": []
+              },
+              "restart": {
+                "local": [],
+                "server": []
+              },
+              "rollback": {
+                "ask_secs": null,
+                "keep_failed": null,
+                "local": [],
+                "mode": null,
+                "server": []
+              },
+              "setup": {
+                "local": [],
+                "server": []
+              },
+              "switch": {
+                "local": [],
+                "server": []
+              },
+              "upload": {
+                "local": [],
+                "server": []
+              }
+            }
+          },
+          "description": "Settings for the whole release; each app adds its own."
+        },
+        "server": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Server"
+            }
+          ],
+          "description": "The server it runs on."
+        }
+      },
+      "required": [
+        "name",
+        "server",
+        "apps"
+      ],
+      "type": "object"
+    },
     "FileEntry": {
       "anyOf": [
         {
@@ -1320,26 +1441,31 @@
       "description": "`none` for plain HTTP, or a map with `provider` and `email`."
     }
   },
-  "description": "The project file (shipdeck.yaml or .shipdeck) and the deploy file.",
+  "description": "The root file (shipdeck.yaml or .shipdeck) and the deploy file.",
   "oneOf": [
     {
       "$id": "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.1/docs/schema/deploy.schema.json",
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
-      "description": "The project file: its deploys, by name, and the deploy file of each.",
+      "description": "The root file: its deploys, by name, each a deploy file's path or a deploy written in place.",
       "properties": {
         "deploys": {
           "additionalProperties": {
-            "type": "string"
+            "$ref": "#/definitions/DeployEntry"
           },
-          "description": "Deploy names and the deploy file of each, a path on your PC.",
+          "description": "Deploy names, and the deploy file of each or the deploy itself.",
           "type": "object"
+        },
+        "root": {
+          "const": true,
+          "description": "Marks the file as a root file. A deploy file never holds it."
         }
       },
       "required": [
+        "root",
         "deploys"
       ],
-      "title": "project file",
+      "title": "root file",
       "type": "object"
     },
     {

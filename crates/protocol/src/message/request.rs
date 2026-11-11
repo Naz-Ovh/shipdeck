@@ -37,9 +37,14 @@ pub struct InitializeResult {
 pub struct WorkspaceOpen {
     /// The folder shipdeck runs in: the project folder.
     pub root: String,
-    /// A deploy file named by `--shipdeckfile`; the project file is not read.
+    /// The root file named by `--config`; the folder's own root file is not
+    /// looked for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub shipdeckfile: Option<String>,
+    pub config: Option<String>,
+    /// Deploy files named on the command line. Each is read as it is, and no
+    /// root file is needed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deploy_files: Vec<String>,
     pub login: Login,
     /// Server commands skip the login shell's startup files, on every server.
     #[serde(default)]

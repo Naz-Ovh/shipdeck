@@ -3,7 +3,7 @@ title: Command line
 description: Every argument and flag of the shipdeck command, its errors, exit codes and what it prints.
 ---
 
-Run `shipdeck` in the folder that holds your project file and it opens the terminal UI. For
+Run `shipdeck` in the folder that holds your root file and it opens the terminal UI. For
 scripts and CI, `deploy`, `rollback`, `releases`, `server-info`, `work`, `events`, `setup`
 and `tree` do the same work [without the UI](#without-the-ui), and `man` prints
 [the manual](#the-manual).
@@ -11,7 +11,7 @@ and `tree` do the same work [without the UI](#without-the-ui), and `man` prints
 ## Synopsis
 
 ```txt
-shipdeck [--shipdeckfile <PATH>] [LOGIN]
+shipdeck [-C <DIR>] [-c <FILE>] [LOGIN]
 shipdeck init     [NAME] [--preset <PRESET>] [--manager systemd|pm2] [--host <HOST>] [--user <USER>] [--project <PATH>]
 shipdeck deploy   [DEPLOY]... [--on-failure rollback|keep] [--allow-unchanged]
 shipdeck rollback <DEPLOY> <RELEASE>
@@ -31,44 +31,62 @@ on Windows `--gitshell-path`. Every server command takes them.
 ```sh
 shipdeck --key ~/.ssh/id_ed25519                 # the TUI, in this folder
 shipdeck deploy production --key ~/.ssh/id_ed25519
-shipdeck --shipdeckfile=scripts/p.yaml deploy    # one deploy file, no project file
+shipdeck deploy scripts/p.yaml                   # one deploy file, no root file
+shipdeck -C apps/api deploy production           # as if started in apps/api
+shipdeck -c ops/root.yaml deploy staging         # another root file
 shipdeck --schema > deploy.schema.json           # the JSON Schema, for offline editors
 ```
 
 ## Choosing what to read
 
-Without `--shipdeckfile`, shipdeck reads the project file in the folder you run it in:
+Shipdeck reads the root file in the project folder: `shipdeck.yaml` or `.shipdeck`.
 
-- `shipdeck` opens the TUI on every deploy the project file lists.
-- `shipdeck deploy production` reads the project file, then that deploy's file.
-- `shipdeck` with no project file stops and names the file it expected.
+- `shipdeck` opens the TUI on every deploy the root file lists, including deploys written in
+  place.
+- `shipdeck deploy production` reads the root file, then that deploy.
+- `shipdeck` with no root file stops and names the file it expected.
+- `-C <DIR>` moves the project folder, as `git -C` does; every relative path starts there.
+- `-c <FILE>` reads another root file. It does not change the project folder.
 
-With `--shipdeckfile=<path>`, shipdeck reads that deploy file only, and no project file is
-needed. The deploy is then named by its `name`.
-
-Every command except `init` and `man` accepts `--shipdeckfile`.
+A deploy file named as a `DEPLOY` argument needs no root file at all.
 
 ## `DEPLOY`
 
-A deploy name: a key under `deploys:` in the project file, such as `production`. Without one:
+A `DEPLOY` argument is one of two things, and only the ending decides:
 
-- `deploy` uses the only deploy of the project, and refuses when there are several;
+- a name, such as `production`: a key under `deploys:` in the root file;
+- a file ending in `.yaml` or `.yml`: that deploy file, on its own.
+
+Anything else, such as `./production`, is an error. Without an argument:
+
+- `deploy` uses the only deploy of the root file, and refuses when there are several;
 - `releases`, `server-info`, `work`, `events`, `setup` and `tree` do the same;
-- with `--shipdeckfile`, the one deploy in that file is used.
+- with a deploy file named, the one deploy in that file is used.
 
-`rollback` always needs the name, because it takes two arguments.
+`rollback` always needs the deploy, because it takes two arguments.
 
 ## Options
 
-### `--shipdeckfile <PATH>`
+### `-C, --cwd <DIR>`
 
 | | |
 | --- | --- |
-| Value | a path to a deploy file |
-| Default | none: the project file is read |
-| Error | `cannot read it: <os error>` when the file is missing |
+| Value | a folder |
+| Default | the folder shipdeck was started in |
+| Error | `<DIR> is not a folder` |
 
-It works with every server command and `tree`. The deploy's `name` becomes its handle.
+It applies first: every relative path on the command line, including `-c` and a deploy file
+argument, starts from it.
+
+### `-c, --config <FILE>`
+
+| | |
+| --- | --- |
+| Value | a file: a root file, or one named `.shipdeck` |
+| Default | none: `shipdeck.yaml` or `.shipdeck` in the project folder |
+| Error | `<FILE> is a deploy file, not a root file`, with the command to run instead |
+
+It reads another root file and leaves the project folder alone. The file must hold `root: true`.
 
 ### `--key <PATH>`
 
@@ -112,7 +130,7 @@ Run local commands with this `sh.exe` instead of the one Git for Windows has. Al
 
 ## `init`
 
-Writes a project file, a deploy file, an empty `.env` and a `.gitignore` in the current
+Writes a root file, a deploy file, an empty `.env` and a `.gitignore` in the current
 folder. It asks for what the flags leave out when there is a terminal; without one, `NAME`,
 `--preset` and `--host` are required.
 
@@ -126,7 +144,7 @@ folder. It asks for what the flags leave out when there is a terminal; without o
 | `--project` | your source folder | the current folder |
 
 The file it writes is checked as a launch would check it, so init never writes a config
-shipdeck would refuse. An existing project file is never replaced.
+shipdeck would refuse. An existing root file is never replaced.
 
 ## Without the UI
 
@@ -213,7 +231,7 @@ manual built into the binary. It needs no file and no network.
 
 ## `--schema`
 
-Prints the JSON Schema of the project file and the deploy file to stdout. The same file is
+Prints the JSON Schema of the root file and the deploy file to stdout. The same file is
 published at each release for editor completion. See
 [Config](/docs/reference/config#editor-completion).
 

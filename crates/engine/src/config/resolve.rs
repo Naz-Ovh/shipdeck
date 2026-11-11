@@ -8,7 +8,7 @@ use super::names::{file_name, split_args};
 use super::paths::{self, Form};
 use super::placeholders::{self, AppValues, Values};
 use super::types::{
-    App, AppHealthStep, DeployFile, FileEntry, HealthStep, Keep, KeepUp, Pm2, Process,
+    App, AppHealthStep, DeployFile, FileEntry, HealthStep, Keep, KeepUp, Oxmgr, Pm2, Process,
     RollbackMode, Systemd,
 };
 use super::{Problem, ReleaseSteps};
@@ -18,27 +18,51 @@ use crate::ssh::Endpoint;
 /// when `release.steps.build.version_from` is not set.
 pub const VERSION_FILES: [&str; 4] = ["Cargo.toml", "package.json", "pyproject.toml", "VERSION"];
 
-/// What keeps a process running.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// What keeps a process running, and its settings.
+///
+/// The pipeline sees one value per app, so two managers cannot be carried
+/// past the checks.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Manager {
     /// A systemd unit.
-    Systemd,
+    Systemd(Systemd),
     /// A PM2 app.
-    Pm2,
+    Pm2(Pm2),
     /// An oxmgr app. Parsed and checked; a deploy stops at preflight.
-    Oxmgr,
+    Oxmgr(Oxmgr),
 }
 
 impl Manager {
     /// As the screens and messages name it.
     #[must_use]
-    pub fn label(self) -> &'static str {
+    pub fn label(&self) -> &'static str {
         match self {
-            Self::Systemd => "systemd",
-            Self::Pm2 => "PM2",
-            Self::Oxmgr => "oxmgr",
+            Self::Systemd(_) => "systemd",
+            Self::Pm2(_) => "PM2",
+            Self::Oxmgr(_) => "oxmgr",
         }
     }
+
+    /// The manager as a value with no settings, for `init` and for matching.
+    #[must_use]
+    pub fn kind(&self) -> ManagerKind {
+        match self {
+            Self::Systemd(_) => ManagerKind::Systemd,
+            Self::Pm2(_) => ManagerKind::Pm2,
+            Self::Oxmgr(_) => ManagerKind::Oxmgr,
+        }
+    }
+}
+
+/// Which manager it is, without its settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ManagerKind {
+    /// A systemd unit.
+    Systemd,
+    /// A PM2 app.
+    Pm2,
+    /// An oxmgr app.
+    Oxmgr,
 }
 
 /// Where the program in `process.start` comes from.
@@ -55,7 +79,7 @@ pub enum Program {
 /// One deploy, with its paths resolved on this machine.
 #[derive(Debug, Clone)]
 pub struct Deployment {
-    /// The deploy's handle: its key in the project file, or its `name`.
+    /// The deploy's handle: its key in the root file, or its `name`.
     pub slug: String,
     /// The deploy file.
     pub file: PathBuf,
@@ -147,11 +171,11 @@ impl Deployment {
     /// The manager that keeps the app up, when it has a process.
     #[must_use]
     pub fn manager(&self, app: &str) -> Option<Manager> {
-        match self.process(app)?.manager.as_ref()? {
-            KeepUp::Systemd(_) => Some(Manager::Systemd),
-            KeepUp::Pm2(_) => Some(Manager::Pm2),
-            KeepUp::Oxmgr(_) => Some(Manager::Oxmgr),
-        }
+        Some(match self.process(app)?.manager.as_ref()? {
+            KeepUp::Systemd(settings) => Manager::Systemd(settings.clone()),
+            KeepUp::Pm2(settings) => Manager::Pm2(settings.clone()),
+            KeepUp::Oxmgr(settings) => Manager::Oxmgr(settings.clone()),
+        })
     }
 
     /// The app's systemd settings, when it has them.

@@ -128,11 +128,11 @@ pub enum Outcome {
 /// One project in the workspace, as `workspace/open` reports it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DeployableInfo {
-    /// The folder's name; what every other message calls the project.
+    /// The deploy's name, from the root file or the deploy file.
     pub slug: String,
-    /// The `name` from `shipdeck.yaml`.
+    /// The `name` of the deploy file.
     pub name: String,
-    /// `ssh.host` from `shipdeck.yaml`: an alias or an address.
+    /// `ssh.host`: an alias or an address.
     pub host: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
@@ -142,7 +142,7 @@ pub struct DeployableInfo {
     /// `dir`: where the project lives on the server.
     #[serde(default)]
     pub dir: String,
-    /// The deploy file on this PC.
+    /// The deploy file on this PC, or the root file an inline deploy lives in.
     #[serde(default)]
     pub folder: String,
     /// The app names, in the order they run.

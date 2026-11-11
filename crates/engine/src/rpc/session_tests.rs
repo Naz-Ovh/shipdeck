@@ -58,13 +58,13 @@ async fn a_reply_is_written_for_the_app() {
 }
 
 #[tokio::test]
-async fn opens_a_project_file_and_its_deploys() {
+async fn opens_a_root_file_and_its_deploys() {
     let folder = std::env::temp_dir().join(format!("shipdeck-rpc-project-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&folder);
     std::fs::create_dir_all(folder.join("deploy")).unwrap();
     std::fs::write(
         folder.join("shipdeck.yaml"),
-        "deploys:\n  production: deploy/production.yaml\n",
+        "root: true\ndeploys:\n  production: deploy/production.yaml\n",
     )
     .unwrap();
     std::fs::write(folder.join("deploy/production.yaml"), DEPLOY).unwrap();
@@ -72,7 +72,8 @@ async fn opens_a_project_file_and_its_deploys() {
     let opened = session
         .open(&WorkspaceOpen {
             root: folder.display().to_string(),
-            shipdeckfile: None,
+            config: None,
+            deploy_files: Vec::new(),
             login: Login::Auto,
             no_shell_env: true,
         })
@@ -89,7 +90,7 @@ async fn opens_a_project_file_and_its_deploys() {
 }
 
 #[tokio::test]
-async fn a_named_deploy_file_needs_no_project_file() {
+async fn a_named_deploy_file_needs_no_root_file() {
     let folder = std::env::temp_dir().join(format!("shipdeck-rpc-file-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&folder);
     std::fs::create_dir_all(&folder).unwrap();
@@ -98,7 +99,8 @@ async fn a_named_deploy_file_needs_no_project_file() {
     let opened = session
         .open(&WorkspaceOpen {
             root: folder.display().to_string(),
-            shipdeckfile: Some(folder.join("production.yaml").display().to_string()),
+            config: None,
+            deploy_files: vec![folder.join("production.yaml").display().to_string()],
             login: Login::Auto,
             no_shell_env: true,
         })
