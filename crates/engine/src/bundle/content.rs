@@ -79,7 +79,8 @@ pub fn hash(plan: &mut Plan, mut progress: impl FnMut(u64, u64)) -> Result<()> {
 
 /// `sha256:<hex>` over what makes the release what it is: each path with
 /// its kind, a file's mode and SHA-256, a link's target. The settings file
-/// is in the release, so a changed config is a changed release.
+/// is in the release, so a changed config is a changed release. A generated
+/// unit or PM2 file counts as rendered for a neutral release.
 #[must_use]
 pub fn fingerprint(plan: &Plan) -> String {
     let mut entries: Vec<&Entry> = plan
@@ -100,7 +101,8 @@ pub fn fingerprint(plan: &Plan) -> String {
             Source::File(_) | Source::Bytes(_) => {
                 field(&mut hash, b"f", entry.path.as_bytes());
                 hash.update(format!("{:o}\0", entry.mode));
-                hash.update(entry.sha256.as_deref().unwrap_or_default());
+                let sha256 = plan.neutral.get(&entry.path).or(entry.sha256.as_ref());
+                hash.update(sha256.map_or(&[][..], String::as_bytes));
                 hash.update(b"\0");
             }
         }

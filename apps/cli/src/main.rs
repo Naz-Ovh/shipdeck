@@ -47,7 +47,7 @@ const KEY_ENV: &str = "SHIPDECK_SSH_KEY";
     after_help = "shipdeck reads the root file, shipdeck.yaml or .shipdeck, in the project folder;\n\
                   -C moves that folder and -c names another root file. A deploy is one file:\n\
                   names come from the root file, and a .yaml or .yml argument is a deploy file.\n\
-                  Login, first found: --key, --key-text, --password, SHIPDECK_SSH_KEY,\n\
+                  Login, first found: --passwordless, --key, --key-text, --password, SHIPDECK_SSH_KEY,\n\
                   SHIPDECK_PASSWORD; else the host's ~/.ssh/config key, then the TUI asks\n\
                   for the password. SHIPDECK_KEY_PASSPHRASE unlocks an encrypted key.\n\
                   deploy, rollback and releases run without the TUI and ask nothing.\n\
@@ -88,6 +88,10 @@ struct LoginArgs {
     /// Log in with this password (it lands in your shell history; `SHIPDECK_PASSWORD` does not)
     #[arg(long, value_name = "PASSWORD")]
     password: Option<String>,
+
+    /// Log in with no password or key, for a server that allows it
+    #[arg(long, conflicts_with_all = ["key", "key_text", "password"])]
+    passwordless: bool,
 
     /// Run server commands without the login shell's startup files (~/.bashrc, ~/.zshrc, ...), on every server
     #[arg(long)]
@@ -406,6 +410,7 @@ async fn main() -> Result<ExitCode> {
     );
     let (names, root_file) = (workspace.deployables, root_file(&root, config.as_deref()));
     let where_ = Where {
+        root: &root,
         root_file: &root_file,
     };
     let code = run_command(&mut console, command, &names, &where_, setup).await;
@@ -550,6 +555,7 @@ fn wire(login: &Login) -> ProtocolLogin {
         Login::Password(password) => ProtocolLogin::Password {
             password: password.clone(),
         },
+        Login::Passwordless => ProtocolLogin::Passwordless,
         Login::Auto => ProtocolLogin::Auto,
     }
 }
@@ -743,6 +749,9 @@ fn listed<'a>(names: impl Iterator<Item = &'a String>) -> String {
 }
 
 fn login(args: LoginArgs) -> Result<Login> {
+    if args.passwordless {
+        return Ok(Login::Passwordless);
+    }
     if let Some(key) = args.key {
         let key = expand_home(key);
         if !key.is_file() {

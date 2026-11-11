@@ -235,3 +235,71 @@ fn a_relative_config_and_deploy_file_start_from_cwd() {
 fn cwd_must_be_a_folder() {
     assert!(super::folder(Some(std::path::Path::new("/no/such/folder/anywhere"))).is_err());
 }
+
+#[test]
+fn passwordless_logs_in_with_no_password_or_key() {
+    let cli = parse(&["shipdeck", "releases", "production", "--passwordless"]);
+    let Some(Command::Server(command)) = cli.command else {
+        panic!("releases is a server command");
+    };
+    let login = super::login(super::ssh_args(&command).login.clone()).unwrap();
+    assert!(matches!(login, shipdeck_engine::ssh::Login::Passwordless));
+    // Before the command, it is the TUI's login.
+    let tui = parse(&["shipdeck", "--passwordless"]);
+    assert!(matches!(
+        super::login(tui.login).unwrap(),
+        shipdeck_engine::ssh::Login::Passwordless
+    ));
+    for other in [["--key", "id"], ["--key-text", "k"], ["--password", "p"]] {
+        let args = ["shipdeck", "releases", "--passwordless", other[0], other[1]];
+        assert!(Cli::try_parse_from(args).is_err(), "{other:?}");
+    }
+}
+
+fn info(slug: &str, file: &str) -> shipdeck_protocol::message::DeployableInfo {
+    shipdeck_protocol::message::DeployableInfo {
+        slug: slug.into(),
+        name: "shop".into(),
+        host: "example.com".into(),
+        user: None,
+        port: 22,
+        dir: "/opt/shop".into(),
+        folder: file.into(),
+        apps: Vec::new(),
+    }
+}
+
+#[test]
+fn a_relative_deploy_file_matches_the_engine_s_absolute_one() {
+    let projects = [
+        info("staging", "/work/shop/deploy/staging.yaml"),
+        info("production", "/work/shop/deploy/production.yaml"),
+    ];
+    let root_file = std::path::PathBuf::from("/work/shop/shipdeck.yaml");
+    let slugs = |root: &str, path: &str| {
+        let where_ = super::naming::Where {
+            root: std::path::Path::new(root),
+            root_file: &root_file,
+        };
+        super::naming::resolve_names(&projects, &where_, &[Target::File(path.into())])
+    };
+    assert_eq!(
+        slugs("/work/shop", "deploy/production.yaml").unwrap(),
+        ["production"]
+    );
+    assert_eq!(
+        slugs("/work/shop", "./deploy/staging.yaml").unwrap(),
+        ["staging"]
+    );
+    // `-C` moves the folder the relative path starts from.
+    assert_eq!(
+        slugs("/work", "shop/deploy/production.yaml").unwrap(),
+        ["production"]
+    );
+    assert_eq!(
+        slugs("/work/shop", "/work/shop/deploy/production.yaml").unwrap(),
+        ["production"]
+    );
+    let err = slugs("/work/other", "deploy/production.yaml").unwrap_err();
+    assert!(err.contains("has no deploy the engine could read"), "{err}");
+}

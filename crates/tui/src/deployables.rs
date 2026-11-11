@@ -156,6 +156,7 @@ fn details(
         (Login::Key(path), _) => format!("key {} (--key)", path.display()),
         (Login::KeyText(_), _) => "key text (--key-text or SHIPDECK_SSH_KEY)".to_string(),
         (Login::Password(_), _) => "password (--password)".to_string(),
+        (Login::Passwordless, _) => "no password or key (--passwordless)".to_string(),
         (Login::Auto, Some(path)) => {
             format!("key {} (~/.ssh/config), else password", path.display())
         }

@@ -16,6 +16,8 @@ pub enum Login {
     KeyText { text: String },
     /// A password given up front, so nothing is asked.
     Password { password: String },
+    /// No password or key, for a server that allows it.
+    Passwordless,
 }
 
 /// What to do when a release fails after it went live.

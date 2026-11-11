@@ -70,9 +70,6 @@ impl Run<'_> {
         log_shell_env(self.report, &session.shell_env);
         self.session = Some(Arc::clone(&session));
         let base = self.base_server(Arc::clone(&session))?;
-        self.project_lock = Some(crate::agent::ProjectGuard::acquire(&base).await?);
-        self.check_lock()?;
-
         let tools = self.tools();
         let mut facts = base.facts(&tools).await?;
         self.check_sudo(&tools, &mut facts).await?;
@@ -87,6 +84,7 @@ impl Run<'_> {
         } else if !facts.dir_writable {
             bail!("{} cannot write to {dir}", endpoint.user);
         }
+        self.lock_and_refresh(&base, &mut facts).await?;
         if facts.free_bytes.is_some_and(|free| free < MIN_FREE) {
             bail!("only {} free on the server", human::bytes(MIN_FREE));
         }
@@ -121,6 +119,20 @@ impl Run<'_> {
         let exec = self.exec(Step::Preflight);
         Box::pin(exec.step(Step::Preflight, None)).await?;
         Ok((base, facts, summary))
+    }
+
+    /// Takes the project lock, which needs the folder, then reads the live
+    /// facts again: what was read before the lock may have changed.
+    async fn lock_and_refresh(&mut self, base: &Server, facts: &mut Facts) -> Result<()> {
+        self.project_lock = Some(crate::agent::ProjectGuard::acquire(base).await?);
+        self.check_lock()?;
+        let fresh = base.facts(&[]).await?;
+        facts.current = fresh.current;
+        facts.content = fresh.content;
+        facts.active = fresh.active;
+        facts.systemd = fresh.systemd;
+        facts.free_bytes = fresh.free_bytes;
+        Ok(())
     }
 
     /// Refuses a deploy that uses a manager shipdeck does not manage yet.
@@ -418,6 +430,9 @@ impl Run<'_> {
         let session = pool.get(endpoint).await?;
         self.session = Some(Arc::clone(&session));
         let base = self.base_server(Arc::clone(&session))?;
+        if !base.facts(&[]).await?.dir_exists {
+            bail!("{} does not exist on the server", self.deployment.dir());
+        }
         self.project_lock = Some(crate::agent::ProjectGuard::acquire(&base).await?);
         let listing = base.list().await?;
         let Some(entry) = listing.entries.iter().find(|entry| entry.id == target) else {

@@ -12,6 +12,8 @@ use crate::target::Target;
 
 /// Where the root file is, for a message that has to name it.
 pub struct Where<'a> {
+    /// The project folder, which a relative deploy file starts from.
+    pub root: &'a std::path::Path,
     /// The root file, or the name the folder would hold.
     pub root_file: &'a std::path::Path,
 }
@@ -72,12 +74,14 @@ fn slug_of(
             listed(projects)
         )),
         Target::File(path) => {
-            let wanted = path.display().to_string();
+            let Target::File(wanted) = target.resolved(where_.root) else {
+                unreachable!("a file target resolves to a file");
+            };
             projects
                 .iter()
-                .find(|project| project.folder == wanted)
+                .find(|project| std::path::Path::new(&project.folder) == wanted)
                 .map(|project| project.slug.clone())
-                .ok_or_else(|| format!("{wanted} has no deploy the engine could read"))
+                .ok_or_else(|| format!("{} has no deploy the engine could read", path.display()))
         }
     }
 }

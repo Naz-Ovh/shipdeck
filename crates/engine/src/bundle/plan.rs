@@ -77,6 +77,9 @@ pub struct Plan {
     pub missing: Vec<String>,
     /// Folders a `files` entry named as a whole, which `tree --depth` folds.
     pub roots: BTreeSet<String>,
+    /// SHA-256 of each generated unit or PM2 file as rendered for a neutral
+    /// release, by path: what the fingerprint sees instead of the real file.
+    pub neutral: BTreeMap<String, String>,
 }
 
 impl Plan {
@@ -405,13 +408,15 @@ fn add_generated(
         match manager {
             crate::config::Manager::Systemd(_) => {
                 let path = unit_file(deployment, name);
-                if let Some(text) = super::unit::render(
-                    deployment,
-                    name,
-                    release,
-                    start_paths.get(name).map(String::as_str),
-                )? {
+                let start = start_paths.get(name).map(String::as_str);
+                if let Some(text) = super::unit::render(deployment, name, release, start)? {
                     generated(plan, bytes(&path, text.into_bytes()))?;
+                    if let Some(neutral) =
+                        super::unit::render(deployment, name, &neutral_release(), start)?
+                    {
+                        plan.neutral
+                            .insert(path, super::content::sha256(neutral.as_bytes()));
+                    }
                 }
             }
             crate::config::Manager::Pm2(_) => {
@@ -419,12 +424,21 @@ fn add_generated(
                     let path = pm2_file(deployment, name);
                     let text = super::pm2::render(deployment, name, release)?;
                     generated(plan, bytes(&path, text.into_bytes()))?;
+                    let neutral = super::pm2::render(deployment, name, &neutral_release())?;
+                    plan.neutral
+                        .insert(path, super::content::sha256(neutral.as_bytes()));
                 }
             }
             crate::config::Manager::Oxmgr(_) => {}
         }
     }
     Ok(())
+}
+
+/// The release name the fingerprint renders generated files with, so a new
+/// release name alone never counts as a change.
+fn neutral_release() -> ReleaseName {
+    ReleaseName::new("0.0.0", "neutral", false, chrono::DateTime::UNIX_EPOCH)
 }
 
 fn generated(plan: &mut Plan, entry: Entry) -> Result<()> {

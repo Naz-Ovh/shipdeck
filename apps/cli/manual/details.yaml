@@ -331,7 +331,7 @@ cli.events:
     `shipdeck events [DEPLOY] --after N --limit M` prints the numbered events the server saved,
     oldest first. Each line is `#sequence time operation kind detail`.
 
-    Events are saved on the server, in the connecting user's ~/.shipdeck/state.db, so they
+    Events are saved on the server, in /var/lib/shipdeck/users/<ssh user>/state.db, so they
     survive a lost connection. Build, upload, unpack, setup, backup, switch, restart, health and
     the outcome each record one. `--after` follows on from the last sequence you saw; `--limit`
     caps one page at 1000.
@@ -417,6 +417,7 @@ login:
   see: [hosts, shell-env, permissions]
   text: |
     shipdeck logs in with SSH, in this order:
+      0. --passwordless, no password or key, for a server that allows it (the SSH "none" login)
       1. --key PATH, an unencrypted private key file (an encrypted one asks for its passphrase)
       2. --key-text TEXT, a key's text, such as a CI secret (it shows in `ps`)
       3. --password PASSWORD (it lands in shell history)
@@ -1135,7 +1136,7 @@ server:
   text: |
     A Linux server reachable over SSH, nothing else. shipdeck installs no system package except
     what guided setup adds: tar, zstd, coreutils, sudo, curl. The agent is a separate binary in
-    /opt/shipdeck/agent, prepared on every connection.
+    /var/lib/shipdeck/agent, prepared on every connection.
 
     During a deploy it makes, under `server.dir`: releases/, backups/, shared/, and current as a
     symlink. The first deploy creates the folder if the user may, else with sudo, and hands it
@@ -1180,7 +1181,7 @@ permissions:
     /etc/sudoers.d. Running setup again updates the rule without changing anything else.
 
     The agent needs root or password-free sudo to install and start, since it lives in
-    /opt/shipdeck/agent. A connection that cannot become root stops with the account and the
+    /var/lib/shipdeck/agent. A connection that cannot become root stops with the account and the
     missing right; shipdeck does not run operations around it.
 
 server-setup:

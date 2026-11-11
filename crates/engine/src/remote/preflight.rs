@@ -91,7 +91,7 @@ if [ -w \"$dir\" ]; then echo writable=yes; else echo writable=no; fi
 p=\"$dir\"; while [ ! -d \"$p\" ]; do p=$(dirname \"$p\"); done
 echo \"free_kb=$(df -Pk \"$p\" | awk 'NR==2 {{print $4}}')\"
 echo \"current=$(readlink \"$dir/current\" 2>/dev/null)\"
-echo \"manifest=$(tr -d '\\n' 2>/dev/null < \"$dir/current/release.json\")\"
+echo \"manifest=$(tr -d '\\n' 2>/dev/null < \"$dir/current/.shipdeck/release.json\")\"
 echo \"active=$(systemctl is-active {svc} 2>&1 | head -n1)\"
 {pm2}{lookups}{checks}",
             dir = self.q_dir(),

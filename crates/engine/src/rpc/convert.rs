@@ -66,6 +66,7 @@ pub fn login(login: wire::Login) -> Login {
         wire::Login::Key { path } => Login::Key(path.into()),
         wire::Login::KeyText { text } => Login::KeyText(text),
         wire::Login::Password { password } => Login::Password(password),
+        wire::Login::Passwordless => Login::Passwordless,
     }
 }
 

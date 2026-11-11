@@ -602,7 +602,7 @@ when there is no `pipeline.pack.binary`.
 On each connection the engine checks the installed `shipdeck-agent` version
 and starts it through sudo. The account must be root or have password-free
 sudo. Published builds download the matching release from GitHub into
-`/opt/shipdeck/agent/v<version>/agent`; root owns the binary and its parent
+`/var/lib/shipdeck/agent/v<version>/agent`; root owns the binary and its parent
 directories. Same-major minor and patch differences are allowed. A newer agent
 major refuses the connection. Development builds use the explicit
 `SHIPDECK_AGENT_BINARY` path, and a failed download never falls back to a local
@@ -613,7 +613,7 @@ files, receiving the bundle on a separate SSH channel, safe tar/zstd
 extraction with path, link, mode, size and checksum checks, shared links,
 backups and restores, release listing and inspection, service status and
 control, live logs, project locks, and approved cleanup. Deploys still run
-while connected: prepare and verify first, activate last. `~/.shipdeck/state.db`
+while connected: prepare and verify first, activate last. `/var/lib/shipdeck/users/<user>/state.db`
 keeps numbered events, and `shipdeck events` replays them.
 
 When an operation is interrupted, unfinished files stay. `shipdeck work`

@@ -63,3 +63,73 @@ fn login_never_prints_a_secret() {
     );
     assert_eq!(shown, "key text password");
 }
+
+/// A server that lets anyone in with no secret, or no one.
+struct NoneServer {
+    open: bool,
+}
+
+impl russh::server::Handler for NoneServer {
+    type Error = russh::Error;
+
+    fn auth_none(
+        &mut self,
+        _user: &str,
+    ) -> impl Future<Output = Result<russh::server::Auth, Self::Error>> + Send {
+        std::future::ready(Ok(if self.open {
+            russh::server::Auth::Accept
+        } else {
+            russh::server::Auth::reject()
+        }))
+    }
+}
+
+/// A client that trusts the test server's fresh host key.
+struct TrustingClient;
+
+impl russh::client::Handler for TrustingClient {
+    type Error = russh::Error;
+
+    fn check_server_key(
+        &mut self,
+        _key: &russh::keys::PublicKeyOrCertificate,
+    ) -> impl Future<Output = Result<bool, Self::Error>> + Send {
+        std::future::ready(Ok(true))
+    }
+}
+
+/// Whether a `none` login gets in, against a server that is `open` or not.
+/// `None` without ssh-keygen.
+async fn none_login(open: bool) -> Option<bool> {
+    let (host_key, _) = generated(&format!("host-{open}"), "")?;
+    let config = russh::server::Config {
+        keys: vec![decode_secret_key(&host_key, None).unwrap()],
+        auth_rejection_time: std::time::Duration::from_millis(1),
+        ..Default::default()
+    };
+    let (client_side, server_side) = tokio::io::duplex(64 * 1024);
+    let server = russh::server::run_stream(Arc::new(config), server_side, NoneServer { open });
+    tokio::spawn(async move { server.await.map(|_running| ()) });
+    let mut handle = russh::client::connect_stream(
+        Arc::new(russh::client::Config::default()),
+        client_side,
+        TrustingClient,
+    )
+    .await
+    .unwrap();
+    Some(none_accepted(&mut handle, "box").await.unwrap())
+}
+
+#[tokio::test]
+async fn a_passwordless_server_lets_the_none_login_in() {
+    if let Some(accepted) = none_login(true).await {
+        assert!(accepted);
+    }
+}
+
+#[tokio::test]
+async fn a_server_that_needs_a_secret_refuses_the_none_login() {
+    if let Some(accepted) = none_login(false).await {
+        assert!(!accepted);
+    }
+}

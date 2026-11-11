@@ -1,5 +1,5 @@
 # {{service}}.service for release {{id}}, written by shipdeck.
-# Every deploy and rollback replaces this file; change service.template instead.
+# Every deploy and rollback replaces this file; change process.systemd.options or process.systemd.template instead.
 
 [Unit]
 Description={{name}} {{tag}}

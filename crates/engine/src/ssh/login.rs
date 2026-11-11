@@ -1,5 +1,6 @@
 //! Logging in with a key file, a key's text (a CI secret), a password from
-//! the command line or `SHIPDECK_PASSWORD`, or a password asked for in the TUI.
+//! the command line or `SHIPDECK_PASSWORD`, a password asked for in the TUI,
+//! or, with `--passwordless`, no secret at all.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -29,6 +30,8 @@ pub enum Login {
     /// A private key's text, such as a CI secret.
     KeyText(String),
     Password(String),
+    /// No password or key: the SSH `none` method, for a passwordless server.
+    Passwordless,
     /// The `IdentityFile` from `~/.ssh/config` if the host has one, then a
     /// password asked in the TUI.
     Auto,
@@ -41,6 +44,7 @@ impl Login {
             Login::Key(path) => format!("key {}", path.display()),
             Login::KeyText(_) => "key text".into(),
             Login::Password(_) => "password".into(),
+            Login::Passwordless => "no password or key".into(),
             Login::Auto => "~/.ssh/config key, else a password".into(),
         }
     }
@@ -116,6 +120,18 @@ impl Secrets {
     }
 }
 
+/// Whether the server lets `user` in with no password or key: the SSH `none`
+/// method. Only `--passwordless` uses it.
+///
+/// # Errors
+/// Returns an error when the connection fails.
+pub(super) async fn none_accepted<H: russh::client::Handler>(
+    handle: &mut Handle<H>,
+    user: &str,
+) -> Result<bool> {
+    Ok(handle.authenticate_none(user).await?.success())
+}
+
 pub async fn authenticate(
     handle: &mut Handle<Client>,
     target: &Endpoint,
@@ -124,6 +140,16 @@ pub async fn authenticate(
     secrets: &Secrets,
 ) -> Result<()> {
     match login {
+        Login::Passwordless => {
+            if !none_accepted(handle, &target.user).await? {
+                bail!(
+                    "{} refused a login without a password or key for user {}",
+                    target.name,
+                    target.user
+                );
+            }
+            Ok(())
+        }
         Login::Key(path) => {
             let key = KeySource::file(path)?;
             if !with_key(handle, target, &key, asker, secrets).await? {

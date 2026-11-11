@@ -1339,6 +1339,19 @@
             "password"
           ],
           "type": "object"
+        },
+        {
+          "description": "No password or key, for a server that allows it.",
+          "properties": {
+            "kind": {
+              "const": "passwordless",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
         }
       ]
     },

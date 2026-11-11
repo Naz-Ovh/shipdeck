@@ -117,6 +117,7 @@ fn only_app(plan: &Plan, app: &str) -> Plan {
         links,
         missing: plan.missing.clone(),
         roots,
+        neutral: BTreeMap::new(),
     }
 }
 

@@ -425,6 +425,127 @@ the old format, but the report should say so for each file.
 with six comment lines about checks, line numbers and path rules. The
 example rule is one plain sentence saying what the file is, plus a docs link.
 
+## End-to-end test on a real server
+
+Run on 2026-11-11 against an instabox (Debian 13, systemd, Node 22, PM2 7.1.2).
+The real CLI deployed a scratch project over SSH with three apps: a systemd
+API with a binary and a shared folder, a PM2 worker, and a static site.
+
+**Setup:**
+
+- The test logged in as `user` through an SSH tunnel to the box's own sshd.
+  The gateway's token user name is not an account on the box.
+- The agent was a local musl build, through `SHIPDECK_AGENT_BINARY`.
+
+Everything was removed afterwards.
+
+### Passed
+
+| Scenario |
+| --- |
+| First deploy: release files, `to`, `.shipdeck/`, the binary at mode 755, the shared link. |
+| Placeholders expand in server and local commands. |
+| The systemd API and the PM2 worker run, and `env_file` is loaded. |
+| A second deploy keeps shared data. |
+| Retention: `keep.open: 2`; older releases become backups. |
+| A rollback by hand from a backup runs `setup.server` again. |
+| A rollback by hand to an open release. |
+| A setup failure never switches, and `failed` runs. |
+| An automatic rollback runs the rollback commands first, with `SHIPDECK_PREVIOUS`. |
+| `rollback.mode: off` keeps the failed release (exit 4). |
+| Every runner, local and on the server. |
+| A missing server runner stops preflight. |
+| A deploy file named by its full path. |
+| `-C` with a relative `-c`, run from another folder. |
+| `shipdeck tree` matches the live release. |
+| `--passwordless` logs in through the instabox gateway. |
+
+### Open findings from the test
+
+#### P1: every first deploy to a new server fails
+
+**Where:** [preflight.rs:73](../../crates/engine/src/deploy/preflight.rs#L73).
+
+Preflight takes the project lock inside the server folder before line 86
+creates the folder. The run stops with "opening the project directory: No
+such file or directory". The code before format 2 created the folder first.
+The test worked around it by creating the folder in advance.
+
+#### P1: a relative deploy file argument fails
+
+**Where:** [naming.rs:76-80](../../apps/cli/src/naming.rs#L76-L80).
+
+`shipdeck releases deploy/production.yaml` says "has no deploy the engine
+could read". The same file by its full path works. The CLI compares the
+path as typed with the engine's absolute path.
+
+#### P2: "nothing changed" never triggers for a systemd app
+
+**Where:** [content.rs:84](../../crates/engine/src/bundle/content.rs#L84).
+
+The fingerprint includes `.shipdeck/<process>.service`, and that file holds
+the release name and version. Two releases with the same files therefore
+differ, and a deploy that should exit 6 deploys again. The code before
+format 2 fingerprinted a unit file without the release name in it.
+
+#### P3: the built-in unit names an old key
+
+The header of every generated unit says "change service.template instead".
+The key is now `process.systemd.template`.
+
+### Resolution
+
+#### P1: every first deploy to a new server fails
+
+Preflight now creates the project folder first, then takes the lock, then
+reads the live facts again (`preflight.rs`). A rollback to a missing folder
+now says the folder does not exist. No unit test: the step needs a server.
+End to end: scenario 1 passes with no pre-created folder.
+
+#### P1: a relative deploy file argument fails
+
+The CLI resolves the file against the project folder (so `-C` counts)
+before it matches the engine's deploy. Tests:
+`a_relative_deploy_file_matches_the_engine_s_absolute_one` (also with a
+`-C`-style folder). End to end: scenarios 15 and 16 pass.
+
+#### P2: "nothing changed" never triggers for a systemd app
+
+The plan keeps the hash of each unit and PM2 file rendered for a neutral
+release, and the fingerprint uses it. The same bug had a second cause:
+preflight read the live `release.json` from the release root, but format 2
+keeps it in `.shipdeck/`. Tests: `a_new_release_name_alone_keeps_the_fingerprint`
+(systemd and PM2) and `a_changed_systemd_option_changes_the_fingerprint`.
+End to end: scenario 4 passes (exit 6).
+
+#### P3: the built-in unit names an old key
+
+This finding was wrong. No code reads `default.service`. Generated units come
+from `bundle/unit.rs`, which already names `process.systemd.template`. The
+comment in `default.service` was updated anyway.
+
+### Still open after the fixes
+
+- **P2: the no-agent release list reads the old path.**
+  [remote/releases.rs](../../crates/engine/src/remote/releases.rs), in
+  `list` around line 290, reads `$d/release.json` from the release root.
+  Format 2 keeps it in `.shipdeck/`. The end-to-end test always used the
+  agent, so this path was not run.
+- **P3: `default.service` is unused.** It also holds old placeholders such as
+  `{{service}}` and `{{id}}`. Delete it, or wire it in.
+- **P3: `unreachable!` in the CLI.** `naming.rs` `slug_of` panics on a case
+  that cannot happen. Have `Target::resolved` return the path itself for a
+  file, so the type rules the case out.
+- **P3: the old key in a feature page.**
+  [deployment-config.md](../feature/deployment-config.md) line 589 still says
+  `service.template`.
+
+### Seen, not a finding
+
+Moving an app from systemd to PM2 stops at preflight: "the systemd service
+… is still running and would clash with PM2; stop it first". This is the
+behaviour from before format 2, and the message says what to do.
+
 ## Limits
 
 These were not run in this review:

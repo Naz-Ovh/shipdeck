@@ -82,7 +82,7 @@ The login method comes from the command line, never from a config file. It appli
 `--key` and `--password` cannot be used together. A leading `~` in `--key` is expanded by shipdeck, and a missing file stops at launch: `the key file <path> does not exist`.
 
 <Callout type="warn" title="No ssh-agent">
-shipdeck does not use ssh-agent, and it does not try default keys such as `~/.ssh/id_ed25519` on its own. Pass `--key`, or name the key with `IdentityFile` in `~/.ssh/config` (a `Host *` entry works). Only key and password logins are supported, not keyboard-interactive.
+shipdeck does not use ssh-agent, and it does not try default keys such as `~/.ssh/id_ed25519` on its own. Pass `--key`, or name the key with `IdentityFile` in `~/.ssh/config` (a `Host *` entry works). Key and password logins are supported, and `--passwordless` for a server that lets you in with neither (the SSH `none` login). Keyboard-interactive is not supported.
 </Callout>
 
 `--password` lands in your shell history. In zsh with `HIST_IGNORE_SPACE`, start the command with a space:
