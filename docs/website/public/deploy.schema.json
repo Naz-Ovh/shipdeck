@@ -1,5 +1,5 @@
 {
-  "$id": "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.1/docs/schema/deploy.schema.json",
+  "$id": "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.10.0/docs/schema/deploy.schema.json",
   "$schema": "http://json-schema.org/draft-07/schema#",
   "definitions": {
     "App": {
@@ -1444,7 +1444,7 @@
   "description": "The root file (shipdeck.yaml or .shipdeck) and the deploy file.",
   "oneOf": [
     {
-      "$id": "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.1/docs/schema/deploy.schema.json",
+      "$id": "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.10.0/docs/schema/deploy.schema.json",
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
       "description": "The root file: its deploys, by name, each a deploy file's path or a deploy written in place.",
@@ -1469,7 +1469,7 @@
       "type": "object"
     },
     {
-      "$id": "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.1/docs/schema/deploy.schema.json",
+      "$id": "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.10.0/docs/schema/deploy.schema.json",
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
       "description": "One whole deploy: the server, the release and every app.",

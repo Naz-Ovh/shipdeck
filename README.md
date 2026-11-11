@@ -18,7 +18,7 @@ commands. One deploy can hold several apps that switch together as one release.
    shipdeck --version
    ```
 
-   For a pinned release, append `-s -- -V=v0.9.1` to `sh`.
+   For a pinned release, append `-s -- -V=v0.10.0` to `sh`.
    Windows currently needs a source build and Git for Windows.
 
 2. **Create a deployment** from your repository root:

@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.1/docs/schema/deploy.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.10.0/docs/schema/deploy.schema.json
 # Every field: https://github.com/Naz-Ovh/shipdeck/tree/main/docs/feature/config-v2.md
 
 # A Python app: the source ships as it is; the server builds its virtualenv.

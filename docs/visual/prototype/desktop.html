@@ -1018,7 +1018,7 @@ function freshData() {
       { app: "my-api", kind: "deploy", tag: "v0.4.2 (a1b2c3d)", when: "today 09:42", took: "41.2 s" },
       { app: "web", kind: "deploy", tag: "v2.3.0 (77aa1bc)", when: "yesterday 17:20", took: "58.0 s" },
       { app: "my-api", kind: "deploy", tag: "v0.4.1 (9f8e7d6)", when: "2 days ago", took: "39.8 s" },
-      { app: "worker", kind: "deploy", tag: "v0.9.1 (4d5e6f7)", when: "3 days ago", took: "27.5 s" },
+      { app: "worker", kind: "deploy", tag: "v0.10.0 (4d5e6f7)", when: "3 days ago", took: "27.5 s" },
       { app: "blog", kind: "deploy", tag: "v1.2.0 (aa11bb2)", when: "4 days ago", took: "33.0 s" },
       { app: "web", kind: "deploy", tag: "v2.2.4 (6e5d4c3)", when: "5 days ago", took: "61.3 s" },
       { app: "reports", kind: "deploy", tag: "v1.0.3 (c0ffee1)", when: "6 days ago", took: "18.4 s", note: "from another PC" },
@@ -1070,7 +1070,7 @@ WantedBy=multi-user.target`,
 };
 const DEPLOY_YAML = {
   "my-api":
-`<span class="c"># yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.1/docs/schema/deploy.schema.json</span>
+`<span class="c"># yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.10.0/docs/schema/deploy.schema.json</span>
 <span class="k">name:</span> My API (prod)
 <span class="k">project:</span> ..
 
@@ -1664,7 +1664,7 @@ function yamlOf(d) {
   const n = d.name || "my-project", L = [], env = d.env.filter(e => e.k);
   const list = (key, arr, pad) => arr.length === 1 ? `${pad}${key}: ${arr[0]}` : `${pad}${key}: [${arr.join(", ")}]`;
   const root = d.root && d.root !== "./" && d.root !== "." ? "/" + d.root.replace(/^\.\//, "").replace(/\/$/, "") : "";
-  L.push("# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.1/docs/schema/deploy.schema.json",
+  L.push("# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.10.0/docs/schema/deploy.schema.json",
          `name: ${n}`, `project: ../../..${root}`, `dir: ${dirOf(d)}`, "", "ssh:", `  host: ${d.server}`, `  user: ${server(d.server).user}`, "", "service:", `  name: ${n}`);
   if (d.manager === "pm2") L.push("  manager: pm2");
   if (d.start) L.push(`  start: ${d.start}`);
