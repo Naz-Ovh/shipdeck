@@ -102,6 +102,20 @@ The whole design, with every rule and the reasoning, is in
 5. Deploy once so the server has a release with `.shipdeck/settings.json`. Only then can a
    later rollback restore its settings.
 
+## Login flags and server details
+
+- `--key` is now `--key-file`, so it reads clearly next to `--key-text`. Change scripts and CI
+  files. `--key` is an unknown option now.
+- `--password`, `--key-text` and `--key-file` have no short form.
+- New: `--host`/`-H`, `--port`/`-P` and `--user`/`-U`, and `SHIPDECK_SSH_HOST`,
+  `SHIPDECK_SSH_PORT`, `SHIPDECK_SSH_USER`, for a run with one deploy.
+- New: `${NAME}` in `server.ssh.host`, `port` and `user` of a deploy.
+- New: `.env` in the project folder, or `--env-file`/`-E`. It fills `${NAME}`, `SHIPDECK_SSH_*`
+  and the login variables. A variable in the real environment wins. Your commands do not get
+  its values.
+
+See [Server details outside the file](/docs/guides/ssh#server-details-outside-the-file).
+
 ## The agent's new folder
 
 The server agent now keeps everything in `/var/lib/shipdeck`: its program, its log, and each

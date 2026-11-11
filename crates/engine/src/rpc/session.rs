@@ -2,7 +2,7 @@
 //! logs. Every request changes what is here, and nothing else.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -13,7 +13,7 @@ use shipdeck_protocol::connection::Handle;
 use shipdeck_protocol::message::request::{WorkspaceOpen, WorkspaceOpenResult};
 use shipdeck_protocol::wire::{ErrorObject, Id, code};
 
-use crate::config::{self, Deployment};
+use crate::config::{self, Deployment, Env, ServerInputs};
 use crate::deploy::report::OpId;
 use crate::remote::Server;
 use crate::ssh::{PASSPHRASE_ENV, Pool};
@@ -93,7 +93,10 @@ impl Session {
         }
         let files: Vec<PathBuf> = params.deploy_files.iter().map(PathBuf::from).collect();
         let named = params.config.as_ref().map(PathBuf::from);
-        let (found, failures) = config::open_all(&root, named.as_deref(), &files);
+        let env = Env::load(&root, params.env_file.as_deref().map(Path::new))
+            .map_err(|err| ErrorObject::new(code::INVALID_PARAMS, format!("{err:#}")))?;
+        let inputs = ServerInputs::new(env, params.ssh.clone(), params.run.clone());
+        let (found, failures) = config::open_all(&root, named.as_deref(), &files, &inputs);
         let mut problems = Vec::new();
         let mut deployables: BTreeMap<String, Deployment> = BTreeMap::new();
         for deployment in found {
@@ -108,7 +111,7 @@ impl Session {
         };
         let (questions, inbox) = unbounded_channel();
         let pool = Pool::new(convert::login(params.login.clone()), questions)
-            .with_passphrase(passphrase());
+            .with_passphrase(passphrase(inputs.env()));
         // The app's flag wins over each deploy file's `server.ssh.shell_env`.
         let pool = if params.no_shell_env {
             pool.without_shell_env()
@@ -140,15 +143,19 @@ impl Session {
     ///
     /// # Errors
     /// Returns `WORKSPACE_NOT_OPEN` before `workspace/open`, and
-    /// `UNKNOWN_DEPLOYABLE` for a name that is not in the workspace.
+    /// `UNKNOWN_DEPLOYABLE` for a name that is not in the workspace, and
+    /// `DEPLOYABLE_UNAVAILABLE` for a deploy whose variables are not set.
     pub fn deployment(&self, slug: &str) -> Result<Deployment, ErrorObject> {
         let state = self.state();
         let workspace = state.workspace.as_ref().ok_or_else(not_open)?;
-        workspace
+        let deployment = workspace
             .deployables
             .get(slug)
-            .cloned()
-            .ok_or_else(|| convert::unknown_deployable(slug))
+            .ok_or_else(|| convert::unknown_deployable(slug))?;
+        match &deployment.unavailable {
+            Some(reason) => Err(convert::unavailable_deployable(slug, reason)),
+            None => Ok(deployment.clone()),
+        }
     }
 
     /// Opens the deployment folder without a process.
@@ -259,11 +266,9 @@ fn busy() -> ErrorObject {
     ErrorObject::new(code::BUSY, "a deploy or rollback is already running")
 }
 
-/// The passphrase the app put in the environment, so nothing is asked for it.
-fn passphrase() -> Option<String> {
-    std::env::var(PASSPHRASE_ENV)
-        .ok()
-        .filter(|text| !text.is_empty())
+/// The passphrase the environment or `.env` holds, so nothing is asked for it.
+fn passphrase(env: &Env) -> Option<String> {
+    env.get(PASSPHRASE_ENV).map(str::to_string)
 }
 
 #[cfg(test)]

@@ -47,7 +47,13 @@ fn init_writes_a_root_file_and_a_deploy_file() {
         root.deploys.get("shop"),
         Some(crate::config::Deploy::File(file)) if file == &dir.join(DEPLOY_FILE)
     ));
-    let loaded = crate::config::load_deploy(&dir, &dir.join(DEPLOY_FILE), Some("shop")).unwrap();
+    let loaded = crate::config::load_deploy(
+        &dir,
+        &dir.join(DEPLOY_FILE),
+        Some("shop"),
+        crate::config::ServerInputs::default().details(false),
+    )
+    .unwrap();
     assert_eq!(loaded.name(), "shop");
     std::fs::remove_dir_all(&dir).unwrap();
 }

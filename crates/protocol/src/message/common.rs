@@ -150,6 +150,14 @@ pub struct DeployableInfo {
     /// The app names, in the order they run.
     #[serde(default)]
     pub apps: Vec<String>,
+    /// Where a server detail came from when it is not the file, such as
+    /// `host from --host`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ssh_from: Vec<String>,
+    /// Why the deploy cannot run, such as a variable that is not set. It is
+    /// listed, and no request for it works.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unavailable: Option<String>,
 }
 
 /// SSH's own port, for a project that does not say.

@@ -282,6 +282,9 @@ async fn an_app_using_the_protocol_crate_talks_to_the_engine() {
             root: root.to_str().unwrap().to_string(),
             login: Login::Auto,
             no_shell_env: false,
+            env_file: None,
+            ssh: shipdeck_protocol::message::SshOverride::default(),
+            run: Vec::new(),
         })
         .await
         .unwrap();

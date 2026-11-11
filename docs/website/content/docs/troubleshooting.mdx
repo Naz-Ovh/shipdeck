@@ -28,9 +28,9 @@ Every message below is what shipdeck prints. The fix follows the message.
     mapped key.
   </Accordion>
   <Accordion title="Error: the key file <path> does not exist">
-    `--key` names a file that is not there. Check the path; shipdeck expands a leading `~`.
+    `--key-file` names a file that is not there. Check the path; shipdeck expands a leading `~`.
   </Accordion>
-  <Accordion title="error: the argument '--key <PATH>' cannot be used with '--password <PASSWORD>'">
+  <Accordion title="error: the argument '--key-file <PATH>' cannot be used with '--password <PASSWORD>'">
     Pass one login method. See [Login](/docs/guides/ssh).
   </Accordion>
   <Accordion title="No deploys yet">
@@ -48,7 +48,7 @@ panel when they happen during a deploy.
   <Accordion title="Password prompts when shipdeck connects">
     shipdeck connects when you press `c` on a deploy, or when a deploy, the Releases screen or a
     rollback needs the server. With no key it asks once per `user@host` and keeps the answer in
-    memory for this run only. To avoid the prompt, pass `--key` or add an `IdentityFile` to the
+    memory for this run only. To avoid the prompt, pass `--key-file` or add an `IdentityFile` to the
     alias. shipdeck does not use ssh-agent.
   </Accordion>
   <Accordion title="connecting to <user>@<host> timed out after 15s">

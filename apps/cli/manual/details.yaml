@@ -112,7 +112,7 @@ agents:
   see: [cli, exit-codes, config.problems]
   text: |
     For an agent or a script driving shipdeck:
-    - Run headless commands; they never prompt. `--key`, `--key-text`, `--password`,
+    - Run headless commands; they never prompt. `--key-file`, `--key-text`, `--password`,
       SHIPDECK_SSH_KEY and SHIPDECK_PASSWORD answer the login. `--trust-new-host` accepts a new
       host key once; a changed key is still refused.
     - Read the exit code (see exit-codes); do not parse the log text. The log may change.
@@ -203,9 +203,13 @@ cli:
     Flags, on every command:
       -C, --cwd DIR           the project folder; every relative path starts there
       -c, --config FILE       the root file to read, instead of shipdeck.yaml or .shipdeck
-      --key PATH              log in with a private key file
+      --key-file PATH         log in with a private key file
       --key-text TEXT         log in with a key's text (it shows in `ps`)
       --password PASSWORD     log in with a password (it lands in history)
+      -H, --host HOST         use this host instead of server.ssh.host (one deploy; see hosts)
+      -P, --port PORT         use this port instead of server.ssh.port (one deploy)
+      -U, --user USER         use this user instead of server.ssh.user (one deploy)
+      -E, --env-file FILE     read this env file instead of .env (see env-file)
       --no-shell-env          server commands skip the login shell's startup files
       --trust-new-host        record a server's key the first time
     `deploy` also takes `--on-failure rollback|keep` (see cli.deploy) and `--allow-unchanged`.
@@ -418,7 +422,7 @@ login:
   text: |
     shipdeck logs in with SSH, in this order:
       0. --passwordless, no password or key, for a server that allows it (the SSH "none" login)
-      1. --key PATH, an unencrypted private key file (an encrypted one asks for its passphrase)
+      1. --key-file PATH, an unencrypted private key file (an encrypted one asks for its passphrase)
       2. --key-text TEXT, a key's text, such as a CI secret (it shows in `ps`)
       3. --password PASSWORD (it lands in shell history)
       4. SHIPDECK_SSH_KEY, a key's text
@@ -427,16 +431,52 @@ login:
       7. in the TUI, a password asked once per connection
     Headless commands never ask: without any of the above they use the ~/.ssh/config key and then
     fail with a clear message. SHIPDECK_KEY_PASSPHRASE unlocks an encrypted key without asking.
+    SHIPDECK_SSH_KEY, SHIPDECK_PASSWORD, SHIPDECK_KEY_PASSPHRASE and SHIPDECK_SUDO_PASSWORD
+    can also come from the .env file (see env-file). --password, --key-text and --key-file have
+    no short form: a password typed on the command line lands in your shell history.
 
     The login is never in a config file. One connection per user@host:port is opened and reused
     for every command, upload and release on that server, and closed when the app exits.
     shipdeck does not use your ssh agent.
 
+env-file:
+  see: [login, hosts]
+  text: |
+    shipdeck reads `.env` in the project folder (after -C) when it exists. `-E FILE` or
+    `--env-file FILE` reads that file instead; a relative path starts from the project folder, as
+    for -c, and a named file that is missing is an error. Only one file is read. The format is
+    NAME=value lines, `#` comments and quoted values.
+    The values are for shipdeck only. They fill `${NAME}` in a deploy, SHIPDECK_SSH_HOST,
+    SHIPDECK_SSH_PORT, SHIPDECK_SSH_USER, SHIPDECK_PASSWORD, SHIPDECK_SSH_KEY,
+    SHIPDECK_KEY_PASSPHRASE and SHIPDECK_SUDO_PASSWORD. A variable set in the real environment
+    wins over .env (an empty one counts as not set). Your `local` and `server` commands do not
+    get .env values. The file is never uploaded unless `files` lists it.
+
 hosts:
-  see: [login, shell-env]
+  see: [login, shell-env, env-file]
   text: |
     `server.ssh.host` is an address or an alias from ~/.ssh/config. An alias brings its HostName,
     Port, User and IdentityFile; values written in the deploy file win.
+
+    Three ways give host, port and user without writing them in the file:
+      1. An alias from ~/.ssh/config as `host`. Each PC maps the alias to its own server.
+      2. `${NAME}` in `server.ssh.host`, `port` or `user`. The variable comes from your shell, or
+         from .env. It works only in these three fields; elsewhere `${...}` is plain text. A
+         name is letters, digits and `_`, and does not start with a digit. Text may surround it:
+         `deploy-${TEAM}`. A variable that is not set, or is empty, is an error that names the
+         variable, the field and the deploy. It stops only a run that uses that deploy; the TUI
+         shows such a deploy as unavailable, with the reason, and the others work. After the
+         replacement, `port` must be 1 to 65535.
+         In flow-style YAML (`{ ... }`) write the value in quotes: `host: '${NAME}'`.
+      3. Flags `-H/--host`, `-P/--port`, `-U/--user`, or the variables SHIPDECK_SSH_HOST,
+         SHIPDECK_SSH_PORT, SHIPDECK_SSH_USER, for a run with exactly one deploy.
+    The order is: flag, then SHIPDECK_SSH_* variable, then the file. A file value is read only
+    when nothing above it is set, so a missing `${NAME}` is no error when `-H` replaces it. With
+    more than one deploy (the TUI, or `deploy a b`) the flags and SHIPDECK_SSH_* variables are an
+    error; use way 1 or 2. When a value is not from the file, the output says so, for example
+    `host from --host`. `-H shop-prod` reads ~/.ssh/config like `host: shop-prod` does.
+    `server.dir` always comes from the file. {{HOST}} and the release's .shipdeck/settings.json
+    hold the final value.
 
     Aliases that use ProxyJump or ProxyCommand are refused with their name: shipdeck cannot
     follow them yet. Put the server's own address in `server.ssh.host` instead.

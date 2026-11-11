@@ -1040,6 +1040,20 @@
           "description": "The deploy's name, from the root file or the deploy file.",
           "type": "string"
         },
+        "ssh_from": {
+          "description": "Where a server detail came from when it is not the file, such as `host from --host`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "unavailable": {
+          "description": "Why the deploy cannot run, such as a variable that is not set. It is listed, and no request for it works.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "user": {
           "type": [
             "string",
@@ -2324,6 +2338,33 @@
       "title": "SetupReport",
       "type": "object"
     },
+    "SshOverride": {
+      "description": "`--host`, `--port` and `--user`, as typed. The engine checks them.",
+      "properties": {
+        "host": {
+          "description": "`--host`: replaces `server.ssh.host`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "port": {
+          "description": "`--port`: replaces `server.ssh.port`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "user": {
+          "description": "`--user`: replaces `server.ssh.user`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "StatusGet": {
       "description": "`status/get`: one look at a project's service.",
       "properties": {
@@ -2660,6 +2701,13 @@
           },
           "type": "array"
         },
+        "env_file": {
+          "description": "The env file named by `--env-file`. Without it, `.env` in `root` is read when it exists.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "login": {
           "$ref": "#/definitions/Login"
         },
@@ -2671,6 +2719,21 @@
         "root": {
           "description": "The folder shipdeck runs in: the project folder.",
           "type": "string"
+        },
+        "run": {
+          "description": "The root file's deploys this run uses, by name. Empty: every deploy.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "ssh": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SshOverride"
+            }
+          ],
+          "description": "The server details the flags set, for a run with one deploy."
         }
       },
       "required": [

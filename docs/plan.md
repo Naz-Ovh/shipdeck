@@ -21,7 +21,7 @@ live.
 | Language and libraries | Rust: `ratatui` + `crossterm` for the TUI, `russh` + `russh-sftp` for SSH, `tar` + `zstd` for bundles, `clap` for flags, `granit-parser` for YAML (events with line and column), `schemars` for the JSON Schema, `fast-glob` for file patterns |
 | Code layout | A Cargo workspace: `crates/engine` does the work over `crates/protocol`, `crates/tui` shows it, and `apps/cli` parses the flags, starts the engine, and prints the console commands |
 | SSH session | One session per deployable, opened once and reused for every command and upload |
-| SSH login | `--key <path>` or `--password <value>`; with neither flag, the alias's `IdentityFile` from `~/.ssh/config`, then a password asked in the TUI |
+| SSH login | `--key-file <path>` or `--password <value>`; with neither flag, the alias's `IdentityFile` from `~/.ssh/config`, then a password asked in the TUI |
 | SSH host | `ssh.host` may be a `~/.ssh/config` alias (`host: prod`); its `HostName`, `Port`, `User` and `IdentityFile` apply, and `shipdeck.yaml` wins |
 | Server setup | None needed: shipdeck deploys as `ssh.user`, whoever the owner picks (root, ubuntu, ...). The first deploy of an app creates its folder; a missing permission is named at preflight. `server-setup.sh`, run by hand as root, can still create a user with exactly those rights for one app; the TUI never runs it. |
 | Configuration | One folder per deployable under a root folder passed on the command line, each with a `shipdeck.yaml` |
@@ -49,9 +49,9 @@ live.
 ## Running it
 
 ```sh
-shipdeck <deploy-root> [--key <path> | --password <value>]
+shipdeck <deploy-root> [--key-file <path> | --password <value>]
 
-shipdeck ./scripts/deploy --key ~/.ssh/id_ed25519
+shipdeck ./scripts/deploy --key-file ~/.ssh/id_ed25519
 shipdeck ./scripts/deploy                 # asks for the password in TUI as prompt
 shipdeck deploy ./scripts/deploy my-api   # no TUI, for scripts and CI
 ```

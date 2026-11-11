@@ -84,6 +84,13 @@ Every property is listed in [shipdeck man configs](/docs/reference/config), and 
 full shape with every default is in
 [config-v2/reference.yaml](https://github.com/Naz-Ovh/shipdeck/blob/main/docs/feature/config-v2/reference.yaml).
 
+## Server details from variables
+
+`server.ssh.host`, `port` and `user` may hold `${NAME}`. Your shell or `.env` fills it. It works
+only in these three fields; elsewhere `${...}` is plain text. `port` may be a number, or text
+that becomes one. See
+[Server details outside the file](/docs/guides/ssh#server-details-outside-the-file).
+
 ## Paths on your PC
 
 Every path to a file on your PC takes one of three forms:

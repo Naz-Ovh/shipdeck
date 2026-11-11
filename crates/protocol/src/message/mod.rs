@@ -31,8 +31,8 @@ pub use request::{
     LogsFollow, LogsFollowResult, LogsStop, OperationStarted, ReleaseContents,
     ReleaseContentsResult, ReleaseReadFile, ReleaseReadFileResult, ReleasesList,
     ReleasesListResult, RollbackStart, ServerInfoGet, ServerSetup, ServiceControl, SetupAccess,
-    SetupReport, StatusGet, StatusGetResult, WorkCleanup, WorkCleanupResult, WorkGet, WorkReport,
-    WorkspaceOpen, WorkspaceOpenResult,
+    SetupReport, SshOverride, StatusGet, StatusGetResult, WorkCleanup, WorkCleanupResult, WorkGet,
+    WorkReport, WorkspaceOpen, WorkspaceOpenResult,
 };
 
 #[cfg(test)]

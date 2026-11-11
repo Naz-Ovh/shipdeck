@@ -53,7 +53,7 @@ template can change those restrictions. PM2 runs under its configured service us
 
 Keep `.env` files out of git. Packed env files use private file modes. A private key or
 password passed in a CLI argument may appear in process listings or shell history; prefer a
-key file (`--key`, `SHIPDECK_SSH_KEY`) or the documented environment variables. Passwords and
+key file (`--key-file`, `SHIPDECK_SSH_KEY`) or the documented environment variables. Passwords and
 passphrases retained for a connection stay in memory. A value with `%` belongs in the env
 file, not in `process.env`, because systemd reads `%` in unit files.
 

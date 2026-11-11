@@ -17,6 +17,8 @@ fn deployment(yaml: &str, project: &Path) -> crate::config::Deployment {
         config_dir: project.to_path_buf(),
         yaml: yaml.to_string(),
         endpoint,
+        ssh_from: Vec::new(),
+        unavailable: None,
         deploy,
     }
 }

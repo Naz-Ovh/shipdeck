@@ -97,7 +97,9 @@ impl Rules<'_> {
         if self.deploy.server.ssh.host.trim().is_empty() {
             self.fail(&["server", "ssh", "host"], "`host` is empty", "empty", "");
         }
+        // A `${NAME}` is checked once it is replaced.
         if let Some(user) = &self.deploy.server.ssh.user
+            && !user.contains("${")
             && !is_plain_name(user)
         {
             self.fail(

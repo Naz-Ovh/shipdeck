@@ -11,7 +11,7 @@ and `tree` do the same work [without the UI](#without-the-ui), and `man` prints
 ## Synopsis
 
 ```txt
-shipdeck [-C <DIR>] [-c <FILE>] [LOGIN]
+shipdeck [-C <DIR>] [-c <FILE>] [-E <FILE>] [LOGIN] [SERVER]
 shipdeck init     [NAME] [--preset <PRESET>] [--manager systemd|pm2] [--host <HOST>] [--user <USER>] [--project <PATH>]
 shipdeck deploy   [DEPLOY]... [--on-failure rollback|keep] [--allow-unchanged]
 shipdeck rollback <DEPLOY> <RELEASE>
@@ -25,12 +25,12 @@ shipdeck man      [index | configs | details <KEY>...]
 shipdeck --schema
 ```
 
-`[LOGIN]` is `--key`, `--key-text`, `--password`, `--no-shell-env`, `--trust-new-host`, and
-on Windows `--gitshell-path`. Every server command takes them.
+`[LOGIN]` is `--key-file`, `--key-text`, `--password`, `--no-shell-env`, `--trust-new-host`, and
+on Windows `--gitshell-path`. `[SERVER]` is `-H`, `-P` and `-U`. Every server command takes them.
 
 ```sh
-shipdeck --key ~/.ssh/id_ed25519                 # the TUI, in this folder
-shipdeck deploy production --key ~/.ssh/id_ed25519
+shipdeck --key-file ~/.ssh/id_ed25519                 # the TUI, in this folder
+shipdeck deploy production --key-file ~/.ssh/id_ed25519
 shipdeck deploy scripts/p.yaml                   # one deploy file, no root file
 shipdeck -C apps/api deploy production           # as if started in apps/api
 shipdeck -c ops/root.yaml deploy staging         # another root file
@@ -88,7 +88,31 @@ argument, starts from it.
 
 It reads another root file and leaves the project folder alone. The file must hold `root: true`.
 
-### `--key <PATH>`
+### `-E, --env-file <FILE>`
+
+| | |
+| --- | --- |
+| Value | a file of `NAME=value` lines |
+| Default | `.env` in the project folder, when it exists |
+| Error | `the env file <path> does not exist`, when you named it |
+
+A relative path starts from the project folder, as for `-c`. Only one file is read. Its values
+are for shipdeck only: `${NAME}` in the deploy file, `SHIPDECK_SSH_*`, and the login variables.
+Your commands never see them. A variable in the real environment wins over the file. See
+[Server details outside the file](/docs/guides/ssh#server-details-outside-the-file).
+
+### `-H, --host <HOST>`, `-P, --port <PORT>`, `-U, --user <USER>`
+
+| | |
+| --- | --- |
+| Value | a host or alias, a port from 1 to 65535, a user name |
+| Default | none: `SHIPDECK_SSH_HOST`, `SHIPDECK_SSH_PORT`, `SHIPDECK_SSH_USER`, then the file |
+| Error | with more than one deploy: the option names what is set and points to `~/.ssh/config` aliases and `${NAME}` |
+
+They replace `server.ssh.host`, `port` and `user` for a run with exactly one deploy. The output
+says where a value came from, for example `host from --host`.
+
+### `--key-file <PATH>`
 
 Log in with this private key file, and only this key.
 
@@ -99,17 +123,18 @@ Log in with this private key file, and only this key.
 | Conflicts with | `--key-text`, `--password` |
 | Error | `Error: the key file <path> does not exist` |
 
-shipdeck expands a leading `~` itself, so `--key=~/.ssh/id_ed25519` also works in zsh. If the
+shipdeck expands a leading `~` itself, so `--key-file=~/.ssh/id_ed25519` also works in zsh. If the
 key is encrypted, the TUI asks for its passphrase, or `SHIPDECK_KEY_PASSPHRASE` answers it.
 
 ### `--key-text <TEXT>`
 
 Log in with this private key's text, such as a CI secret. It shows in `ps`; `SHIPDECK_SSH_KEY`
-does not.
+does not. It has no short form.
 
 ### `--password <PASSWORD>`
 
-Log in with this password. It lands in shell history; `SHIPDECK_PASSWORD` does not.
+Log in with this password. It lands in shell history; `SHIPDECK_PASSWORD` does not. It has no
+short form, for that reason.
 
 The order all four are tried in is on [Login](/docs/guides/ssh).
 

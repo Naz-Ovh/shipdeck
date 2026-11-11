@@ -30,7 +30,7 @@ commands. One deploy can hold several apps that switch together as one release.
    That writes `shipdeck.yaml` (the root file), `deploy.yaml` (the deploy
    file), an empty `.env`, and a `.gitignore`. `prod` is an SSH alias; set its
    user and `IdentityFile` in your SSH config, or use a server address and pass
-   `--key` when connecting. Edit `deploy.yaml`: check the source folder, build
+   `--key-file` when connecting. Edit `deploy.yaml`: check the source folder, build
    command, files, server folder, process command, and health check. Build a
    Linux binary for the server's CPU and libc. Keep secrets out of git.
 

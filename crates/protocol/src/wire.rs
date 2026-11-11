@@ -40,6 +40,8 @@ pub mod code {
     pub const PROTOCOL_VERSION: i32 = -32008;
     /// The engine is closing; it takes no new work.
     pub const SHUTTING_DOWN: i32 = -32009;
+    /// The deploy is listed, but cannot run: a variable it names is not set.
+    pub const DEPLOYABLE_UNAVAILABLE: i32 = -32010;
 }
 
 /// The `jsonrpc` field: always `2.0`, and refused when it is not.

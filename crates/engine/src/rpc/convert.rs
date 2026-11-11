@@ -54,6 +54,14 @@ pub fn unknown_deployable(slug: &str) -> ErrorObject {
     )
 }
 
+/// A deploy that is listed but cannot run; the reason says which variable.
+pub fn unavailable_deployable(slug: &str, reason: &str) -> ErrorObject {
+    ErrorObject::new(
+        code::DEPLOYABLE_UNAVAILABLE,
+        format!("the deploy {slug} is unavailable: {reason}"),
+    )
+}
+
 /// A failure the client cannot put right: the message says what happened.
 pub fn failed(err: &anyhow::Error) -> ErrorObject {
     ErrorObject::new(code::INTERNAL_ERROR, format!("{err:#}"))
@@ -84,6 +92,8 @@ pub fn deployable_info(deployment: &Deployment) -> wire::DeployableInfo {
             .iter()
             .map(ToString::to_string)
             .collect(),
+        ssh_from: deployment.ssh_from.clone(),
+        unavailable: deployment.unavailable.clone(),
     }
 }
 

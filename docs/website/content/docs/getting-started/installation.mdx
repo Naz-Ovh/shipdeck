@@ -110,10 +110,10 @@ cd shipdeck
 cargo run --release -p shipdeck
 ```
 
-Everything after `--` goes to shipdeck, so flags such as `--key` work the same way:
+Everything after `--` goes to shipdeck, so flags such as `--key-file` work the same way:
 
 ```sh
-cargo run --release -p shipdeck -- deploy production --key ~/.ssh/id_ed25519
+cargo run --release -p shipdeck -- deploy production --key-file ~/.ssh/id_ed25519
 ```
 
 ## As a git submodule

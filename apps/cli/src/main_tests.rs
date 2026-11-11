@@ -242,15 +242,23 @@ fn passwordless_logs_in_with_no_password_or_key() {
     let Some(Command::Server(command)) = cli.command else {
         panic!("releases is a server command");
     };
-    let login = super::login(super::ssh_args(&command).login.clone()).unwrap();
+    let login = crate::login::login(
+        super::ssh_args(&command).login.clone(),
+        &shipdeck_engine::config::Env::empty(),
+    )
+    .unwrap();
     assert!(matches!(login, shipdeck_engine::ssh::Login::Passwordless));
     // Before the command, it is the TUI's login.
     let tui = parse(&["shipdeck", "--passwordless"]);
     assert!(matches!(
-        super::login(tui.login).unwrap(),
+        crate::login::login(tui.login, &shipdeck_engine::config::Env::empty()).unwrap(),
         shipdeck_engine::ssh::Login::Passwordless
     ));
-    for other in [["--key", "id"], ["--key-text", "k"], ["--password", "p"]] {
+    for other in [
+        ["--key-file", "id"],
+        ["--key-text", "k"],
+        ["--password", "p"],
+    ] {
         let args = ["shipdeck", "releases", "--passwordless", other[0], other[1]];
         assert!(Cli::try_parse_from(args).is_err(), "{other:?}");
     }
@@ -266,6 +274,8 @@ fn info(slug: &str, file: &str) -> shipdeck_protocol::message::DeployableInfo {
         dir: "/opt/shop".into(),
         folder: file.into(),
         apps: Vec::new(),
+        ssh_from: Vec::new(),
+        unavailable: None,
     }
 }
 
@@ -302,4 +312,60 @@ fn a_relative_deploy_file_matches_the_engine_s_absolute_one() {
     );
     let err = slugs("/work/other", "deploy/production.yaml").unwrap_err();
     assert!(err.contains("has no deploy the engine could read"), "{err}");
+}
+
+#[test]
+fn an_unavailable_deploy_is_refused_with_its_reason() {
+    let root_file = std::path::PathBuf::from("/work/shop/shipdeck.yaml");
+    let where_ = super::naming::Where {
+        root: std::path::Path::new("/work/shop"),
+        root_file: &root_file,
+    };
+    let mut staging = info("staging", "/work/shop/staging.yaml");
+    staging.unavailable = Some("the variable STAGING_HOST is not set".into());
+    let projects = [info("prod", "/work/shop/prod.yaml"), staging];
+    let named =
+        |name: &str| super::naming::resolve_names(&projects, &where_, &[Target::Name(name.into())]);
+    assert_eq!(named("prod").unwrap(), ["prod"]);
+    let err = named("staging").unwrap_err();
+    assert!(
+        err.contains("staging") && err.contains("STAGING_HOST"),
+        "{err}"
+    );
+    // A deploy given without a name is checked too.
+    let only = [projects[1].clone()];
+    assert!(super::naming::resolve_names(&only, &where_, &[]).is_err());
+}
+
+/// A root file with `prod` and `staging`, each naming its own host variable.
+fn two_servers() -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("shipdeck-cli-two-servers-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let deploy = |var: &str| {
+        format!(
+            "name: shop\nserver:\n  ssh:\n    host: ${{{var}}}\n    user: deploy\n  dir: /opt/shop\napps:\n  web:\n    static: true\n    files: [dist]\n"
+        )
+    };
+    std::fs::write(dir.join("prod.yaml"), deploy("CLI_TEST_PROD_HOST")).unwrap();
+    std::fs::write(dir.join("staging.yaml"), deploy("CLI_TEST_STAGING_HOST")).unwrap();
+    std::fs::write(
+        dir.join("shipdeck.yaml"),
+        "root: true\ndeploys:\n  prod: prod.yaml\n  staging: staging.yaml\n",
+    )
+    .unwrap();
+    dir
+}
+
+#[test]
+fn tree_reads_only_its_own_deploys_variables() {
+    use shipdeck_engine::config::{Env, ServerInputs};
+    let dir = two_servers();
+    let inputs = ServerInputs::from_env(Env::from_pairs([("CLI_TEST_PROD_HOST", "203.0.113.40")]));
+    let prod = super::tree_deploy(&dir, None, &inputs, Some(&Target::Name("prod".into()))).unwrap();
+    assert_eq!(prod.endpoint.host, "203.0.113.40");
+    let err =
+        super::tree_deploy(&dir, None, &inputs, Some(&Target::Name("staging".into()))).unwrap_err();
+    assert!(err.to_string().contains("CLI_TEST_STAGING_HOST"), "{err}");
+    std::fs::remove_dir_all(&dir).unwrap();
 }

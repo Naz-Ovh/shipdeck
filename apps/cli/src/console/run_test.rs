@@ -18,6 +18,8 @@ fn deployable(slug: &str, name: &str) -> DeployableInfo {
         dir: format!("/opt/{slug}"),
         folder: format!("deploy/{slug}"),
         apps: Vec::new(),
+        ssh_from: Vec::new(),
+        unavailable: None,
     }
 }
 

@@ -49,6 +49,38 @@ pub struct WorkspaceOpen {
     /// Server commands skip the login shell's startup files, on every server.
     #[serde(default)]
     pub no_shell_env: bool,
+    /// The env file named by `--env-file`. Without it, `.env` in `root` is
+    /// read when it exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_file: Option<String>,
+    /// The server details the flags set, for a run with one deploy.
+    #[serde(default, skip_serializing_if = "SshOverride::is_empty")]
+    pub ssh: SshOverride,
+    /// The root file's deploys this run uses, by name. Empty: every deploy.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub run: Vec<String>,
+}
+
+/// `--host`, `--port` and `--user`, as typed. The engine checks them.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SshOverride {
+    /// `--host`: replaces `server.ssh.host`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    /// `--port`: replaces `server.ssh.port`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<String>,
+    /// `--user`: replaces `server.ssh.user`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+}
+
+impl SshOverride {
+    /// Whether no flag is set.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.host.is_none() && self.port.is_none() && self.user.is_none()
+    }
 }
 
 /// What `workspace/open` answers.

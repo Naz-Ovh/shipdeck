@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use anyhow::{Result, anyhow, bail};
 
 use super::ssh_config::{self, HostConfig};
-use crate::config::SshTarget;
+use crate::config::{Port, SshTarget};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Endpoint {
@@ -16,7 +16,7 @@ pub struct Endpoint {
     pub host: String,
     pub port: u16,
     pub user: String,
-    /// `IdentityFile` from `~/.ssh/config`, used when no `--key` or
+    /// `IdentityFile` from `~/.ssh/config`, used when no `--key-file` or
     /// `--password` is given.
     pub identity: Option<PathBuf>,
     /// `User` from `~/.ssh/config`, which `shipdeck.yaml` may have overridden.
@@ -64,15 +64,35 @@ impl Endpoint {
         {
             bail!("the SSH user {user:?} may only use letters, digits, `.`, `_` and `-`");
         }
+        let port = match &target.port {
+            Some(Port::Number(number)) => Some(*number),
+            Some(Port::Text(text)) => bail!("`ssh.port` is {text:?}, and it is not a port number"),
+            None => found.port,
+        };
         Ok(Self {
             host: found.host_name.unwrap_or_else(|| target.host.clone()),
-            port: target.port.or(found.port).unwrap_or(22),
+            port: port.unwrap_or(22),
             name: target.host.clone(),
             user,
             identity: found.identity_file,
             config_user: found.user,
             shell_env: target.shell_env,
         })
+    }
+
+    /// A stand-in for a deploy that is unavailable: what its file says, never
+    /// dialled.
+    #[must_use]
+    pub fn placeholder(target: &SshTarget) -> Self {
+        Self {
+            name: target.host.clone(),
+            host: target.host.clone(),
+            port: 22,
+            user: target.user.clone().unwrap_or_default(),
+            identity: None,
+            config_user: None,
+            shell_env: target.shell_env,
+        }
     }
 
     /// `deploy@prod`, or `deploy@prod:2222` on another port.

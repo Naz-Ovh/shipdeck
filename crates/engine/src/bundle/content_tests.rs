@@ -84,6 +84,8 @@ fn app_plan(process: &str, release: &str) -> Plan {
         config_dir: root,
         yaml,
         endpoint,
+        ssh_from: Vec::new(),
+        unavailable: None,
         deploy,
     };
     let name = ReleaseName::parse(release).unwrap();

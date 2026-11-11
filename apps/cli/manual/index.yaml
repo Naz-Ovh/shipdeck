@@ -31,7 +31,8 @@
 - section: Login and SSH
   topics:
     - { key: login, brief: "keys, passwords, passphrases, their order" }
-    - { key: hosts, brief: "~/.ssh/config aliases, host keys, sessions" }
+    - { key: hosts, brief: "~/.ssh/config aliases, ${NAME}, -H/-P/-U, host keys, sessions" }
+    - { key: env-file, brief: ".env and -E: values for ${NAME} and the SHIPDECK_* login variables" }
     - { key: shell-env, brief: "server commands load the login shell's files (nvm, PATH); how pm2 is found" }
 
 - section: Config (properties - shipdeck man configs)

@@ -89,7 +89,7 @@ impl App {
     pub(super) fn show_releases(&mut self) {
         if self.releases.is_some() {
             self.screen = Screen::Releases;
-        } else if let Some(index) = self.selected() {
+        } else if let Some(index) = self.selected().filter(|index| self.usable(*index)) {
             self.open_releases(index);
         }
     }
@@ -107,7 +107,7 @@ impl App {
                 self.list.select(Some((i + 1) % count));
             }
             KeyCode::Enter | KeyCode::Char('d') => {
-                if let Some(index) = self.selected() {
+                if let Some(index) = self.selected().filter(|index| self.usable(*index)) {
                     if self.op_running() {
                         self.notify("An operation is already running", Tone::Warn);
                     } else {
@@ -119,22 +119,22 @@ impl App {
                 }
             }
             KeyCode::Char('r') => {
-                if let Some(index) = self.selected() {
+                if let Some(index) = self.selected().filter(|index| self.usable(*index)) {
                     self.open_releases(index);
                 }
             }
             KeyCode::Char('c') => {
-                if let Some(index) = self.selected() {
+                if let Some(index) = self.selected().filter(|index| self.usable(*index)) {
                     self.toggle_connection(index);
                 }
             }
             KeyCode::Char('s') => self.refresh_connected(),
             KeyCode::Char('x') => {
-                if let Some(index) = self.selected() {
+                if let Some(index) = self.selected().filter(|index| self.usable(*index)) {
                     self.ask_cleanup(index);
                 }
             }
-            KeyCode::Char(':') if self.selected().is_some() => {
+            KeyCode::Char(':') if self.selected().is_some_and(|index| self.usable(index)) => {
                 self.command = Some(CommandLine::default());
             }
             _ => {}

@@ -76,6 +76,9 @@ async fn opens_a_root_file_and_its_deploys() {
             deploy_files: Vec::new(),
             login: Login::Auto,
             no_shell_env: true,
+            env_file: None,
+            ssh: shipdeck_protocol::message::SshOverride::default(),
+            run: Vec::new(),
         })
         .await
         .unwrap();
@@ -103,11 +106,68 @@ async fn a_named_deploy_file_needs_no_root_file() {
             deploy_files: vec![folder.join("production.yaml").display().to_string()],
             login: Login::Auto,
             no_shell_env: true,
+            env_file: None,
+            ssh: shipdeck_protocol::message::SshOverride::default(),
+            run: Vec::new(),
         })
         .await
         .unwrap();
     assert_eq!(opened.deployables.len(), 1);
     assert_eq!(session.deployment("product").unwrap().dir(), "/opt/product");
+    session.close().await;
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[tokio::test]
+async fn a_deploy_with_a_missing_variable_is_listed_as_unavailable() {
+    let folder =
+        std::env::temp_dir().join(format!("shipdeck-rpc-unavailable-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join("shipdeck.yaml"),
+        "root: true\ndeploys:\n  prod: prod.yaml\n  staging: staging.yaml\n",
+    )
+    .unwrap();
+    std::fs::write(
+        folder.join("prod.yaml"),
+        DEPLOY.replace("host: example.com", "host: '${SESSION_TEST_PROD_HOST}'"),
+    )
+    .unwrap();
+    std::fs::write(
+        folder.join("staging.yaml"),
+        DEPLOY.replace("host: example.com", "host: '${SESSION_TEST_STAGING_HOST}'"),
+    )
+    .unwrap();
+    // `.env` supplies prod's variable only.
+    std::fs::write(folder.join(".env"), "SESSION_TEST_PROD_HOST=203.0.113.30\n").unwrap();
+    let (session, _connection, _lines) = session();
+    let opened = session
+        .open(&WorkspaceOpen {
+            root: folder.display().to_string(),
+            config: None,
+            deploy_files: Vec::new(),
+            login: Login::Auto,
+            no_shell_env: true,
+            env_file: None,
+            ssh: shipdeck_protocol::message::SshOverride::default(),
+            run: Vec::new(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(opened.problems, Vec::new());
+    let by = |slug: &str| opened.deployables.iter().find(|d| d.slug == slug).unwrap();
+    assert_eq!(by("prod").unavailable, None);
+    let reason = by("staging").unavailable.clone().unwrap();
+    assert!(reason.contains("SESSION_TEST_STAGING_HOST"), "{reason}");
+    assert!(session.deployment("prod").is_ok());
+    let refused = session.deployment("staging").unwrap_err();
+    assert_eq!(refused.code, -32010);
+    assert!(
+        refused.message.contains("SESSION_TEST_STAGING_HOST"),
+        "{}",
+        refused.message
+    );
     session.close().await;
     std::fs::remove_dir_all(folder).unwrap();
 }

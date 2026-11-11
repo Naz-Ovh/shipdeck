@@ -16,6 +16,8 @@ fn deployment(yaml: &str) -> Deployment {
         config_dir: PathBuf::from("/home/me/shop/deploy"),
         yaml: yaml.to_string(),
         endpoint,
+        ssh_from: Vec::new(),
+        unavailable: None,
         deploy,
     }
 }

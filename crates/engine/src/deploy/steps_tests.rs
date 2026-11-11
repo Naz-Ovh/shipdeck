@@ -85,6 +85,8 @@ apps:
         config_dir: ".".into(),
         yaml: yaml.into(),
         endpoint: Endpoint::from_config(&deploy.server.ssh, HostConfig::default()).unwrap(),
+        ssh_from: Vec::new(),
+        unavailable: None,
         deploy,
     };
     let apps: Vec<Option<&str>> = scopes(&deployment, Step::Done)

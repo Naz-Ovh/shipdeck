@@ -53,7 +53,7 @@ server:
 | `HostName` | the address to connect to (`%h` expands to the alias) |
 | `Port` | the port, when `ssh.port` is not set |
 | `User` | the user, when `ssh.user` is not set |
-| `IdentityFile` | the key tried when you pass neither `--key` nor `--password`; only the first one counts |
+| `IdentityFile` | the key tried when you pass neither `--key-file` nor `--password`; only the first one counts |
 | `Include` | read in place, relative to `~/.ssh`, with `*` and `?` in file names |
 
 The matching follows `ssh`: lines before the first `Host` apply to every host, `*` and `?` wildcards and `!pattern` work, keywords are case-insensitive, and the first value found wins. `Keyword value` and `Keyword=value` are both accepted. In `IdentityFile`, `~`, `%d`, `%u` (`USER`, or `USERNAME` on Windows), `%h` and `%%` are expanded.
@@ -69,20 +69,77 @@ The matching follows `ssh`: lines before the first `Host` apply to every host, `
 
 - Any other keyword is ignored. No config file means no settings.
 
+## Server details outside the file
+
+A deploy file can stay free of real server details, so one file works on every PC and in CI.
+There are three ways to give `host`, `port` and `user`.
+
+1. **An alias.** The file says `host: shop-prod`. Each PC maps `shop-prod` in `~/.ssh/config`.
+2. **A variable named in the file.** Your shell, justfile or `.env` sets it:
+
+   ```yaml
+   server:
+     ssh:
+       host: ${SHOP_PROD_HOST}
+       port: ${SHOP_PROD_PORT}
+       user: ${SHOP_PROD_USER}
+     dir: /opt/shop
+   ```
+
+   Each deploy names its own variables, so the TUI and `deploy a b` work with many deploys.
+   In flow-style YAML (`{ ... }`), write the value in quotes: `host: '${SHOP_PROD_HOST}'`.
+3. **Flags or variables, for one deploy.**
+
+   | Flag | Variable | Sets |
+   | --- | --- | --- |
+   | `--host`, `-H` | `SHIPDECK_SSH_HOST` | `server.ssh.host` |
+   | `--port`, `-P` | `SHIPDECK_SSH_PORT` | `server.ssh.port` |
+   | `--user`, `-U` | `SHIPDECK_SSH_USER` | `server.ssh.user` |
+
+### Rules
+
+- A flag wins over a `SHIPDECK_SSH_*` variable, and that wins over the file. A file value is
+  read only when nothing above it is set. So a missing `${NAME}` is no error when `-H` replaces it.
+- The flags and `SHIPDECK_SSH_*` need a run with exactly one deploy. With more (the TUI, or
+  `shipdeck deploy a b`) they are an error that points to ways 1 and 2.
+- The output says where a value came from when it is not the file: `host from --host`.
+- `${NAME}` works only in `server.ssh.host`, `port` and `user`. Anywhere else it is plain text.
+- A deploy whose variable is missing blocks only a run that uses it. In the TUI it shows as
+  **unavailable**, with the reason, and the other deploys work.
+- A name is letters, digits and `_`, and does not start with a digit. Text may surround it:
+  `deploy-${TEAM}`.
+- A variable that is not set, or is empty, is an error. It names the variable, the field and
+  the deploy.
+- After the replacement, `port` must be a number from 1 to 65535.
+- `server.dir` comes only from the file.
+- `{{HOST}}` and the release's `.shipdeck/settings.json` hold the final value.
+- An alias works with every way: `-H shop-prod` reads `~/.ssh/config` like `host: shop-prod`.
+
+### The `.env` file
+
+- Shipdeck reads `.env` in the project folder when it exists. `--env-file <path>` (`-E`) reads
+  that file instead. A relative path starts from the project folder. A named file that is
+  missing is an error. Only one file is read.
+- Its values fill `${NAME}`, `SHIPDECK_SSH_*`, and the login variables `SHIPDECK_PASSWORD`,
+  `SHIPDECK_SSH_KEY`, `SHIPDECK_KEY_PASSPHRASE` and `SHIPDECK_SUDO_PASSWORD`.
+- A variable in the real environment wins over `.env`.
+- Your `local` and `server` commands do not get `.env` values. `.env` is never uploaded unless
+  `files` lists it.
+
 ## Logging in
 
 The login method comes from the command line, never from a config file. It applies to every deploy in the run.
 
 | You run | shipdeck does |
 | --- | --- |
-| `shipdeck deploy production --key ~/.ssh/id_deploy` | logs in with that private key file |
+| `shipdeck deploy production --key-file ~/.ssh/id_deploy` | logs in with that private key file |
 | `shipdeck deploy production --password 's3cret'` | logs in with that password |
 | `shipdeck` (the TUI) | tries the alias's `IdentityFile`; if there is none, or it is refused or unreadable, asks for a password in the screen |
 
-`--key` and `--password` cannot be used together. A leading `~` in `--key` is expanded by shipdeck, and a missing file stops at launch: `the key file <path> does not exist`.
+`--key-file` and `--password` cannot be used together. `--key-file`, `--key-text` and `--password` have no short form: a password on the command line lands in your shell history, and `SHIPDECK_PASSWORD` or `.env` keeps it out. A leading `~` in `--key-file` is expanded by shipdeck, and a missing file stops at launch: `the key file <path> does not exist`.
 
 <Callout type="warn" title="No ssh-agent">
-shipdeck does not use ssh-agent, and it does not try default keys such as `~/.ssh/id_ed25519` on its own. Pass `--key`, or name the key with `IdentityFile` in `~/.ssh/config` (a `Host *` entry works). Key and password logins are supported, and `--passwordless` for a server that lets you in with neither (the SSH `none` login). Keyboard-interactive is not supported.
+shipdeck does not use ssh-agent, and it does not try default keys such as `~/.ssh/id_ed25519` on its own. Pass `--key-file`, or name the key with `IdentityFile` in `~/.ssh/config` (a `Host *` entry works). Key and password logins are supported, and `--passwordless` for a server that lets you in with neither (the SSH `none` login). Keyboard-interactive is not supported.
 </Callout>
 
 `--password` lands in your shell history. In zsh with `HIST_IGNORE_SPACE`, start the command with a space:

@@ -91,6 +91,12 @@ pub struct Deployment {
     pub yaml: String,
     /// The connection, with `~/.ssh/config` applied.
     pub endpoint: Endpoint,
+    /// Server details that did not come from the file, such as
+    /// `host from --host`.
+    pub ssh_from: Vec<String>,
+    /// Why the deploy cannot run: a variable it names is not set. It is
+    /// listed, and nothing runs for it.
+    pub unavailable: Option<String>,
     /// The deploy file as written, with defaults applied.
     pub deploy: DeployFile,
 }
@@ -426,6 +432,8 @@ impl Deployment {
             config_dir: config_dir.to_path_buf(),
             yaml: String::new(),
             endpoint,
+            ssh_from: Vec::new(),
+            unavailable: None,
             deploy,
         })
     }

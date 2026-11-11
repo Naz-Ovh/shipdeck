@@ -27,6 +27,8 @@ fn deployment() -> Deployment {
         yaml: SAMPLE.into(),
         endpoint: crate::ssh::Endpoint::from_config(&deploy.server.ssh, HostConfig::default())
             .unwrap(),
+        ssh_from: Vec::new(),
+        unavailable: None,
         deploy,
     }
 }

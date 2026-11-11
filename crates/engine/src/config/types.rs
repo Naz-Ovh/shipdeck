@@ -65,15 +65,17 @@ pub struct Server {
 }
 
 /// How to log in. `host` may be an alias from `~/.ssh/config`; `port` and
-/// `user` then come from it unless set here.
+/// `user` then come from it unless set here. `host`, `port` and `user` may
+/// hold `${NAME}`, which an environment variable or `.env` fills in.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SshTarget {
     /// The server's address, or an alias from `~/.ssh/config`.
     pub host: String,
-    /// Default: the alias's Port, else 22.
+    /// Default: the alias's Port, else 22. A number from 1 to 65535, or text
+    /// with `${NAME}` that makes one.
     #[serde(default)]
-    pub port: Option<u16>,
+    pub port: Option<Port>,
     /// The user shipdeck logs in and deploys as. Default: the alias's User.
     #[serde(default)]
     pub user: Option<String>,
@@ -81,6 +83,16 @@ pub struct SshTarget {
     /// nvm and the like. Default: true.
     #[serde(default = "default_true")]
     pub shell_env: bool,
+}
+
+/// The SSH port as written: a number, or text with `${NAME}` in it.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum Port {
+    /// The port itself.
+    Number(u16),
+    /// Text that becomes the port once `${NAME}` is replaced.
+    Text(String),
 }
 
 /// The whole release: files that belong to no app, and the release commands.

@@ -13,7 +13,7 @@ every release; a rollback only moves the `current` link.
 Change the SSH settings in `deploy.yaml`, then from this folder:
 
 ```sh
-shipdeck deploy production --key ~/.ssh/id_ed25519
+shipdeck deploy production --key-file ~/.ssh/id_ed25519
 ```
 
 `dir` holds `current`, `releases/` and `backups/`. `files: [dist]` must find `dist`; the

@@ -111,6 +111,91 @@ Errors:
 | A deploy file argument holds `root: true` | "This is a root file; use `-c <file>`." |
 | A name the root file does not list | Names the root file, and says a file needs `.yaml` or `.yml`. |
 
+### Server details outside the file
+
+A deploy file can stay free of real server details, so the same file works on
+every developer's PC and in CI. The owner chose these rules on 2026-11-11.
+
+There are three ways to give `host`, `port` and `user`:
+
+1. **An alias from `~/.ssh/config`.** The file says `host: shop-prod`. Each
+   PC maps `shop-prod` to its `HostName`, `Port`, `User` and `IdentityFile`.
+   This works today.
+2. **A variable named in the file.** The file names the variable, and your
+   shell, justfile or `.env` sets it:
+
+   ```yaml
+   server:
+     ssh:
+       host: ${SHOP_PROD_HOST}
+       port: ${SHOP_PROD_PORT}
+       user: ${SHOP_PROD_USER}
+     dir: /opt/shop
+   ```
+
+   Each deploy names its own variables, so the TUI and `deploy a b` work
+   with many deploys.
+3. **Flags or `SHIPDECK_SSH_*` variables, for one deploy only.** For a run
+   in CI or a one-off run by hand.
+
+| Flag | Variable | Sets |
+| --- | --- | --- |
+| `--host`, `-H` | `SHIPDECK_SSH_HOST` | `server.ssh.host` |
+| `--port`, `-P` | `SHIPDECK_SSH_PORT` | `server.ssh.port` |
+| `--user`, `-U` | `SHIPDECK_SSH_USER` | `server.ssh.user` |
+
+#### Rules
+
+- **Order:** a flag wins over a `SHIPDECK_SSH_*` variable, and that wins
+  over the file. A file value is read only when nothing above it is set, so
+  a missing `${NAME}` is no error when `-H` replaces it.
+- **One deploy only:** the flags and the `SHIPDECK_SSH_*` variables need a
+  run with exactly one deploy. With more than one (the TUI, or
+  `shipdeck deploy a b`), they are an error that points to ways 1 and 2.
+- **The output says where a value came from** when it is not the file, for
+  example `host from SHIPDECK_SSH_HOST`. So a forgotten variable can't send
+  a deploy to the wrong server unseen.
+- **`${NAME}` works only in `server.ssh.host`, `port` and `user`.** Anywhere
+  else, `${...}` is plain text, so shell commands keep their own `$`.
+- A name is letters, digits and `_`, and does not start with a digit. A
+  value may hold more than one, or text around one: `deploy-${TEAM}`.
+- A variable that is not set, or is empty, is an error. It names the
+  variable, the field and the deploy.
+- That error stops only a run that uses the deploy. Other deploys are not
+  checked for it. The TUI and the other listings show such a deploy as
+  **unavailable**, with the reason, and nothing starts for it.
+- After the replacement, `port` must be a number from 1 to 65535.
+- `server.dir` comes only from the file. It is the same on every PC.
+- `{{HOST}}` and the release's `.shipdeck/settings.json` hold the final
+  value, after flags and variables.
+- An alias still works with every way: `-H shop-prod` reads `~/.ssh/config`
+  as `host: shop-prod` does.
+
+#### The `.env` file
+
+- Shipdeck reads `.env` in the project folder when it exists.
+- `--env-file <path>` (`-E`) reads that file instead. A relative path starts
+  from the project folder, as for `-c`. A named file that is missing is an
+  error.
+- Only one file is read. The format is the usual one: `NAME=value` lines,
+  `#` comments, and quoted values.
+- Its values are for shipdeck only. They fill `${NAME}` in the file, the
+  `SHIPDECK_SSH_*` variables, and the login variables: `SHIPDECK_PASSWORD`,
+  `SHIPDECK_SSH_KEY`, `SHIPDECK_KEY_PASSPHRASE` and `SHIPDECK_SUDO_PASSWORD`.
+- A variable already set in the real environment wins over `.env`. So CI
+  can override a value without editing the file.
+- Your `local` and `server` commands do not get `.env` values. Secrets for
+  the login never reach the server, and commands see the same environment
+  as before.
+- `.env` is never uploaded, unless `files` lists it.
+
+#### Login flags
+
+`--key` is renamed to `--key-file`, so it reads clearly next to `--key-text`.
+Neither has a short form. `--password` has no short form either: a password
+typed on the command line lands in the shell history, and `SHIPDECK_PASSWORD`
+or `.env` keeps it out.
+
 ## Paths on your PC
 
 Every path to a file on your PC uses one of three forms:
@@ -773,6 +858,8 @@ missing patterns, and exits with 1.
 | A deploy root as a command argument | A deploy name, or a deploy file ending in `.yaml` or `.yml` |
 | The format 2 draft's deploy-file flag | Removed: name the deploy file as the argument |
 | No way to run from another folder | `--cwd` (`-C`) |
+| Host, port and user only in the file or `~/.ssh/config` | Also `${NAME}` in the file, `.env`, and for one deploy `-H`, `-P`, `-U` or `SHIPDECK_SSH_*` |
+| `--key` | `--key-file` |
 | A deploy is a folder | A deploy is one file, anywhere |
 | `shipdeck.yml` also accepted | `shipdeck.yaml` or `.shipdeck` only |
 | App files (`apps: {admin: _admin.yaml}`) | Apps inline in the deploy file |

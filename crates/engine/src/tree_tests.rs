@@ -37,6 +37,8 @@ apps:
         config_dir: root.to_path_buf(),
         yaml: yaml.into(),
         endpoint: Endpoint::from_config(&deploy.server.ssh, HostConfig::default()).unwrap(),
+        ssh_from: Vec::new(),
+        unavailable: None,
         deploy,
     }
 }

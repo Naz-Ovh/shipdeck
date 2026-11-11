@@ -3,7 +3,7 @@ use super::*;
 fn target(host: &str, port: Option<u16>, user: Option<&str>) -> SshTarget {
     SshTarget {
         host: host.into(),
-        port,
+        port: port.map(Port::Number),
         user: user.map(str::to_string),
         shell_env: true,
     }

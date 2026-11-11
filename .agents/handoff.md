@@ -1058,3 +1058,21 @@ formatting, and strict workspace Clippy pass.
 The production receiver has the same narrow window: an agent that spawns a
 command while it releases a project lock can make a stale upload ticket look
 valid for the fork-to-exec interval. Not changed; it needs an owner decision.
+
+## Server details outside the file — 2026-11-11
+
+Built the "Server details outside the file" rules of `docs/feature/config-v2.md`.
+
+- `${NAME}` in `server.ssh.host`, `port`, `user`; flags `-H/-P/-U`; `SHIPDECK_SSH_*`;
+  `.env` and `-E/--env-file` (crate `dotenvy` 0.15.7, the owner approved it).
+- One place: `crates/engine/src/config/server_inputs.rs` (order, `${}`, one-deploy rule) and
+  `env.rs` (real env over `.env`). The CLI sends flags, `env_file` and the run's deploy names
+  in `workspace/open`; `ssh_from` comes back in `DeployableInfo` and the console prints it.
+- `--key` is now `--key-file`. The login code moved from `main.rs` to `apps/cli/src/login.rs`
+  (`main.rs` was at the 800-line cap).
+- `port` is `Port` (number or text); the schema and protocol schema were regenerated.
+- Choices the spec left open: a bad `${...}` name is an error; an empty real variable counts
+  as not set; the TUI works with exactly one deploy and refuses the flags with more.
+- A missing `${NAME}` stops only a run that uses that deploy; others are listed as unavailable
+  (`Deployment.unavailable`, `DeployableInfo.unavailable`, error code -32010); the TUI shows a notice.
+- Not run: the Podman SSH suite, and a real deploy with these options.

@@ -814,6 +814,22 @@
       },
       "type": "object"
     },
+    "Port": {
+      "anyOf": [
+        {
+          "description": "The port itself.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "description": "Text that becomes the port once `${NAME}` is replaced.",
+          "type": "string"
+        }
+      ],
+      "description": "The SSH port as written: a number, or text with `${NAME}` in it."
+    },
     "PreflightStep": {
       "additionalProperties": false,
       "description": "Step 1: checks before anything else.",
@@ -1282,22 +1298,23 @@
     },
     "SshTarget": {
       "additionalProperties": false,
-      "description": "How to log in. `host` may be an alias from `~/.ssh/config`; `port` and `user` then come from it unless set here.",
+      "description": "How to log in. `host` may be an alias from `~/.ssh/config`; `port` and `user` then come from it unless set here. `host`, `port` and `user` may hold `${NAME}`, which an environment variable or `.env` fills in.",
       "properties": {
         "host": {
           "description": "The server's address, or an alias from `~/.ssh/config`.",
           "type": "string"
         },
         "port": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Port"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
-          "description": "Default: the alias's Port, else 22.",
-          "format": "uint16",
-          "maximum": 65535,
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
+          "description": "Default: the alias's Port, else 22. A number from 1 to 65535, or text with `${NAME}` that makes one."
         },
         "shell_env": {
           "default": true,

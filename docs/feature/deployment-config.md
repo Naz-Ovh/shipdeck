@@ -5,16 +5,16 @@ Detailed reference. Start with the [overview](../../README.md).
 ## Run it
 
 ```sh
-cargo run --release -p shipdeck -- <deploy-root> [--key <path> | --password <value>]
+cargo run --release -p shipdeck -- <deploy-root> [--key-file <path> | --password <value>]
 
-shipdeck ./scripts/deploy --key ~/.ssh/id_ed25519
+shipdeck ./scripts/deploy --key-file ~/.ssh/id_ed25519
 shipdeck ./scripts/deploy                 # asks for the password in the TUI
 shipdeck --schema > deploy.schema.json    # the JSON Schema, for offline editors
 ```
 
 | Flag | Login |
 | --- | --- |
-| `--key <path>` | Private key file. An encrypted key asks for its passphrase in the TUI, or takes it from `SHIPDECK_KEY_PASSPHRASE`. |
+| `--key-file <path>` | Private key file. An encrypted key asks for its passphrase in the TUI, or takes it from `SHIPDECK_KEY_PASSPHRASE`. |
 | `--key-text <text>` | The private key itself, such as a CI secret. It shows in `ps`; `SHIPDECK_SSH_KEY` does the same without that. Store the key file's text exactly as it is. |
 | `--no-shell-env` | Server commands run without the login shell's startup files, on every server (see [Tools on the server](#tools-on-the-server)). |
 | `--gitshell-path <path>` | Windows only: the `sh.exe` that runs local commands, instead of Git for Windows' own. `SHIPDECK_GITSHELL_PATH` does the same. |
@@ -103,7 +103,7 @@ What the TUI would ask comes from flags instead:
 | Roll back after a failed switch, restart or health check? | `--on-failure rollback` (the default) rolls back at once; `--on-failure keep` keeps the failed release live. Either overrides `pipeline.failed.rollback`. |
 | Nothing changed since the live release: deploy anyway? | No: the deploy stops with exit code `6` and touches nothing. `--allow-unchanged` deploys it anyway, as a duplicate. |
 | Trust a server seen for the first time? | No, unless `--trust-new-host`. A changed host key is always refused. |
-| A password or key passphrase? | Never asked: use `--key` or `SHIPDECK_SSH_KEY` (with `SHIPDECK_KEY_PASSPHRASE` for an encrypted key), `--password` or `SHIPDECK_PASSWORD`. |
+| A password or key passphrase? | Never asked: use `--key-file` or `SHIPDECK_SSH_KEY` (with `SHIPDECK_KEY_PASSPHRASE` for an encrypted key), `--password` or `SHIPDECK_PASSWORD`. |
 
 The exit code says how it ended:
 

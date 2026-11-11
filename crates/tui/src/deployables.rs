@@ -64,7 +64,7 @@ fn item<'a>(deployment: &'a Deployment, live: &Live, tick: u64) -> ListItem<'a> 
         Live::Error(_) => ("●", ERR),
         Live::Disconnected => ("○", theme::FAINT),
     };
-    let summary = live_summary(live, tick);
+    let summary = status_line(deployment, live, tick);
     let apps = deployment.app_names().join(", ");
     ListItem::new(Text::from(vec![
         Line::from(vec![
@@ -79,6 +79,17 @@ fn item<'a>(deployment: &'a Deployment, live: &Live, tick: u64) -> ListItem<'a> 
         Line::from([vec![Span::raw("  ")], summary].concat()),
         Line::default(),
     ]))
+}
+
+/// The live line, or why the deploy is unavailable.
+fn status_line(deployment: &Deployment, live: &Live, tick: u64) -> Vec<Span<'static>> {
+    if deployment.unavailable.is_some() {
+        return vec![Span::styled(
+            "unavailable · Enter shows why",
+            Style::new().fg(ERR),
+        )];
+    }
+    live_summary(live, tick)
 }
 
 /// One line about what is live: version and service state, or why not.
@@ -153,7 +164,7 @@ fn details(
     }
     field(&mut lines, "ssh", ssh);
     let login = match (login, &endpoint.identity) {
-        (Login::Key(path), _) => format!("key {} (--key)", path.display()),
+        (Login::Key(path), _) => format!("key {} (--key-file)", path.display()),
         (Login::KeyText(_), _) => "key text (--key-text or SHIPDECK_SSH_KEY)".to_string(),
         (Login::Password(_), _) => "password (--password)".to_string(),
         (Login::Passwordless, _) => "no password or key (--passwordless)".to_string(),
@@ -172,7 +183,14 @@ fn details(
         "folder",
         vec![Span::styled(deployment.dir().to_string(), theme::text())],
     );
-    field(&mut lines, "live", live_summary(live, tick));
+    field(&mut lines, "live", status_line(deployment, live, tick));
+    if let Some(reason) = &deployment.unavailable {
+        field(
+            &mut lines,
+            "why",
+            vec![Span::styled(reason.clone(), Style::new().fg(ERR))],
+        );
+    }
 
     apps_section(&mut lines, deployment);
 

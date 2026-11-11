@@ -65,6 +65,8 @@ apps:
         config_dir: PathBuf::from("."),
         yaml,
         endpoint,
+        ssh_from: Vec::new(),
+        unavailable: None,
         deploy,
     }
 }
@@ -319,4 +321,55 @@ async fn every_screen_draws_without_a_connection() {
         app.screen = screen;
         let _ = text(&mut app);
     }
+}
+
+fn unavailable_app() -> App {
+    let mut app = app();
+    app.deployables[1].unavailable =
+        Some("the variable API_HOST is not set, or is empty; `server.ssh.host` needs it".into());
+    app.list.select(Some(1));
+    app
+}
+
+#[tokio::test]
+async fn an_unavailable_deploy_is_marked_in_the_list_and_the_details() {
+    let mut app = unavailable_app();
+    let screen = text(&mut app);
+    assert!(screen.contains("unavailable"), "{screen}");
+    assert!(screen.contains("API_HOST"), "{screen}");
+}
+
+#[tokio::test]
+async fn an_unavailable_deploy_starts_nothing_and_shows_why() {
+    for code in [
+        KeyCode::Enter,
+        KeyCode::Char('d'),
+        KeyCode::Char('r'),
+        KeyCode::Char('c'),
+        KeyCode::Char('x'),
+        KeyCode::Char(':'),
+    ] {
+        let mut app = unavailable_app();
+        app.on_event(&crossterm::event::Event::Key(key(code)));
+        assert!(
+            matches!(app.modals.front(), Some(Modal::Notice { text, .. }) if text.contains("API_HOST")),
+            "{code:?}"
+        );
+        assert_eq!(app.modals.len(), 1, "{code:?}");
+        assert!(
+            app.op.is_none() && app.releases.is_none() && app.command.is_none(),
+            "{code:?}"
+        );
+        assert!(matches!(app.live[1], Live::Disconnected), "{code:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_deploy_that_is_available_still_asks_to_deploy() {
+    let mut app = app();
+    app.on_event(&crossterm::event::Event::Key(key(KeyCode::Enter)));
+    assert!(matches!(
+        app.modals.front(),
+        Some(Modal::ConfirmDeploy { .. })
+    ));
 }

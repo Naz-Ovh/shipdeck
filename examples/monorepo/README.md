@@ -7,8 +7,8 @@ Systemd deployment requires the permissions created by the server setup script.
 From the repository root, run:
 
 ```sh
-shipdeck deploy examples monorepo --key ~/.ssh/id_ed25519
-shipdeck releases examples monorepo --key ~/.ssh/id_ed25519
+shipdeck deploy examples monorepo --key-file ~/.ssh/id_ed25519
+shipdeck releases examples monorepo --key-file ~/.ssh/id_ed25519
 ```
 
 Both apps share one release and roll back together. Their uploads folders stay

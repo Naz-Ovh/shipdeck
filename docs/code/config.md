@@ -31,6 +31,18 @@ Reading goes in three passes, so every problem in a file is reported at once:
 `load.rs` reads the root file (or the files named on the command line), and turns a clean
 deploy file plus its endpoint into a `Deployment`. Only `Deployment` reaches the pipeline.
 
+## Server details
+
+- `env.rs` holds `Env`: the real environment over one `.env` file, read with `dotenvy`'s
+  iterator. Nothing is written into the process environment.
+- `server_inputs.rs` holds the one place for `${NAME}` in `server.ssh.host`, `port` and `user`
+  and for the order flag, `SHIPDECK_SSH_*`, file. `load.rs` calls it for every deploy, then
+  writes the final values into the `DeployFile`, so `{{HOST}}` and `.shipdeck/settings.json`
+  hold them.
+- `open_all` counts the run's deploys: the flags and `SHIPDECK_SSH_*` need exactly one.
+- The CLI and the TUI send the flags, `--env-file` and the run's deploy names in
+  `workspace/open`; the engine does the rest.
+
 ## Errors
 
 - A config mistake is a `config::Problem` with the line it is on and a hint, never a bare

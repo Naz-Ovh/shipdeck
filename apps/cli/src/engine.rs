@@ -8,6 +8,7 @@ use anyhow::{Context, Result, bail};
 use tokio::process::{Child, Command};
 
 use shipdeck_protocol::connection::Connection;
+use shipdeck_protocol::message::SshOverride;
 use shipdeck_protocol::message::common::Login;
 use shipdeck_protocol::message::request::{Initialize, WorkspaceOpen, WorkspaceOpenResult};
 
@@ -33,6 +34,24 @@ pub async fn serve() -> Result<()> {
     }
     shipdeck_engine::rpc::run(tokio::io::stdin(), tokio::io::stdout()).await;
     Ok(())
+}
+
+/// What `workspace/open` is told about this run.
+pub struct Opening<'a> {
+    /// The project folder.
+    pub root: &'a Path,
+    pub login: &'a Login,
+    pub no_shell_env: bool,
+    /// The root file `-c` names.
+    pub config: Option<&'a Path>,
+    /// The deploy files the command names.
+    pub deploy_files: &'a [PathBuf],
+    /// The env file `-E` names.
+    pub env_file: Option<&'a Path>,
+    /// `--host`, `--port` and `--user`.
+    pub ssh: SshOverride,
+    /// The root file's deploys the command names.
+    pub run: Vec<String>,
 }
 
 /// `shipdeck engine`, started for this run: one folder, one pipe, then gone.
@@ -75,24 +94,22 @@ impl Engine {
     ///
     /// # Errors
     /// Fails when the engine does not answer, or the folder is not one.
-    pub async fn open(
-        &self,
-        root: &Path,
-        login: &Login,
-        no_shell_env: bool,
-        config: Option<&Path>,
-        deploy_files: &[PathBuf],
-    ) -> Result<WorkspaceOpenResult> {
+    pub async fn open(&self, opening: Opening<'_>) -> Result<WorkspaceOpenResult> {
+        let shown = |file: &Path| file.display().to_string();
         self.connection
             .workspace_open(&WorkspaceOpen {
-                root: root.display().to_string(),
-                config: config.map(|file| file.display().to_string()),
-                deploy_files: deploy_files
+                root: shown(opening.root),
+                config: opening.config.map(shown),
+                deploy_files: opening
+                    .deploy_files
                     .iter()
-                    .map(|file| file.display().to_string())
+                    .map(|file| shown(file))
                     .collect(),
-                login: login.clone(),
-                no_shell_env,
+                login: opening.login.clone(),
+                no_shell_env: opening.no_shell_env,
+                env_file: opening.env_file.map(shown),
+                ssh: opening.ssh,
+                run: opening.run,
             })
             .await
             .context("opening the project")

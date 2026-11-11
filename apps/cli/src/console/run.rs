@@ -459,6 +459,13 @@ impl Console {
                 project.dir
             ))
         );
+        if !project.ssh_from.is_empty() {
+            eprintln!(
+                "{}",
+                self.paint
+                    .warn(&format!("  {}", project.ssh_from.join(", ")))
+            );
+        }
     }
 
     fn fail(&self, error: &str) -> ExitCode {

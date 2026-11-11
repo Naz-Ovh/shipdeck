@@ -11,33 +11,29 @@ use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 use tokio::sync::mpsc::unbounded_channel;
 
-use shipdeck_engine::config::{self, ManagerKind};
+use shipdeck_engine::config::{self, Env, ManagerKind, ServerInputs};
 use shipdeck_engine::init::Preset;
-use shipdeck_engine::ssh::Login;
 use shipdeck_protocol::message::DeployableInfo;
 
 use console::{Choices, Console};
 use naming::{Where, fail, problems, resolve_name, resolve_names, setup_access, setup_password};
-use shipdeck_protocol::message::common::{Login as ProtocolLogin, OnFailure};
+use shipdeck_protocol::message::common::OnFailure;
 use shipdeck_protocol::message::request::SetupAccess;
 
 mod console;
 mod engine;
 mod init;
+mod login;
 mod man;
 mod naming;
 mod target;
 
+use login::{LoginArgs, gitshell, login, wire};
 use target::Target;
 
 #[cfg(target_env = "musl")]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
-/// The password, for runs where `--password` would land in a log.
-const PASSWORD_ENV: &str = "SHIPDECK_PASSWORD";
-/// A private key's text, such as a CI secret, kept out of `ps` and logs.
-const KEY_ENV: &str = "SHIPDECK_SSH_KEY";
 
 #[derive(Parser)]
 #[command(
@@ -47,9 +43,12 @@ const KEY_ENV: &str = "SHIPDECK_SSH_KEY";
     after_help = "shipdeck reads the root file, shipdeck.yaml or .shipdeck, in the project folder;\n\
                   -C moves that folder and -c names another root file. A deploy is one file:\n\
                   names come from the root file, and a .yaml or .yml argument is a deploy file.\n\
-                  Login, first found: --passwordless, --key, --key-text, --password, SHIPDECK_SSH_KEY,\n\
+                  Login, first found: --passwordless, --key-file, --key-text, --password, SHIPDECK_SSH_KEY,\n\
                   SHIPDECK_PASSWORD; else the host's ~/.ssh/config key, then the TUI asks\n\
                   for the password. SHIPDECK_KEY_PASSPHRASE unlocks an encrypted key.\n\
+                  Server, for one deploy: -H/--host, -P/--port, -U/--user, else SHIPDECK_SSH_HOST,\n\
+                  SHIPDECK_SSH_PORT, SHIPDECK_SSH_USER, else the file; `${NAME}` in server.ssh reads a variable.\n\
+                  .env in the project folder (or -E <file>) fills `${NAME}` and the SHIPDECK_* variables above.\n\
                   deploy, rollback and releases run without the TUI and ask nothing.\n\
                   init writes a root file and a deploy file; it asks for what its flags leave out.\n\
                   man is the full manual: `shipdeck man index`, `man configs`, `man details <KEY>...`.",
@@ -64,6 +63,10 @@ struct Cli {
     #[arg(short = 'c', long, value_name = "FILE", global = true)]
     config: Option<PathBuf>,
 
+    /// Read this env file instead of .env in the project folder; its values never reach your commands
+    #[arg(short = 'E', long, value_name = "FILE", global = true)]
+    env_file: Option<PathBuf>,
+
     #[command(flatten)]
     login: LoginArgs,
 
@@ -73,34 +76,6 @@ struct Cli {
 
     #[command(subcommand)]
     command: Option<Command>,
-}
-
-#[derive(Args, Clone)]
-struct LoginArgs {
-    /// Log in with this private key file
-    #[arg(long, value_name = "PATH", conflicts_with_all = ["password", "key_text"])]
-    key: Option<PathBuf>,
-
-    /// Log in with this private key's text (it shows in `ps`; `SHIPDECK_SSH_KEY` does not)
-    #[arg(long, value_name = "TEXT", conflicts_with = "password")]
-    key_text: Option<String>,
-
-    /// Log in with this password (it lands in your shell history; `SHIPDECK_PASSWORD` does not)
-    #[arg(long, value_name = "PASSWORD")]
-    password: Option<String>,
-
-    /// Log in with no password or key, for a server that allows it
-    #[arg(long, conflicts_with_all = ["key", "key_text", "password"])]
-    passwordless: bool,
-
-    /// Run server commands without the login shell's startup files (~/.bashrc, ~/.zshrc, ...), on every server
-    #[arg(long)]
-    no_shell_env: bool,
-
-    /// Run local commands with this sh.exe instead of the one Git for Windows has
-    #[cfg(windows)]
-    #[arg(long, value_name = "PATH", env = "SHIPDECK_GITSHELL_PATH")]
-    gitshell_path: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -338,10 +313,15 @@ async fn main() -> Result<ExitCode> {
             std::process::exit(0);
         }
         Some(Command::Server(command)) => command,
-        None => return run_tui(&folder(cli.cwd.as_deref())?, cli.config, cli.login).await,
+        None => {
+            let root = folder(cli.cwd.as_deref())?;
+            let env = Env::load(&root, cli.env_file.as_deref())?;
+            return run_tui(&root, cli.config, cli.env_file, cli.login, env).await;
+        }
     };
     // `-C` applies first, as in `git -C`: every relative path starts there.
     let root = folder(cli.cwd.as_deref())?;
+    let env = Env::load(&root, cli.env_file.as_deref())?;
     let config = cli.config.map(|file| root.join(file));
     let deploy_files: Vec<PathBuf> = targets(&command).map(|target| root.join(target)).collect();
     if let ServerCommand::Tree {
@@ -355,6 +335,7 @@ async fn main() -> Result<ExitCode> {
         return run_tree(
             &root,
             config.as_deref(),
+            &ServerInputs::from_env(env),
             name.as_ref(),
             app.as_deref(),
             *depth,
@@ -366,16 +347,19 @@ async fn main() -> Result<ExitCode> {
     let ssh = ssh_args(&command);
     let shell_env = !ssh.login.no_shell_env;
     let gitshell = gitshell(&ssh.login);
-    let login = login(ssh.login.clone())?;
+    let login = login(ssh.login.clone(), &env)?;
     let engine = engine::Engine::start(gitshell.as_deref()).await?;
     let workspace = engine
-        .open(
-            &root,
-            &wire(&login),
-            !shell_env,
-            config.as_deref(),
-            &deploy_files,
-        )
+        .open(engine::Opening {
+            root: &root,
+            login: &wire(&login),
+            no_shell_env: !shell_env,
+            config: config.as_deref(),
+            deploy_files: &deploy_files,
+            env_file: cli.env_file.as_deref(),
+            ssh: ssh.login.ssh(),
+            run: names(&command),
+        })
         .await?;
     if !workspace.problems.is_empty() {
         return Ok(problems(&workspace.problems));
@@ -387,7 +371,7 @@ async fn main() -> Result<ExitCode> {
             ..
         } => Some((
             setup_access(*access)?,
-            setup_password(sudo_password.clone())?,
+            setup_password(sudo_password.clone(), &env)?,
         )),
         _ => None,
     };
@@ -448,9 +432,9 @@ fn folder(cwd: Option<&Path>) -> Result<PathBuf> {
     std::path::absolute(&root).with_context(|| format!("reading {}", root.display()))
 }
 
-/// The deploy files a command names, in order.
-fn targets(command: &ServerCommand) -> impl Iterator<Item = PathBuf> + '_ {
-    let list: Vec<Target> = match command {
+/// The deploys a command names, in order.
+fn named(command: &ServerCommand) -> Vec<Target> {
+    match command {
         ServerCommand::Deploy { names, .. } => names.clone(),
         ServerCommand::Rollback { name, .. } => vec![name.clone()],
         ServerCommand::Releases { name, .. }
@@ -459,9 +443,25 @@ fn targets(command: &ServerCommand) -> impl Iterator<Item = PathBuf> + '_ {
         | ServerCommand::Events { name, .. }
         | ServerCommand::Setup { name, .. }
         | ServerCommand::Tree { name, .. } => name.iter().cloned().collect(),
-    };
-    list.into_iter()
+    }
+}
+
+/// The deploy files a command names, in order.
+fn targets(command: &ServerCommand) -> impl Iterator<Item = PathBuf> {
+    named(command)
+        .into_iter()
         .filter_map(|target| target.file().map(Path::to_path_buf))
+}
+
+/// The root file's deploys a command names, in order.
+fn names(command: &ServerCommand) -> Vec<String> {
+    named(command)
+        .into_iter()
+        .filter_map(|target| match target {
+            Target::Name(name) => Some(name),
+            Target::File(_) => None,
+        })
+        .collect()
 }
 
 /// The SSH flags of a command.
@@ -545,33 +545,6 @@ async fn run_command(
     }
 }
 
-/// The login as the protocol carries it: the same four ways in.
-fn wire(login: &Login) -> ProtocolLogin {
-    match login {
-        Login::Key(path) => ProtocolLogin::Key {
-            path: path.display().to_string(),
-        },
-        Login::KeyText(text) => ProtocolLogin::KeyText { text: text.clone() },
-        Login::Password(password) => ProtocolLogin::Password {
-            password: password.clone(),
-        },
-        Login::Passwordless => ProtocolLogin::Passwordless,
-        Login::Auto => ProtocolLogin::Auto,
-    }
-}
-
-/// The shell the engine runs local commands in, when the flag names one.
-#[cfg(windows)]
-fn gitshell(args: &LoginArgs) -> Option<PathBuf> {
-    args.gitshell_path.clone()
-}
-
-/// Windows has the flag only; the other systems use their own `sh`.
-#[cfg(not(windows))]
-fn gitshell(_: &LoginArgs) -> Option<PathBuf> {
-    None
-}
-
 /// The flags. With no terminal to ask in, `init` needs on the command line
 /// what it would otherwise ask for.
 fn flags() -> clap::Command {
@@ -600,22 +573,36 @@ fn run_init(args: InitArgs) -> Result<ExitCode> {
     init::run(given)
 }
 
-async fn run_tui(root: &Path, config: Option<PathBuf>, args: LoginArgs) -> Result<ExitCode> {
-    let login = login(args.clone())?;
+async fn run_tui(
+    root: &Path,
+    config: Option<PathBuf>,
+    env_file: Option<PathBuf>,
+    args: LoginArgs,
+    env: Env,
+) -> Result<ExitCode> {
+    let login = login(args.clone(), &env)?;
     let engine = engine::Engine::start(gitshell(&args).as_deref()).await?;
     let workspace = engine
-        .open(
+        .open(engine::Opening {
             root,
-            &wire(&login),
-            !args.no_shell_env,
-            config.as_deref(),
-            &[],
-        )
+            login: &wire(&login),
+            no_shell_env: !args.no_shell_env,
+            config: config.as_deref(),
+            deploy_files: &[],
+            env_file: env_file.as_deref(),
+            ssh: args.ssh(),
+            run: Vec::new(),
+        })
         .await?;
     if !workspace.problems.is_empty() {
         return Ok(problems(&workspace.problems));
     }
-    let (deployables, failures) = config::open_all(root, config.as_deref(), &[]);
+    let (deployables, failures) = config::open_all(
+        root,
+        config.as_deref(),
+        &[],
+        &ServerInputs::new(env, args.ssh(), Vec::new()),
+    );
     if let Some(found) = failures.first() {
         let color = std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none();
         eprint!(
@@ -664,13 +651,14 @@ async fn run_tui(root: &Path, config: Option<PathBuf>, args: LoginArgs) -> Resul
 async fn run_tree(
     root: &Path,
     config: Option<&Path>,
+    inputs: &ServerInputs,
     name: Option<&Target>,
     app: Option<&str>,
     depth: Option<usize>,
     build: bool,
     json: bool,
 ) -> Result<ExitCode> {
-    let deployment = tree_deploy(root, config, name)?;
+    let deployment = tree_deploy(root, config, inputs, name)?;
     let options = shipdeck_engine::tree::Options {
         app: app.map(str::to_string),
         depth,
@@ -691,6 +679,7 @@ async fn run_tree(
 fn tree_deploy(
     root: &Path,
     config: Option<&Path>,
+    inputs: &ServerInputs,
     target: Option<&Target>,
 ) -> Result<config::Deployment> {
     let rendered = |found: &config::FileProblems| {
@@ -705,11 +694,17 @@ fn tree_deploy(
             )
         )
     };
+    // `tree` shows one deploy, so a `SHIPDECK_SSH_*` variable applies to it.
+    let details = inputs.details(
+        inputs
+            .single(1)
+            .map_err(|message| anyhow::anyhow!(message))?,
+    );
     if let Some(file @ Target::File(_)) = target {
         let Target::File(path) = file.resolved(root) else {
             unreachable!("a deploy file was named");
         };
-        return config::load_deploy(root, &path, None).map_err(|found| rendered(&found));
+        return config::load_deploy(root, &path, None, details).map_err(|found| rendered(&found));
     }
     let root_file = config::Root::read(root, config).map_err(|found| rendered(&found))?;
     let name = match target {
@@ -735,7 +730,9 @@ fn tree_deploy(
             listed(root_file.deploys.keys())
         );
     }
-    root_file.deployment(name).map_err(|found| rendered(&found))
+    root_file
+        .deployment(name, details)
+        .map_err(|found| rendered(&found))
 }
 
 /// The names a message lists, or a word for none.
@@ -745,42 +742,6 @@ fn listed<'a>(names: impl Iterator<Item = &'a String>) -> String {
         "no deploys".into()
     } else {
         names.join(", ")
-    }
-}
-
-fn login(args: LoginArgs) -> Result<Login> {
-    if args.passwordless {
-        return Ok(Login::Passwordless);
-    }
-    if let Some(key) = args.key {
-        let key = expand_home(key);
-        if !key.is_file() {
-            bail!("the key file {} does not exist", key.display());
-        }
-        return Ok(Login::Key(key));
-    }
-    let env = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
-    if let Some(text) = args.key_text {
-        return Ok(Login::KeyText(text));
-    }
-    if let Some(password) = args.password {
-        return Ok(Login::Password(password));
-    }
-    if let Some(text) = env(KEY_ENV) {
-        return Ok(Login::KeyText(text));
-    }
-    Ok(match env(PASSWORD_ENV) {
-        Some(password) => Login::Password(password),
-        None => Login::Auto,
-    })
-}
-
-/// `~/.ssh/id_ed25519` → `/home/me/.ssh/id_ed25519`; zsh expands `~` only
-/// at the start of a word, not after `--key=`.
-fn expand_home(path: PathBuf) -> PathBuf {
-    match (path.strip_prefix("~"), std::env::home_dir()) {
-        (Ok(rest), Some(home)) => home.join(rest),
-        _ => path,
     }
 }
 

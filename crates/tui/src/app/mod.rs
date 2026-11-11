@@ -552,6 +552,19 @@ impl App {
             .is_some_and(|op| op.running() && op.deployable == index)
     }
 
+    /// Whether the deployable can run. If a variable it names is not set, a
+    /// notice says why and nothing starts.
+    pub(super) fn usable(&mut self, index: usize) -> bool {
+        let Some(reason) = self.deployables[index].unavailable.clone() else {
+            return true;
+        };
+        self.modals.push_back(Modal::Notice {
+            title: format!("{} is unavailable", self.deployables[index].slug),
+            text: reason,
+        });
+        false
+    }
+
     fn notify(&mut self, text: impl Into<String>, tone: Tone) {
         self.toast = Some(Toast {
             text: text.into(),

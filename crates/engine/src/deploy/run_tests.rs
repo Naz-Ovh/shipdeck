@@ -31,6 +31,8 @@ fn deployment() -> crate::config::Deployment {
         config_dir: ".".into(),
         yaml: SAMPLE.into(),
         endpoint,
+        ssh_from: Vec::new(),
+        unavailable: None,
         deploy,
     }
 }
@@ -189,6 +191,8 @@ fn an_env_value_gets_its_placeholders() {
         config_dir: ".".into(),
         yaml: text.clone(),
         endpoint,
+        ssh_from: Vec::new(),
+        unavailable: None,
         deploy,
     };
     let report = reporter();
@@ -304,6 +308,8 @@ async fn an_ask_answered_yes_rolls_back() {
         config_dir: ".".into(),
         yaml,
         endpoint,
+        ssh_from: Vec::new(),
+        unavailable: None,
         deploy,
     };
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -340,6 +346,8 @@ async fn mode_off_keeps_the_failed_release() {
         config_dir: ".".into(),
         yaml,
         endpoint,
+        ssh_from: Vec::new(),
+        unavailable: None,
         deploy,
     };
     let report = reporter();
@@ -366,6 +374,8 @@ async fn the_rollback_commands_see_the_release_being_put_back() {
         config_dir: ".".into(),
         yaml,
         endpoint,
+        ssh_from: Vec::new(),
+        unavailable: None,
         deploy,
     };
     let report = reporter();
