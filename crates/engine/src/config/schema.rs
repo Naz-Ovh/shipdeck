@@ -1,11 +1,11 @@
-//! The JSON Schema for `shipdeck.yaml`, generated from the config types. It
-//! is published in `docs/schema/` at each release tag for editor completion,
-//! and shipdeck checks every shipdeck.yaml against it at launch.
+//! The JSON Schema for the project file and the deploy file, generated from
+//! their types. It is published in `docs/schema/` at each release tag, for
+//! editor completion, and every file is checked against it when read.
 
 use schemars::generate::SchemaSettings;
 use serde_json::Value;
 
-use super::DeployConfigFile;
+use super::types::{DeployFile, ProjectFile};
 
 /// The file in the shipdeck repository, published with each release.
 pub const FILE_NAME: &str = "docs/schema/deploy.schema.json";
@@ -18,62 +18,66 @@ pub fn url() -> String {
     crate::setup::raw_url(FILE_NAME)
 }
 
-/// The line that gives a shipdeck.yaml completion in editors using the YAML
+/// The line that gives a deploy file completion in editors using the YAML
 /// language server (VS Code's YAML extension, Neovim, Zed, `JetBrains`).
 #[must_use]
 pub fn modeline() -> String {
     format!("# yaml-language-server: $schema={}", url())
 }
 
-/// The schema as JSON. Draft-07, which every YAML language server reads.
+/// The schema of a deploy file.
 #[must_use]
-pub fn generate() -> Value {
+pub fn deploy() -> Value {
+    root::<DeployFile>("deploy file")
+}
+
+/// The schema of the project file.
+#[must_use]
+pub fn project() -> Value {
+    root::<ProjectFile>("project file")
+}
+
+/// The schema of either file, which is what the published file holds.
+#[must_use]
+pub fn published() -> Value {
+    let mut deploy = deploy();
+    let mut project = project();
+    let mut all = definitions(&mut deploy);
+    all.extend(definitions(&mut project));
+    for schema in [&mut deploy, &mut project] {
+        if let Some(object) = schema.as_object_mut() {
+            object.remove("definitions");
+        }
+    }
+    serde_json::json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$id": url(),
+        "title": "shipdeck",
+        "description": "The project file (shipdeck.yaml or .shipdeck) and the deploy file.",
+        "oneOf": [project, deploy],
+        "definitions": all,
+    })
+}
+
+fn root<T: schemars::JsonSchema>(title: &str) -> Value {
     let schema = SchemaSettings::draft07()
         .into_generator()
-        .into_root_schema_for::<DeployConfigFile>();
+        .into_root_schema_for::<T>();
     let mut value = schema.to_value();
     unwrap_lines(&mut value);
     if let Some(object) = value.as_object_mut() {
         object.insert("$id".into(), Value::String(url()));
-        object.insert("title".into(), Value::String("shipdeck.yaml".into()));
+        object.insert("title".into(), Value::String(title.into()));
     }
     value
 }
 
-/// The editor schema accepts either deployment shape.
-#[must_use]
-pub fn published() -> Value {
-    let single = generate();
-    let mut mono = SchemaSettings::draft07()
-        .into_generator()
-        .into_root_schema_for::<super::monorepo::MonorepoConfig>()
-        .to_value();
-    unwrap_lines(&mut mono);
-    let mut definitions = single["definitions"]
-        .as_object()
-        .cloned()
-        .unwrap_or_default();
-    if let Some(extra) = mono.get("definitions").and_then(Value::as_object) {
-        definitions.extend(
-            extra
-                .iter()
-                .map(|(key, value)| (key.clone(), value.clone())),
-        );
-    }
-    let mut single = single;
-    if let Some(object) = single.as_object_mut() {
-        object.remove("definitions");
-        object.remove("$id");
-        object.remove("$schema");
-    }
-    if let Some(object) = mono.as_object_mut() {
-        object.remove("definitions");
-        object.remove("$schema");
-    }
-    serde_json::json!({
-        "$schema": "http://json-schema.org/draft-07/schema#", "$id": url(),
-        "title": "shipdeck.yaml", "oneOf": [single, mono], "definitions": definitions,
-    })
+fn definitions(schema: &mut Value) -> serde_json::Map<String, Value> {
+    schema
+        .as_object_mut()
+        .and_then(|object| object.remove("definitions"))
+        .and_then(|definitions| definitions.as_object().cloned())
+        .unwrap_or_default()
 }
 
 /// Doc comments arrive wrapped at 80 columns; editors show descriptions as
@@ -107,5 +111,5 @@ pub fn text() -> String {
 }
 
 #[cfg(test)]
-#[path = "schema_test.rs"]
+#[path = "schema_tests.rs"]
 mod tests;

@@ -58,22 +58,16 @@ pub struct FileText {
 }
 
 impl Server {
-    /// Reads the app settings saved with a shared release.
+    /// Reads the deploy settings saved with a release.
     ///
     /// # Errors
-    /// Returns an error if the settings cannot be read or are invalid.
-    pub async fn monorepo_config(
-        &self,
-        id: &str,
-        source: Source,
-    ) -> Result<crate::config::monorepo::MonorepoConfig> {
-        let file = self
-            .read(id, source, crate::config::monorepo::RELEASE_METADATA)
-            .await?;
+    /// Returns an error if the settings cannot be read.
+    pub async fn settings(&self, id: &str, source: Source) -> Result<Vec<u8>> {
+        let file = self.read(id, source, ".shipdeck/settings.json").await?;
         if file.binary {
             bail!("release settings are not text");
         }
-        crate::config::monorepo::MonorepoConfig::from_release_metadata(file.text.as_bytes())
+        Ok(file.text.into_bytes())
     }
 
     /// Every path of release `id` in `source`. A backup is listed by `tar`
@@ -123,7 +117,7 @@ find . -mindepth 1 -printf '%M\\t%s\\t%P\\t%l\\0'",
             Source::Backup => format!(
                 "set -e
 cd {dir}
-tar -I zstd -xOf backups/{id}.tar.zst --occurrence=1 ./release.json 2>/dev/null | tr -d '\\n\\t'
+tar -I zstd -xOf backups/{id}.tar.zst --occurrence=1 ./.shipdeck/release.json 2>/dev/null | tr -d '\\n\\t'
 echo
 tar -I zstd -tvf backups/{id}.tar.zst",
                 dir = self.q_dir()

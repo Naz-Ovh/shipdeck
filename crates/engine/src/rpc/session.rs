@@ -1,4 +1,4 @@
-//! What one app has open: its workspace, its running operation and its live
+//! What one app has open: its project, its running operation and its live
 //! logs. Every request changes what is here, and nothing else.
 
 use std::collections::BTreeMap;
@@ -38,7 +38,7 @@ struct State {
 }
 
 struct Workspace {
-    /// By slug, which is what every other message calls a project.
+    /// By slug, which is the deploy name every other message uses.
     deployables: BTreeMap<String, Deployment>,
     pool: Arc<Pool>,
 }
@@ -76,12 +76,12 @@ impl Session {
         self.reply(id, Err(error));
     }
 
-    /// `workspace/open`: scan the folder, and keep the pool the app logs in
-    /// with. One engine works on one folder of projects.
+    /// `workspace/open`: read the project file or the named deploy file, and
+    /// keep the pool the app logs in with.
     ///
     /// # Errors
     /// Returns `INVALID_PARAMS` for a folder that is not there, `BUSY` while a
-    /// deploy or rollback runs, and `INTERNAL_ERROR` when the folder cannot be
+    /// deploy or rollback runs, and `INTERNAL_ERROR` when a file cannot be
     /// read.
     pub async fn open(&self, params: &WorkspaceOpen) -> Result<WorkspaceOpenResult, ErrorObject> {
         let root = PathBuf::from(&params.root);
@@ -91,39 +91,45 @@ impl Session {
                 format!("{} is not a folder", root.display()),
             ));
         }
-        let found = config::discover(&root).map_err(|err| convert::failed(&err))?;
+        let mut problems = Vec::new();
+        let mut deployables: BTreeMap<String, Deployment> = BTreeMap::new();
+        if let Some(shipdeckfile) = &params.shipdeckfile {
+            let file = PathBuf::from(shipdeckfile);
+            match config::load_deploy(&root, &file, None) {
+                Ok(deployment) => {
+                    deployables.insert(deployment.slug.clone(), deployment);
+                }
+                Err(found) => problems.extend(convert::problems(&found)),
+            }
+        } else {
+            match config::Project::read(&root) {
+                Ok(project) => {
+                    for (name, file) in &project.deploys {
+                        match config::load_deploy(&root, file, Some(name)) {
+                            Ok(deployment) => {
+                                deployables.insert(name.clone(), deployment);
+                            }
+                            Err(found) => problems.extend(convert::problems(&found)),
+                        }
+                    }
+                }
+                Err(found) => problems.extend(convert::problems(&found)),
+            }
+        }
         let answer = WorkspaceOpenResult {
-            deployables: found
-                .deployables
-                .iter()
-                .map(convert::deployable_info)
-                .chain(found.monorepos.iter().map(convert::monorepo_info))
-                .collect(),
-            problems: found.problems.iter().flat_map(convert::problems).collect(),
+            deployables: deployables.values().map(convert::deployable_info).collect(),
+            problems,
         };
         let (questions, inbox) = unbounded_channel();
         let pool = Pool::new(convert::login(params.login.clone()), questions)
             .with_passphrase(passphrase());
-        // The app's flag wins over each shipdeck.yaml's `ssh.shell_env`.
+        // The app's flag wins over each deploy file's `server.ssh.shell_env`.
         let pool = if params.no_shell_env {
             pool.without_shell_env()
         } else {
             pool
         };
         let pool = Arc::new(pool);
-        let mut deployables = BTreeMap::new();
-        for deployable in found.deployables {
-            deployables.insert(
-                deployable.slug.clone(),
-                Deployment::Single(Box::new(deployable)),
-            );
-        }
-        for deployable in found.monorepos {
-            deployables.insert(
-                deployable.slug.clone(),
-                Deployment::Monorepo(Box::new(deployable)),
-            );
-        }
         let replaced = {
             let mut state = self.state();
             if state.operation.is_some() {
@@ -144,7 +150,7 @@ impl Session {
         Ok(answer)
     }
 
-    /// The project called `slug`.
+    /// The deploy called `slug`.
     ///
     /// # Errors
     /// Returns `WORKSPACE_NOT_OPEN` before `workspace/open`, and
@@ -159,36 +165,38 @@ impl Session {
             .ok_or_else(|| convert::unknown_deployable(slug))
     }
 
-    /// Opens release storage without requiring readable live process metadata.
+    /// Opens the deployment folder without a process.
     pub async fn storage(&self, deployment: &Deployment) -> Result<Server, ErrorObject> {
         let pool = self.pool()?;
         let session = pool
-            .get(deployment.endpoint())
+            .get(&deployment.endpoint)
             .await
             .map_err(|err| convert::failed(&err))?;
-        match deployment {
-            Deployment::Single(d) => Ok(Server::new(session, &d.config.service)),
-            Deployment::Monorepo(d) => crate::deploy::apps::servers(&d.config, &session)
-                .map_err(|err| convert::failed(&err))?
-                .into_iter()
-                .next()
-                .ok_or_else(|| convert::failed(&anyhow::anyhow!("no apps"))),
-        }
+        Ok(Server::new(session, deployment.dir().to_string()))
     }
 
-    /// Connects all processes, using saved live settings for monorepos.
+    /// Opens one handle per process app, or the deployment folder for a
+    /// static deploy.
     pub async fn servers(&self, deployment: &Deployment) -> Result<Vec<Server>, ErrorObject> {
         let pool = self.pool()?;
         let session = pool
-            .get(deployment.endpoint())
+            .get(&deployment.endpoint)
             .await
             .map_err(|err| convert::failed(&err))?;
-        match deployment {
-            Deployment::Single(d) => Ok(vec![Server::new(session, &d.config.service)]),
-            Deployment::Monorepo(d) => crate::deploy::apps::live_servers(&d.config, session)
-                .await
-                .map_err(|err| convert::failed(&err)),
+        let names: Vec<String> = deployment
+            .process_apps()
+            .map(|(name, _)| name.to_string())
+            .collect();
+        if names.is_empty() {
+            return Ok(vec![Server::new(session, deployment.dir().to_string())]);
         }
+        names
+            .into_iter()
+            .map(|name| {
+                Server::for_app(deployment, &name, Arc::clone(&session))
+                    .map_err(|err| convert::failed(&err))
+            })
+            .collect()
     }
 
     /// The connections of this workspace.
@@ -273,5 +281,5 @@ fn passphrase() -> Option<String> {
 }
 
 #[cfg(test)]
-#[path = "session_test.rs"]
+#[path = "session_tests.rs"]
 mod tests;

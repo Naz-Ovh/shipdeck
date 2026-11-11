@@ -18,7 +18,7 @@ use shipdeck_protocol::connection::Handle;
 use shipdeck_protocol::message::agent::ServerFacts;
 use shipdeck_protocol::message::request::{SetupAccess, SetupReport, WorkReport};
 
-use shipdeck_engine::config::{Deployable, Discovery};
+use shipdeck_engine::config::Deployment;
 use shipdeck_engine::deploy::report::{
     LogKind, OpEvent, OpId, OpUpdate, Outcome, RollbackQuestion, StepState, UnchangedQuestion, Unit,
 };
@@ -463,7 +463,7 @@ pub struct Toast {
 
 pub struct App {
     pub root: PathBuf,
-    pub deployables: Vec<Deployable>,
+    pub deployables: Vec<Deployment>,
     pub live: Vec<Live>,
     pub list: ListState,
     pub screen: Screen,
@@ -500,19 +500,19 @@ impl App {
     #[must_use]
     pub fn new(
         root: PathBuf,
-        discovery: Discovery,
+        deployables: Vec<Deployment>,
         login: Login,
         engine: Handle,
         fetched: UnboundedSender<Fetched>,
     ) -> Self {
-        let count = discovery.deployables.len();
+        let count = deployables.len();
         let mut list = ListState::default();
         if count > 0 {
             list.select(Some(0));
         }
         Self {
             root,
-            deployables: discovery.deployables,
+            deployables,
             live: vec![Live::Disconnected; count],
             list,
             screen: Screen::Deployables,

@@ -7,18 +7,25 @@ use shipdeck_protocol::message::request::{Initialize, WorkspaceOpen};
 
 use super::run;
 
-/// A `shipdeck.yaml` with nothing to complain about.
+/// A deploy file with nothing to complain about.
 const SAMPLE: &str = "\
 name: Demo
-dir: /opt/demo
-ssh: { host: example.com, user: deploy }
-service: { name: demo, start: node dist/main.js }
-pipeline:
-  pack:
-    files:
-      include:
-        project: [dist]
+server: { ssh: { host: example.com, user: deploy }, dir: /opt/demo }
+apps:
+  web:
+    process: { start: node dist/main.js, systemd: {} }
 ";
+
+/// Writes a project file and its one deploy, under `root`.
+fn write_project(root: &std::path::Path) {
+    std::fs::create_dir_all(root.join("deploy")).unwrap();
+    std::fs::write(
+        root.join("shipdeck.yaml"),
+        "deploys:\n  web: deploy/web.yaml\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("deploy/web.yaml"), SAMPLE).unwrap();
+}
 
 /// What an app sees: its end of the two pipes the engine talks on.
 struct App {
@@ -83,8 +90,7 @@ fn scratch(name: &str) -> std::path::PathBuf {
 /// A workspace of one project, and the app after opening it.
 async fn opened(name: &str) -> (App, std::path::PathBuf) {
     let root = scratch(name);
-    std::fs::create_dir_all(root.join("web")).unwrap();
-    std::fs::write(root.join("web/shipdeck.yaml"), SAMPLE).unwrap();
+    write_project(&root);
     let mut app = App::start();
     let answer = app
         .call(
@@ -268,10 +274,10 @@ async fn an_app_using_the_protocol_crate_talks_to_the_engine() {
     assert_eq!(hello.shipdeck, env!("CARGO_PKG_VERSION"));
 
     let root = scratch("typed");
-    std::fs::create_dir_all(root.join("web")).unwrap();
-    std::fs::write(root.join("web/shipdeck.yaml"), SAMPLE).unwrap();
+    write_project(&root);
     let opened = app
         .workspace_open(&WorkspaceOpen {
+            shipdeckfile: None,
             root: root.to_str().unwrap().to_string(),
             login: Login::Auto,
             no_shell_env: false,
@@ -290,8 +296,7 @@ async fn an_app_using_the_protocol_crate_talks_to_the_engine() {
 #[tokio::test]
 async fn a_request_after_the_open_sees_the_workspace() {
     let root = scratch("order");
-    std::fs::create_dir_all(root.join("web")).unwrap();
-    std::fs::write(root.join("web/shipdeck.yaml"), SAMPLE).unwrap();
+    write_project(&root);
     let mut app = App::start();
     app.send(json!({
         "jsonrpc": "2.0",

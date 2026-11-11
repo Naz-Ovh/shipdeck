@@ -1,0 +1,39 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.1/docs/schema/deploy.schema.json
+# Every field: https://github.com/Naz-Ovh/shipdeck/tree/main/docs/feature/config-v2.md
+
+# A Node.js app: built here; production dependencies are installed on the server.
+name: web
+server:
+  ssh: { host: prod }
+  dir: /opt/web
+
+release:
+  steps:
+    preflight:
+      requires: [npm]
+      local: npm test
+    build:
+      local: [npm ci, npm run build]
+    backup:
+      keep: { open: 3, compressed: 20 }
+    done:
+      local: ./notify.sh "web {{VERSION}} is live"
+    failed:
+      local: ./notify.sh "web failed at $SHIPDECK_STEP"
+
+apps:
+  web:
+    source: .
+    files: [dist, package.json, package-lock.json, .env]
+    exclude: ["**/*.map"]
+    shared: [uploads]
+    process:
+      start: node dist/main.js
+      env: { NODE_ENV: production }
+      env_file: .env
+      systemd: {}
+    steps:
+      setup:
+        server: [npm ci --omit=dev, npm run migrate]
+      health:
+        url: http://127.0.0.1:3000/health

@@ -1,277 +1,84 @@
 ---
-title: The pipeline
-description: The eleven steps of a deploy, what shipdeck does at each one, where your commands run, and what a failure at each step means.
+title: Pipeline
+description: The twelve steps of a deploy, in order, and what runs in each.
 ---
 
-A deploy is always the same eleven steps, in the same order. Some steps are shipdeck's own; the rest also run commands you write under `pipeline` in `shipdeck.yaml`.
+Every deploy runs the same twelve steps. Each step is **your commands first, then
+shipdeck's action**. shipdeck's action is the work the step exists for.
 
 <PipelineSteps />
 
-Nothing live changes before **switch**. A failure in the first seven steps stops the deploy and leaves the running release alone. A failure at switch, restart or health leads to putting the previous release back: after asking you by default, at once with `pipeline.failed.rollback: auto` (see [Health and rollback](/docs/guides/health-and-rollback)).
-
 ## The steps
 
-### 1. Preflight
-
-`Preflight: checking your PC and the server`
-
-On your PC, shipdeck checks that the `project` folder exists and renders the systemd unit once with a sample release, so a mistake in `service.template` shows up now. Then it connects over SSH and reads the server's facts in one script: CPU architecture, glibc version, whether `dir` exists and is writable, free disk space, the live release, its content fingerprint from `release.json`, and the service state.
-
-On a first deploy it creates `dir`, as the SSH user, or with `sudo -n mkdir` and `chown` when the user has passwordless sudo. A `dir` that exists but is not writable stops here (`<user> cannot write to <dir>`). Then it checks:
-
-- the `sudo -n` rights for the five commands it needs as root (skipped when you log in as `root`; see [Server access](/docs/guides/server-access));
-- that `tar`, `zstd` and `sha256sum`, which unpack and check the release, are on the server. A server without them stops here with the command to install them (`apt install zstd`, or `dnf install zstd`; `sha256sum` comes with `coreutils`);
-- that the program `service.start` names, and every program in `pipeline.preflight.requires`, is on the server;
-- that at least 100 MiB are free.
-
-Then your commands: `pipeline.preflight.run.server` in `dir`, then `pipeline.preflight.run.local` in `project`. Last, shipdeck checks that every `pipeline.pack.files.include.deploy` pattern finds something.
-
-A failure stops the deploy. Nothing was built or uploaded, and the live release was not touched.
-
-### 2. Build
-
-`Build: building on your PC`
-
-shipdeck names the release first: version, short git commit, `-dirty` when tracked files have uncommitted changes, and the UTC time. From here on your commands see `SHIPDECK_RELEASE` and `SHIPDECK_VERSION`.
-
-Then it runs `pipeline.build.run.local` in `project`. With no build commands it logs `pipeline.build.run.local is empty; shipping the files as they are`.
-
-After the build it checks what was built: if `pipeline.pack.binary` is set, the binary's CPU and glibc floor are compared with the server's; every `pipeline.pack.files.include.project` pattern must find something.
-
-A failure stops the deploy (`` the build failed: `npm run build` exited with code 1 ``). Nothing reached the server.
-
-### 3. Pack
-
-`Pack: packing the release`
-
-shipdeck renders the real systemd unit, picks what goes into the release (the binary, mode `0755`; `release.json`; `<service>.service`; the files you listed in `pipeline.pack.files`, those whose name starts with `.env` with mode `0600`) and hashes every file with SHA-256.
-
-From the hashes it makes the release's fingerprint, which `release.json` keeps as `content`: the files with their modes and hashes, links, folders, the unit rendered without the release's name, and `shipdeck.yaml`. When it equals the live release's, nothing changed, and shipdeck asks `Deploy anyway?` before making a duplicate. No (the default) stops here with nothing on the server touched; without the TUI the answer is no unless `--allow-unchanged`.
-
-Then it asks the server for the SHA-256 of the same paths in `current/`, computed there and then, for regular files only. A file whose path and hash match stays out of the archive: unpack copies it from the live release. Folders, links, `release.json`, the unit, and files whose names hold a newline, a carriage return or a backslash always go. The rest is packed into one `.tar.zst` in memory, compressed with zstd on every core, and shipdeck checks the server has room: about twice the archive plus the release's whole size.
-
-```
-✔ Pack  312 files · 309 already on the server · 3 to send · 25.0 MiB → 1.2 MiB
-```
-
-With nothing live yet, or when the server cannot hash, every file goes (`nothing is live yet, so every file is sent`). A file that changes on your PC while it is packed stops the deploy. No commands of yours run here. A failure stops the deploy. See [Packing files](/docs/guides/packing-files).
-
-### 4. Upload
-
-`Upload: sending the release`
-
-shipdeck creates `releases/`, `backups/` and `shared/` in `dir` if they are missing, then uploads the archive to `releases/.<id>.tar.zst` over SFTP, with two small files next to it: the receipt `releases/.<id>.sha256`, every file of the release in `sha256sum`'s own format, and for each mode the files to copy from the live release, `releases/.<id>.reuse.<mode>`. When the server has no SFTP subsystem it falls back to `cat` over SSH.
-
-A failure removes what was uploaded and stops.
-
-### 5. Unpack
-
-`Unpack: unpacking into releases/<id>`
-
-The archive is unpacked into a hidden `releases/.<id>.partial` folder. The files the live release already had are copied into it from `current` with a tar pipe, which keeps their modification times (good for ETags) and never hard-links them, so the release a rollback goes back to stays as it is; each gets the mode this release gives it. Then `sha256sum -c` checks every file against the receipt. Only then is the folder renamed to `releases/<id>`, so a half-written or wrong release never looks complete, and the files sent for it are removed. Each `service.shared` folder is then linked into the release, pointing at `shared/<folder>`.
-
-```
-✔ Unpack  releases/v1.4.1-ab12cd3-20261015.120000 · 3 unpacked · 309 copied · verified
-```
-
-If a copied file does not match, because the live release changed between the hashing and the copy, shipdeck removes the half-made release, logs which files, and sends the whole release once (`… · verified · sent whole`). Any other failure removes the release and stops.
-
-### 6. Setup
-
-`Setup: setting up releases/<id>`
-
-The new release is on the server but not live; the old one still serves. shipdeck runs `pipeline.setup.run.server`, then `pipeline.setup.check.server`, in `releases/<id>`. This is where you install dependencies or run migrations.
-
-With no setup commands the step is skipped (`nothing to run`). A failure removes the new release, logs `releases/<id> was removed; <previous> is still live` and stops.
-
-### 7. Backup
-
-`Backup: packing backups/<id>.tar.zst`
-
-The release is set up and still not live. shipdeck packs part of it into `backups/<id>.tar.zst`, on the server, with `tar -I zstd`. `pipeline.backup.files` says what goes in; by default it is what shipdeck shipped: the binary and the files `pipeline.pack.files` picked. `release.json` and the service file are always in; `service.shared` folders never are. What setup made, such as `node_modules`, stays out, because a rollback to the backup runs setup again.
-
-The log says how much it kept, such as `backups/<id>.tar.zst holds 42 of the release's 3180 files (1.2 MiB)`. An `include` pattern that matches nothing is logged as a warning. When the old folder goes in a later **done**, this backup is what stays for rollback. See [Releases](/docs/guides/releases#backups).
-
-With `pipeline.backup.keep.compressed: 0` the step is skipped (`keep.compressed is 0`). A failure removes the new release, its backup included, and stops; the old one keeps serving.
-
-### 8. Switch
-
-`Switch: making it the current release`
-
-shipdeck points `current` at `releases/<id>` in one rename, then installs `current/<service>.service` to `/etc/systemd/system/`, runs `systemctl daemon-reload` and `systemctl enable`. The old process keeps running until the restart.
-
-From here on, a failure leads to the [rollback flow](/docs/guides/health-and-rollback#when-a-step-fails-after-the-switch).
-
-### 9. Restart
-
-`Restart: <service>`
-
-`systemctl restart <service>`. This is the only moment the app is down, usually a second or two. A failure leads to the rollback flow.
-
-### 10. Health
-
-`Health: waiting for the new release to settle`
-
-shipdeck probes the service once a second until it is `active` (and `pipeline.health.url` answers, if set) three times in a row. Then it runs `pipeline.health.check.server` in `current`, then `pipeline.health.check.local` in `project`, retrying every 2 seconds until `timeout_secs`.
-
-A failure leads to the rollback flow. [Health and rollback](/docs/guides/health-and-rollback) has the details.
-
-### 11. Done
-
-`Done: tidying old releases`
-
-The release is live. shipdeck logs `<id> is live`, then tidies old releases as `pipeline.backup.keep` says (see [Releases](/docs/guides/releases#how-many-are-kept)). Then it runs `pipeline.done.run.server` in `current`, then `pipeline.done.run.local` in `project`.
-
-A failure here is only a warning (`pipeline.done: <error>; <id> stays live`). The step shows as warned, the deploy still counts as live, and `failed` does not run.
-
-### Failed
-
-`Failed: running pipeline.failed (after <step>)`
-
-This step is listed only when `pipeline.failed.run.local` has commands. It runs after any run that ended with a failed step: stopped, rolled back, rollback failed, or kept live after a failure. It runs on your PC only, in `project`, because the server may be out of reach. `SHIPDECK_STEP` holds the step that failed and `SHIPDECK_ERROR` the first line of its error.
-
-If nothing failed, it is skipped (`nothing failed`). Its own failure is logged as a warning and does not change the outcome.
-
-`pipeline.failed.rollback` (`ask` or `auto`) says what happens when switch, restart or health fails: ask before putting the previous release back, or do it at once. See [Health and rollback](/docs/guides/health-and-rollback).
-
-## Summary
-
-| # | Step | shipdeck does | your commands |
+| # | Step | When | Shipdeck's action, after your commands |
 | --- | --- | --- | --- |
-| 1 | preflight | checks your PC and the server | `run.server` → `run.local` |
-| 2 | build | names the release | `run.local` |
-| 3 | pack | hashes every file, asks the live release which it has, packs the rest | - |
-| 4 | upload | sends the archive and its receipt to the server | - |
-| 5 | unpack | unpacks it into `releases/<id>`, copies the unchanged files from `current`, checks every file, links `service.shared` | - |
-| 6 | setup | nothing: the old release is still live | `run.server` → `check.server` |
-| 7 | backup | packs `backups/<id>.tar.zst` from the release | - |
-| 8 | switch | points `current` at `releases/<id>`, installs its unit | - |
-| 9 | restart | restarts the service | - |
-| 10 | health | waits until the service is active and `url` answers | `check.server` → `check.local` |
-| 11 | done | tidies old releases (`backup.keep`) | `run.server` → `run.local` |
-| ✱ | failed | a step failed | `run.local` |
+| 1 | `preflight` | every deploy | checks the connection, `requires`, runners and permissions |
+| 2 | `build` | every deploy | names the release, collects and hashes `files` |
+| 3 | `upload` | every deploy | packs, sends, unpacks, links shared folders |
+| 4 | `setup` | every deploy | none; the step is your commands |
+| 5 | `backup` | every deploy | writes `backups/<id>.tar.zst` |
+| 6 | `switch` | every deploy | points `current` at the new release |
+| 7 | `restart` | every deploy | restarts each process |
+| 8 | `nginx` | every deploy | parsed and checked; not built yet |
+| 9 | `health` | every deploy | runs your checks and fetches `health.url` |
+| 10 | `done` | every deploy | removes old releases beyond `backup.keep` |
+| 11 | `rollback` | a failure in 6–9, or by hand | puts an older release back |
+| 12 | `failed` | any failure | none; the step is your commands |
 
-A step takes commands only where it can run them:
+A deploy runs steps 1–10:
 
-| Step | local | server | Server commands run in | Settings | If it fails |
-| --- | --- | --- | --- | --- | --- |
-| preflight | `run` | `run` | `dir` | `requires` | stops; nothing touched |
-| build | `run` | ✘ | - | `version_from` | stops |
-| pack | ✘ | ✘ | - | `binary`, `files` | stops |
-| upload, unpack | ✘ | ✘ | - | - | the release is removed |
-| setup | ✘ | `run`, `check` | `releases/<id>` | - | the release is removed; the old one keeps serving |
-| backup | ✘ | ✘ | - | `files`, `keep` | the release is removed; the old one keeps serving |
-| switch, restart | ✘ | ✘ | - | - | asks, then rolls back |
-| health | `check` | `check` | `current` | `url`, `timeout_secs` | asks, then rolls back |
-| done | `run` | `run` | `current` | - | a warning only |
-| failed | `run` | ✘ | - | `rollback` | logged |
+```text
+preflight → build → upload → setup → backup
+  → switch → restart → nginx → health → done
 
-Local commands always run in `project`. A key that is not in this table, such as `pipeline.build.run.server` or a step named `upload`, is refused before shipdeck starts (see [Config problems](/docs/reference/config-problems)).
+a failure in switch, restart, nginx or health:  → rollback → failed
+a failure in any other step:                    → failed
+```
 
-## How commands run
+## Your commands
 
-Every command is one shell line, run with `sh -c` (local commands on Windows in Git for Windows' `sh.exe`, see [On Windows](/docs/getting-started/installation#on-windows)), so `&&`, pipes and `$VARS` work. Give one command or a list:
+Every step takes `local` and `server`, under `release.steps` and under
+`apps.<app>.steps`. Leave a key out when there is nothing to run.
 
 ```yaml
-pipeline:
-  build:
-    run:
-      local: npm ci && npm run build     # one line
-  setup:
-    run:
-      server:                            # a list, run in order
-        - npm ci --omit=dev
-        - npm run migrate
+release:
+  steps:
+    build:
+      local: npm run build
+apps:
+  api:
+    steps:
+      setup:
+        server: [npm ci --omit=dev, node --check dist/main.js]
 ```
 
-- **Each list item is its own shell.** A `cd` or `export` in one item does not carry into the next. Chain with `&&` when it must.
-- **The first failure stops the list** and fails the step. A command fails when it exits with a code other than 0.
-- **`run` commands run once.** **`check` commands must pass**: in setup they run once after `run`; in health they are retried every 2 seconds until `timeout_secs` runs out.
-- When both sides run in one step, the server side goes first and the local side runs only if it passed.
+Order inside a step: the server commands, then the local ones; the release's, then each
+app's in name order. A failure fails the step, and shipdeck's action does not run. See
+[Commands](/docs/reference/variables) for the runners and where each side runs.
 
-**Local commands** run on your PC in `project`, with input from `/dev/null`. Their output streams into the log line by line. They get the [`SHIPDECK_*` variables](/docs/reference/variables) but not `service.env` or `service.env_file`.
+## Notes
 
-**Server commands** run as the SSH user, each in a small POSIX `sh` script, whatever the login shell is. The script runs under `set -e`, changes into the step's folder, exports `service.env`, reads `service.env_file`, exports the `SHIPDECK_*` variables, then runs your command as written. They never run through `sudo`. See [Environment and secrets](/docs/guides/environment).
+- **build:** the release is named when `build` starts, before your commands, so
+  `{{RELEASE}}`, `{{RELEASE_ID}}` and `{{VERSION}}` work from `build` on.
+- **health:** each try runs your commands, then fetches `health.url`. Apps are checked
+  first, in name order; the release's commands run once every app is healthy.
+- **failed:** `failed.server` runs only when the server can be reached. When it can't,
+  the log says the commands were skipped and the local ones still run.
+- **nginx:** not built yet. A deploy with `nginx:` on any app stops at preflight with
+  "nginx management is not built yet".
+- `setup.check` is gone: list the checks after the commands in `setup.server`.
+- There is no `pack` step. What ships is `files`.
 
-A failed command shows as `` `npm run migrate` exited with code 1 on the server `` (server) or `` `npm test` exited with code 1 `` (local).
+## Where server commands run
 
-## A worked example
+| Step | Release `server` | App `server` |
+| --- | --- | --- |
+| preflight, build, upload, rollback, failed | `{{ROOT}}` | `{{ROOT}}` |
+| setup, backup, switch | `{{RELEASE}}` | `{{APP_RELEASE}}` |
+| restart, nginx, health, done | `{{CURRENT}}` | `{{APP_CURRENT}}` |
 
-A Node app: tests and a database check before anything else, a build on your PC, dependencies and migrations on the server while the old release serves, a health URL and a smoke test, and a message when it is live or when it fails.
+Before `upload` the new release has no folder, so the first steps use `{{ROOT}}`.
+`switch` commands run in the new release, which is not live yet. `rollback` and `failed`
+use `{{ROOT}}`, because the folder they would use may be the broken one.
 
-```yaml title="scripts/deploy/my-api-prod/shipdeck.yaml"
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
-name: My API (prod)
-project: ../../..
-dir: /opt/my-api
-
-ssh:
-  host: prod
-  user: deploy
-
-service:
-  name: my-api
-  start: node dist/main.js
-  env_file: .env
-  env: { NODE_ENV: production }
-  shared: [uploads]
-
-pipeline:
-  preflight:
-    requires: [npm]
-    run:
-      server: pg_isready -q                 # the database answers
-      local: [npm run lint, npm test]
-  build:
-    run:
-      local: [npm ci, npm run build]
-  pack:
-    files:
-      include:
-        project: [dist, package.json, package-lock.json]
-        deploy: [.env]
-      exclude:
-        project: ["**/*.map"]
-  setup:
-    run:
-      server: [npm ci --omit=dev, npm run migrate]
-    check:
-      server: node --check dist/main.js
-  health:
-    url: http://127.0.0.1:3000/health
-    check:
-      server: ./bin/smoke-test
-      local: curl -fsS https://api.example.com/health
-    timeout_secs: 30
-  done:
-    run:
-      local: ./notify.sh "my-api $SHIPDECK_VERSION is live"
-  failed:
-    run:
-      local: './notify.sh "my-api failed at $SHIPDECK_STEP: $SHIPDECK_ERROR"'
-```
-
-What happens when you deploy it:
-
-1. **Preflight** connects to `prod`, finds `node` and `npm`, runs `pg_isready -q` in `/opt/my-api`, then lint and tests on your PC. If the tests fail, nothing leaves your PC.
-2. **Build** names the release from `package.json`, such as `v1.4.0-ab12cd3-20261014.153012`, then runs `npm ci` and `npm run build`.
-3. **Pack**, **upload** and **unpack** put `dist/`, the package files and `.env` into `releases/v1.4.0-…`, with `uploads` linked to `shared/uploads`.
-4. **Setup** installs production dependencies and runs migrations inside the new release. If a migration fails, the release is removed and the old one keeps serving.
-5. **Backup** keeps `dist/`, the package files and `.env` in `backups/<id>.tar.zst`; `node_modules` stays out.
-6. **Switch** and **restart** make it live.
-7. **Health** waits for three healthy probes of the URL, then runs the smoke test on the server and the public check on your PC, for up to 30 seconds in all.
-8. **Done** tidies old releases and sends the message.
-
-If anything fails, `failed` sends the step and the error. Because `node` is a bare name, shipdeck writes its full path into the unit, as found on the server.
-
-<Callout type="warn" title="Migrations and rollback">
-Setup runs before the switch, so a migration has already run when health fails and shipdeck rolls back. A rollback puts the old code back, not the old schema. Keep migrations compatible with the previous release. A manual rollback to a backup runs setup again; to keep a migration out of it, guard it with `SHIPDECK_ACTION` (see [Variables](/docs/reference/variables#migrations-on-deploy-only)).
-</Callout>
-
-## Next
-
-<Cards>
-  <Card title="Health and rollback" href="/docs/guides/health-and-rollback" description="How health decides, and what happens when a release fails after the switch." />
-  <Card title="Variables" href="/docs/reference/variables" description="Every SHIPDECK_* variable and which commands get it." />
-</Cards>
-dir: /opt/my-api
+Local commands run in the project folder (release) and the app's `source` (app).

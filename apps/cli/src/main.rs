@@ -11,12 +11,13 @@ use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 use tokio::sync::mpsc::unbounded_channel;
 
-use shipdeck_engine::config::{self, Discovery, Manager};
+use shipdeck_engine::config::{self, Manager};
 use shipdeck_engine::init::Preset;
 use shipdeck_engine::ssh::Login;
-use shipdeck_protocol::message::{DeployableInfo, Problem};
+use shipdeck_protocol::message::DeployableInfo;
 
 use console::{Choices, Console};
+use naming::{fail, problems, resolve_name, resolve_names, setup_access, setup_password};
 use shipdeck_protocol::message::common::{Login as ProtocolLogin, OnFailure};
 use shipdeck_protocol::message::request::SetupAccess;
 
@@ -24,6 +25,7 @@ mod console;
 mod engine;
 mod init;
 mod man;
+mod naming;
 
 #[cfg(target_env = "musl")]
 #[global_allocator]
@@ -39,25 +41,25 @@ const KEY_ENV: &str = "SHIPDECK_SSH_KEY";
     name = "shipdeck",
     version,
     about = "Build locally, deploy over SSH as a systemd service or PM2 app, roll back any release.",
-    after_help = "Each folder under DEPLOY_ROOT with a shipdeck.yaml is one deployable.\n\
+    after_help = "shipdeck reads shipdeck.yaml or .shipdeck in the folder you run it in, or the\n\
+                  deploy file named by --shipdeckfile. A deploy is one file.\n\
                   Login, first found: --key, --key-text, --password, SHIPDECK_SSH_KEY,\n\
                   SHIPDECK_PASSWORD; else the host's ~/.ssh/config key, then the TUI asks\n\
                   for the password. SHIPDECK_KEY_PASSPHRASE unlocks an encrypted key.\n\
                   deploy, rollback and releases run without the TUI and ask nothing.\n\
-                  init creates a deployable folder; it asks for what its flags leave out.\n\
+                  init writes a project file and a deploy file; it asks for what its flags leave out.\n\
                   man is the full manual: `shipdeck man index`, `man configs`, `man details <KEY>...`.",
-    args_conflicts_with_subcommands = true,
     subcommand_negates_reqs = true
 )]
 struct Cli {
-    /// Folder whose subfolders each hold a shipdeck.yaml
-    #[arg(value_name = "DEPLOY_ROOT", required_unless_present = "schema")]
-    root: Option<PathBuf>,
+    /// A deploy file to use instead of the project file
+    #[arg(long, value_name = "PATH", global = true)]
+    shipdeckfile: Option<PathBuf>,
 
     #[command(flatten)]
     login: LoginArgs,
 
-    /// Print the JSON Schema of shipdeck.yaml, for editor completion
+    /// Print the JSON Schema of the project and deploy files, for editor completion
     #[arg(long)]
     schema: bool,
 
@@ -91,32 +93,28 @@ struct LoginArgs {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Create a deployable folder with a shipdeck.yaml from a preset; asks for what the flags leave out
+    /// Write a project file and a deploy file from a preset; asks for what the flags leave out
     Init(InitArgs),
     /// Run as the engine: it answers the app on stdin and stdout, one message per line
     Engine,
     #[command(flatten)]
     Server(ServerCommand),
-    /// The manual, for people and coding agents: `man index` (topics), `man configs` (shipdeck.yaml), `man details <KEY>...`
+    /// The manual, for people and coding agents: `man index` (topics), `man configs`, `man details <KEY>...`
     Man(man::ManArgs),
 }
 
 /// The commands that log in to a server.
 #[derive(Subcommand)]
 enum ServerCommand {
-    /// Build and deploy one or more deployables, one after another, without the TUI
+    /// Build and deploy one or more deploys, one after another, without the TUI
     Deploy {
-        /// Folder whose subfolders each hold a shipdeck.yaml
-        #[arg(value_name = "DEPLOY_ROOT")]
-        root: PathBuf,
-
-        /// Deployables to deploy, by folder name or `name`; the first failure stops the rest
-        #[arg(value_name = "NAME", required = true)]
+        /// Deploys to deploy, by name; the first failure stops the rest
+        #[arg(value_name = "DEPLOY")]
         names: Vec<String>,
 
-        /// What to do when the new release fails after the switch; overrides `pipeline.failed.rollback`
-        #[arg(long, value_enum, default_value_t = OnFailureArg::Rollback)]
-        on_failure: OnFailureArg,
+        /// What to do when the new release fails after the switch; without it, `release.steps.rollback.mode` decides
+        #[arg(long, value_enum)]
+        on_failure: Option<OnFailureArg>,
 
         /// Deploy even when nothing changed since the live release; without it, such a deploy stops with exit code 6
         #[arg(long)]
@@ -125,55 +123,41 @@ enum ServerCommand {
         #[command(flatten)]
         ssh: SshArgs,
     },
-    /// Switch a deployable to a release already on the server, without the TUI
+    /// Switch a deploy to a release already on the server, without the TUI
     Rollback {
-        /// Folder whose subfolders each hold a shipdeck.yaml
-        #[arg(value_name = "DEPLOY_ROOT")]
-        root: PathBuf,
-
-        /// The deployable, by folder name or `name`
-        #[arg(value_name = "NAME")]
+        /// The deploy, by name
+        #[arg(value_name = "DEPLOY")]
         name: String,
 
         /// The release id to make live, as `shipdeck releases` lists it
-        #[arg(long, value_name = "RELEASE")]
-        to: String,
+        #[arg(value_name = "RELEASE")]
+        release: String,
 
         #[command(flatten)]
         ssh: SshArgs,
     },
     /// List the releases on the server, newest first
     Releases {
-        /// Folder whose subfolders each hold a shipdeck.yaml
-        #[arg(value_name = "DEPLOY_ROOT")]
-        root: PathBuf,
-
-        /// The deployable, by folder name or `name`
-        #[arg(value_name = "NAME")]
-        name: String,
+        /// The deploy, by name
+        #[arg(value_name = "DEPLOY")]
+        name: Option<String>,
 
         #[command(flatten)]
         ssh: SshArgs,
     },
     /// Show Linux, CPU, memory, disk, uptime, and installed tools on a server
     ServerInfo {
-        /// Folder whose subfolders each hold a shipdeck.yaml
-        #[arg(value_name = "DEPLOY_ROOT")]
-        root: PathBuf,
-        /// The deployable, by folder name or `name`
-        #[arg(value_name = "NAME")]
-        name: String,
+        /// The deploy, by name
+        #[arg(value_name = "DEPLOY")]
+        name: Option<String>,
         #[command(flatten)]
         ssh: SshArgs,
     },
     /// Show what an interrupted operation left, and clean it up with --cleanup
     Work {
-        /// Folder whose subfolders each hold a shipdeck.yaml
-        #[arg(value_name = "DEPLOY_ROOT")]
-        root: PathBuf,
-        /// The deployable, by folder name or `name`
-        #[arg(value_name = "NAME")]
-        name: String,
+        /// The deploy, by name
+        #[arg(value_name = "DEPLOY")]
+        name: Option<String>,
         /// Remove the unfinished files this command lists; this flag is the approval
         #[arg(long)]
         cleanup: bool,
@@ -182,12 +166,9 @@ enum ServerCommand {
     },
     /// Print the events saved on the server, oldest first
     Events {
-        /// Folder whose subfolders each hold a shipdeck.yaml
-        #[arg(value_name = "DEPLOY_ROOT")]
-        root: PathBuf,
-        /// The deployable, by folder name or `name`
-        #[arg(value_name = "NAME")]
-        name: String,
+        /// The deploy, by name
+        #[arg(value_name = "DEPLOY")]
+        name: Option<String>,
         /// Only events with a larger sequence number
         #[arg(long, default_value_t = 0)]
         after: i64,
@@ -199,12 +180,9 @@ enum ServerCommand {
     },
     /// Prepare a server once: packages, the project folder, and sudo access
     Setup {
-        /// Folder whose subfolders each hold a shipdeck.yaml
-        #[arg(value_name = "DEPLOY_ROOT")]
-        root: PathBuf,
-        /// The deployable, by folder name or `name`
-        #[arg(value_name = "NAME")]
-        name: String,
+        /// The deploy, by name
+        #[arg(value_name = "DEPLOY")]
+        name: Option<String>,
         /// Password-free sudo for every command, or only the ones shipdeck runs
         #[arg(long, value_enum)]
         access: Option<AccessArg>,
@@ -214,15 +192,29 @@ enum ServerCommand {
         #[command(flatten)]
         ssh: SshArgs,
     },
+    /// Print every path the next release will hold; never connects to the server
+    Tree {
+        /// The deploy, by name
+        #[arg(value_name = "DEPLOY")]
+        name: Option<String>,
+        /// Only one app's folder
+        #[arg(long, value_name = "APP")]
+        app: Option<String>,
+        /// Fold folders deeper than this into `name/ (<count> files)`
+        #[arg(long, value_name = "N")]
+        depth: Option<usize>,
+        /// Run the build steps first, so build output is there
+        #[arg(long)]
+        build: bool,
+        /// One object per path: path, kind, from, local, mode, size
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Args)]
 struct InitArgs {
-    /// Folder whose subfolders each hold a shipdeck.yaml
-    #[arg(value_name = "DEPLOY_ROOT")]
-    root: PathBuf,
-
-    /// The new folder's name, also the service's name, such as my-api
+    /// The deploy's name, also its process name; such as my-api
     #[arg(value_name = "NAME")]
     name: Option<String>,
 
@@ -334,33 +326,41 @@ async fn main() -> Result<ExitCode> {
             std::process::exit(0);
         }
         Some(Command::Server(command)) => command,
-        None => {
-            let root = cli
-                .root
-                .expect("clap requires DEPLOY_ROOT without --schema or a command");
-            return run_tui(root, cli.login).await;
-        }
+        None => return run_tui(cli.shipdeckfile, cli.login).await,
     };
-
-    let (root, ssh) = match &command {
-        ServerCommand::Deploy { root, ssh, .. }
-        | ServerCommand::Rollback { root, ssh, .. }
-        | ServerCommand::Releases { root, ssh, .. }
-        | ServerCommand::ServerInfo { root, ssh, .. }
-        | ServerCommand::Work { root, ssh, .. }
-        | ServerCommand::Events { root, ssh, .. }
-        | ServerCommand::Setup { root, ssh, .. } => (root.as_path(), ssh),
-    };
+    let root = std::env::current_dir().context("reading the current folder")?;
+    if let ServerCommand::Tree {
+        name,
+        app,
+        depth,
+        build,
+        json,
+    } = &command
+    {
+        return run_tree(
+            &root,
+            cli.shipdeckfile.as_deref(),
+            name.as_deref(),
+            app.as_deref(),
+            *depth,
+            *build,
+            *json,
+        )
+        .await;
+    }
+    let ssh = ssh_args(&command);
     let shell_env = !ssh.login.no_shell_env;
     let gitshell = gitshell(&ssh.login);
     let login = login(ssh.login.clone())?;
-    // The engine reports the same problems; checking here keeps the caret
-    // block, the colours and the exact output scripts have seen until now.
-    let Some(_) = discover(root)? else {
-        return Ok(ExitCode::FAILURE);
-    };
     let engine = engine::Engine::start(gitshell.as_deref()).await?;
-    let workspace = engine.open(root, &wire(&login), !shell_env).await?;
+    let workspace = engine
+        .open(
+            &root,
+            &wire(&login),
+            !shell_env,
+            cli.shipdeckfile.as_deref(),
+        )
+        .await?;
     if !workspace.problems.is_empty() {
         return Ok(problems(&workspace.problems));
     }
@@ -380,8 +380,8 @@ async fn main() -> Result<ExitCode> {
             on_failure,
             allow_unchanged,
             ..
-        } => (OnFailure::from(*on_failure), *allow_unchanged),
-        _ => (OnFailure::Rollback, false),
+        } => (on_failure.map(OnFailure::from), *allow_unchanged),
+        _ => (None, false),
     };
     let (connection, mut child) = engine.into_parts();
     let mut console = Console::new(
@@ -398,6 +398,20 @@ async fn main() -> Result<ExitCode> {
     Ok(code)
 }
 
+/// The SSH flags of a command.
+fn ssh_args(command: &ServerCommand) -> &SshArgs {
+    match command {
+        ServerCommand::Deploy { ssh, .. }
+        | ServerCommand::Rollback { ssh, .. }
+        | ServerCommand::Releases { ssh, .. }
+        | ServerCommand::ServerInfo { ssh, .. }
+        | ServerCommand::Work { ssh, .. }
+        | ServerCommand::Events { ssh, .. }
+        | ServerCommand::Setup { ssh, .. } => ssh,
+        ServerCommand::Tree { .. } => unreachable!("tree runs without the server"),
+    }
+}
+
 /// Runs the one command that was chosen.
 async fn run_command(
     console: &mut Console,
@@ -406,66 +420,58 @@ async fn run_command(
     setup: Option<(SetupAccess, Option<String>)>,
 ) -> ExitCode {
     match command {
-        ServerCommand::Deploy { names, .. } => console.deploy(projects, &names).await,
-        ServerCommand::Rollback { name, to, .. } => console.rollback(projects, &name, to).await,
-        ServerCommand::Releases { name, .. } => console.releases(projects, &name).await,
-        ServerCommand::ServerInfo { name, .. } => console.server_info(projects, &name).await,
-        ServerCommand::Work { name, cleanup, .. } => console.work(projects, &name, cleanup).await,
+        ServerCommand::Deploy { names, .. } => {
+            let names = match resolve_names(projects, names) {
+                Ok(names) => names,
+                Err(err) => return fail(&err),
+            };
+            console.deploy(projects, &names).await
+        }
+        ServerCommand::Rollback { name, release, .. } => {
+            console.rollback(projects, &name, release).await
+        }
+        ServerCommand::Releases { name, .. } => {
+            let name = match resolve_name(projects, name.as_deref()) {
+                Ok(name) => name,
+                Err(err) => return fail(&err),
+            };
+            console.releases(projects, &name).await
+        }
+        ServerCommand::ServerInfo { name, .. } => {
+            let name = match resolve_name(projects, name.as_deref()) {
+                Ok(name) => name,
+                Err(err) => return fail(&err),
+            };
+            console.server_info(projects, &name).await
+        }
+        ServerCommand::Work { name, cleanup, .. } => {
+            let name = match resolve_name(projects, name.as_deref()) {
+                Ok(name) => name,
+                Err(err) => return fail(&err),
+            };
+            console.work(projects, &name, cleanup).await
+        }
         ServerCommand::Events {
             name, after, limit, ..
-        } => console.events(projects, &name, after, limit).await,
+        } => {
+            let name = match resolve_name(projects, name.as_deref()) {
+                Ok(name) => name,
+                Err(err) => return fail(&err),
+            };
+            console.events(projects, &name, after, limit).await
+        }
         ServerCommand::Setup { name, .. } => {
+            let name = match resolve_name(projects, name.as_deref()) {
+                Ok(name) => name,
+                Err(err) => return fail(&err),
+            };
             let Some((access, password)) = setup else {
                 unreachable!("setup answers were read above");
             };
             console.setup(projects, &name, access, password).await
         }
+        ServerCommand::Tree { .. } => unreachable!("tree runs without the engine"),
     }
-}
-
-/// `--access`, or the question when there is someone to ask.
-fn setup_access(given: Option<AccessArg>) -> Result<SetupAccess> {
-    if let Some(given) = given {
-        return Ok(given.into());
-    }
-    if !init::can_ask() {
-        return Ok(SetupAccess::Commands);
-    }
-    let chosen = inquire::Select::new(
-        "Sudo access:",
-        vec![
-            "Commands only (password-free sudo for what shipdeck runs)",
-            "Full sudo (password-free sudo for every command)",
-        ],
-    )
-    .prompt()
-    .map_err(|err| anyhow::anyhow!("no access chosen: {err}"))?;
-    Ok(if chosen.starts_with("Full") {
-        SetupAccess::Full
-    } else {
-        SetupAccess::Commands
-    })
-}
-
-/// `--sudo-password`, `SHIPDECK_SUDO_PASSWORD`, or the hidden question.
-fn setup_password(given: Option<String>) -> Result<Option<String>> {
-    if given.is_some() {
-        return Ok(given);
-    }
-    if let Some(password) = std::env::var("SHIPDECK_SUDO_PASSWORD")
-        .ok()
-        .filter(|password| !password.is_empty())
-    {
-        return Ok(Some(password));
-    }
-    if !init::can_ask() {
-        return Ok(None);
-    }
-    let password = inquire::Password::new("Sudo password (blank when sudo needs none):")
-        .without_confirmation()
-        .prompt()
-        .map_err(|err| anyhow::anyhow!("no sudo password entered: {err}"))?;
-    Ok((!password.is_empty()).then_some(password))
 }
 
 /// The login as the protocol carries it: the same four ways in.
@@ -495,18 +501,6 @@ fn gitshell(args: &LoginArgs) -> Option<PathBuf> {
     }
 }
 
-/// What the engine found in a file this program let through: say where, and
-/// stop. Every project in the folder is refused, as the check above does.
-fn problems(found: &[Problem]) -> ExitCode {
-    for problem in found {
-        eprintln!(
-            "{}:{}:{}: {}",
-            problem.file, problem.line, problem.column, problem.message
-        );
-    }
-    ExitCode::FAILURE
-}
-
 /// The flags. With no terminal to ask in, `init` needs on the command line
 /// what it would otherwise ask for.
 fn flags() -> clap::Command {
@@ -522,8 +516,9 @@ fn flags() -> clap::Command {
 
 /// `init` logs in nowhere: it only writes files.
 fn run_init(args: InitArgs) -> Result<ExitCode> {
+    let root = std::env::current_dir().context("reading the current folder")?;
     let given = init::Given {
-        root: args.root,
+        root,
         name: args.name,
         preset: args.preset,
         manager: args.manager.map(Into::into),
@@ -534,28 +529,26 @@ fn run_init(args: InitArgs) -> Result<ExitCode> {
     init::run(given)
 }
 
-async fn run_tui(root: PathBuf, args: LoginArgs) -> Result<ExitCode> {
+async fn run_tui(shipdeckfile: Option<PathBuf>, args: LoginArgs) -> Result<ExitCode> {
+    let root = std::env::current_dir().context("reading the current folder")?;
     let login = login(args.clone())?;
-    // The CLI reads every file for its own error report; the engine answers
-    // with the projects the TUI then follows.
-    if discover(&root)?.is_none() {
-        return Ok(ExitCode::FAILURE);
-    }
     let engine = engine::Engine::start(gitshell(&args).as_deref()).await?;
     let workspace = engine
-        .open(&root, &wire(&login), !args.no_shell_env)
+        .open(
+            &root,
+            &wire(&login),
+            !args.no_shell_env,
+            shipdeckfile.as_deref(),
+        )
         .await?;
+    if !workspace.problems.is_empty() {
+        return Ok(problems(&workspace.problems));
+    }
     let mut deployables = Vec::with_capacity(workspace.deployables.len());
-    let mut monorepos = Vec::new();
     for info in &workspace.deployables {
-        let folder = PathBuf::from(&info.folder);
-        match shipdeck_engine::config::Deployment::load(&folder) {
-            Ok(shipdeck_engine::config::Deployment::Single(found)) => {
-                deployables.push(*found);
-            }
-            Ok(shipdeck_engine::config::Deployment::Monorepo(found)) => {
-                monorepos.push((info.slug.clone(), found.config.apps.len()));
-            }
+        let file = PathBuf::from(&info.folder);
+        match config::load_deploy(&root, &file, Some(&info.slug)) {
+            Ok(deployment) => deployables.push(deployment),
             Err(problems) => {
                 let base = std::env::current_dir().unwrap_or_default();
                 let color =
@@ -573,18 +566,8 @@ async fn run_tui(root: PathBuf, args: LoginArgs) -> Result<ExitCode> {
             }
         }
     }
-    for (slug, apps) in &monorepos {
-        eprintln!(
-            "{slug}: {apps}-app monorepo. The TUI cannot show monorepos yet; \
-             deploy it with `shipdeck deploy {} {slug}`.",
-            root.display()
-        );
-    }
     if deployables.is_empty() {
-        if monorepos.is_empty() {
-            bail!("no deployables to show under {}", root.display());
-        }
-        bail!("the TUI cannot show monorepos yet; run the deploy command above");
+        bail!("there is no deploy to show");
     }
     let (connection, mut child) = engine.into_parts();
     let handle = connection.handle();
@@ -599,17 +582,7 @@ async fn run_tui(root: PathBuf, args: LoginArgs) -> Result<ExitCode> {
             fetched: fetched_tx.clone(),
         },
     );
-    let app = shipdeck_tui::App::new(
-        root,
-        Discovery {
-            deployables,
-            monorepos: Vec::new(),
-            problems: Vec::new(),
-        },
-        login,
-        handle,
-        fetched_tx,
-    );
+    let app = shipdeck_tui::App::new(root, deployables, login, handle, fetched_tx);
     shipdeck_tui::run(
         app,
         shipdeck_tui::Inbox {
@@ -621,6 +594,81 @@ async fn run_tui(root: PathBuf, args: LoginArgs) -> Result<ExitCode> {
     .await?;
     let _ = child.wait().await;
     Ok(ExitCode::SUCCESS)
+}
+
+/// Prints the release tree; never connects to the server.
+#[allow(clippy::too_many_arguments)]
+async fn run_tree(
+    root: &Path,
+    shipdeckfile: Option<&Path>,
+    name: Option<&str>,
+    app: Option<&str>,
+    depth: Option<usize>,
+    build: bool,
+    json: bool,
+) -> Result<ExitCode> {
+    let file = deploy_file(root, shipdeckfile, name)?;
+    let deployment = config::load_deploy(root, &file, name).map_err(|problems| {
+        let color = std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+        anyhow::anyhow!(
+            "{}",
+            config::render(&[problems], root, color, "shipdeck did not read the deploy")
+        )
+    })?;
+    let options = shipdeck_engine::tree::Options {
+        app: app.map(str::to_string),
+        depth,
+        build,
+        json,
+    };
+    let outcome = shipdeck_engine::tree::run(&deployment, &options).await?;
+    print!("{}", outcome.text);
+    Ok(if outcome.missing.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
+}
+
+/// The deploy file to read: `--shipdeckfile`, or the deploy in the project
+/// file, or the only deploy a project file names.
+fn deploy_file(root: &Path, shipdeckfile: Option<&Path>, name: Option<&str>) -> Result<PathBuf> {
+    if let Some(file) = shipdeckfile {
+        return Ok(file.to_path_buf());
+    }
+    let project = config::Project::read(root).map_err(|problems| {
+        let color = std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+        anyhow::anyhow!(
+            "{}",
+            config::render(&[problems], root, color, "shipdeck did not start")
+        )
+    })?;
+    match name {
+        Some(name) => project
+            .deploy_file(name)
+            .map(Path::to_path_buf)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "the project has no deploy named {name}; it has {}",
+                    project
+                        .deploys
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }),
+        None => match project.deploys.values().collect::<Vec<_>>().as_slice() {
+            [one] => Ok((*one).clone()),
+            many => Err(anyhow::anyhow!(
+                "name the deploy: {}",
+                many.iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+        },
+    }
 }
 
 fn login(args: LoginArgs) -> Result<Login> {
@@ -647,26 +695,6 @@ fn login(args: LoginArgs) -> Result<Login> {
     })
 }
 
-/// Every deployable under `root`, or `None` once every problem in every
-/// file is printed: nothing runs from a config shipdeck cannot fully read.
-fn discover(root: &Path) -> Result<Option<Discovery>> {
-    if !root.is_dir() {
-        bail!("{} is not a folder", root.display());
-    }
-    let discovery = config::discover(root)
-        .with_context(|| format!("looking for deployables in {}", root.display()))?;
-    if discovery.problems.is_empty() {
-        return Ok(Some(discovery));
-    }
-    let base = std::env::current_dir().unwrap_or_default();
-    let color = std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none();
-    eprint!(
-        "{}",
-        config::render(&discovery.problems, &base, color, "shipdeck did not start")
-    );
-    Ok(None)
-}
-
 /// `~/.ssh/id_ed25519` → `/home/me/.ssh/id_ed25519`; zsh expands `~` only
 /// at the start of a word, not after `--key=`.
 fn expand_home(path: PathBuf) -> PathBuf {
@@ -677,5 +705,5 @@ fn expand_home(path: PathBuf) -> PathBuf {
 }
 
 #[cfg(test)]
-#[path = "main_test.rs"]
+#[path = "main_tests.rs"]
 mod tests;

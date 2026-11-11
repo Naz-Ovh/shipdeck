@@ -84,7 +84,7 @@ SUDO_COMMANDS=(
   "systemctl daemon-reload"
   "systemctl enable $SERVICE"
   "systemctl restart $SERVICE"
-  "install -m 0644 $APP_DIR/current/$SERVICE.service /etc/systemd/system/$SERVICE.service"
+  "install -m 0644 $APP_DIR/current/.shipdeck/$SERVICE.service /etc/systemd/system/$SERVICE.service"
   "journalctl -u $SERVICE -n 30 --no-pager"
 )
 # Stopping, starting and following the log of the service by hand.

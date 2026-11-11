@@ -1,4 +1,4 @@
 {
   "title": "Reference",
-  "pages": ["shipdeck-yaml", "variables", "cli", "screens", "server-layout", "service-template", "config-problems"]
+  "pages": ["config", "variables", "cli", "screens", "server-layout", "config-problems"]
 }

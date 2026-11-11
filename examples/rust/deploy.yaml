@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.1/docs/schema/deploy.schema.json
+# Every field: https://github.com/Naz-Ovh/shipdeck/tree/main/docs/feature/config-v2.md
+
+# A Rust service: compiled here, only the binary and its .env travel.
+name: my-api
+server:
+  ssh: { host: prod, user: deploy }
+  dir: /opt/my-api
+
+apps:
+  my-api:
+    source: .
+    files: [.env]
+    binary: target/x86_64-unknown-linux-gnu/release/my-api
+    process:
+      systemd: {}
+    steps:
+      health:
+        url: http://127.0.0.1:8080/health
+
+release:
+  steps:
+    build:
+      local: cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31
+    health:
+      timeout_secs: 30

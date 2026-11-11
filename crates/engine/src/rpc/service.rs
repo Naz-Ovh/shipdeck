@@ -82,7 +82,7 @@ pub async fn close(session: &Session, id: Id, params: Value) {
         let asked: ConnectionClose = convert::params(params)?;
         let deployable = session.deployment(&asked.deployable)?;
         let pool = session.pool()?;
-        pool.close(deployable.endpoint()).await;
+        pool.close(&deployable.endpoint).await;
         convert::value(&Done {})
     }
     .await;

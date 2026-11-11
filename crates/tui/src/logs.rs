@@ -30,7 +30,9 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
     let block = theme::panel(
         format!(
             "Logs · {} · {}",
-            deployable.config.service.name,
+            deployable
+                .first_process()
+                .unwrap_or_else(|| deployable.name()),
             deployable.endpoint.label()
         ),
         true,

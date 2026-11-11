@@ -80,15 +80,17 @@ impl Engine {
         root: &Path,
         login: &Login,
         no_shell_env: bool,
+        shipdeckfile: Option<&Path>,
     ) -> Result<WorkspaceOpenResult> {
         self.connection
             .workspace_open(&WorkspaceOpen {
                 root: root.display().to_string(),
+                shipdeckfile: shipdeckfile.map(|file| file.display().to_string()),
                 login: login.clone(),
                 no_shell_env,
             })
             .await
-            .context("opening the deploy root")
+            .context("opening the project")
     }
 
     /// The pipe, for the command that drives it, and the process to wait for.

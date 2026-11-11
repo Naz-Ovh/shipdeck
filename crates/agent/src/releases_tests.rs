@@ -17,7 +17,12 @@ fn folder(name: &str) -> std::path::PathBuf {
 async fn lists_open_releases_and_backups() {
     let root = folder("releases");
     std::fs::create_dir_all(root.join("releases/v1/nested")).expect("release");
-    std::fs::write(root.join("releases/v1/release.json"), "{\"version\":\"1\"}").expect("manifest");
+    std::fs::create_dir_all(root.join("releases/v1/.shipdeck")).expect("settings");
+    std::fs::write(
+        root.join("releases/v1/.shipdeck/release.json"),
+        "{\"version\":\"1\"}",
+    )
+    .expect("manifest");
     std::fs::write(root.join("releases/v1/nested/file"), "abc").expect("file");
     std::fs::create_dir_all(root.join("backups")).expect("backups");
     std::fs::write(root.join("backups/v1.tar.zst"), "zip").expect("backup");

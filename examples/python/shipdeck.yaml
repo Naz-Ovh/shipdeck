@@ -1,34 +1,5 @@
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.1/docs/schema/deploy.schema.json
-# A Python app: the source ships as it is; the server builds its virtualenv.
-name: Reports (prod)
-project: ../../../reports
-dir: /opt/reports
+# The project file: its deploys by name.
+# Rules: docs/feature/config-v2.md
 
-ssh:
-  host: prod
-  user: deploy
-
-service:
-  name: reports
-  start: .venv/bin/python -m app
-  env_file: .env
-
-pipeline:
-  preflight:
-    requires: [python3]
-    run:
-      local: python3 -m pytest -q
-  pack:
-    files:
-      include:
-        project: [.]              # the whole project...
-        deploy: [.env]
-      exclude:
-        project: [tests, "**/__pycache__", .venv, "**/*.pyc"]   # ...but these
-  setup:
-    run:
-      server:
-        - python3 -m venv .venv
-        - .venv/bin/pip install -q -r requirements.txt
-    check:
-      server: .venv/bin/python -c "import app"
+deploys:
+  production: deploy.yaml

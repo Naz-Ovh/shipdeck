@@ -1,5 +1,5 @@
-//! The deployables found under the root, with live status and the selected
-//! one's settings.
+//! The deploys of the project, with live status and the selected one's
+//! settings.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -7,8 +7,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{HighlightSpacing, List, ListItem, Paragraph, Wrap};
 
-use shipdeck_engine::bundle;
-use shipdeck_engine::config::{Commands, DeployConfig, Deployable, ROLLBACK_ANSWER_SECS, Rollback};
+use shipdeck_engine::config::{Command, Deployment, Manager, Program, RollbackMode};
 use shipdeck_engine::human;
 use shipdeck_engine::release::ReleaseName;
 use shipdeck_engine::ssh::Login;
@@ -29,11 +28,11 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
         .deployables
         .iter()
         .zip(&app.live)
-        .map(|(deployable, live)| item(deployable, live, app.tick))
+        .map(|(deployment, live)| item(deployment, live, app.tick))
         .collect();
     let list = List::new(items)
         .block(theme::panel(
-            format!("Deployables · {}", app.deployables.len()),
+            format!("Deploys · {}", app.deployables.len()),
             true,
         ))
         .highlight_style(Style::new().bg(SURFACE))
@@ -55,8 +54,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     }
 }
 
-fn item<'a>(deployable: &'a Deployable, live: &Live, tick: u64) -> ListItem<'a> {
-    let config = &deployable.config;
+fn item<'a>(deployment: &'a Deployment, live: &Live, tick: u64) -> ListItem<'a> {
     let (dot, dot_color) = match live {
         Live::Ready(status) if status.current.is_some() => {
             ("●", theme::service_color(&status.active))
@@ -67,15 +65,16 @@ fn item<'a>(deployable: &'a Deployable, live: &Live, tick: u64) -> ListItem<'a> 
         Live::Disconnected => ("○", theme::FAINT),
     };
     let summary = live_summary(live, tick);
+    let apps = deployment.app_names().join(", ");
     ListItem::new(Text::from(vec![
         Line::from(vec![
             Span::styled(format!("{dot} "), theme::bold(dot_color)),
-            Span::styled(config.name.clone(), theme::bold(TEXT)),
+            Span::styled(deployment.name().to_string(), theme::bold(TEXT)),
         ]),
         Line::from(vec![
             Span::raw("  "),
-            Span::styled(deployable.endpoint.label(), theme::muted()),
-            Span::styled(format!("  {}", deployable.slug), theme::faint()),
+            Span::styled(deployment.endpoint.label(), theme::muted()),
+            Span::styled(format!("  {apps}"), theme::faint()),
         ]),
         Line::from([vec![Span::raw("  ")], summary].concat()),
         Line::default(),
@@ -124,28 +123,26 @@ fn live_summary(live: &Live, tick: u64) -> Vec<Span<'static>> {
 fn details(
     frame: &mut Frame,
     area: Rect,
-    deployable: &Deployable,
+    deployment: &Deployment,
     live: &Live,
     login: &Login,
     tick: u64,
     facts: Option<&ServerFacts>,
     work: Option<&WorkReport>,
 ) {
-    let config = &deployable.config;
-    let service = &config.service;
     let mut lines = vec![
         Line::from(Span::styled(
-            config.name.clone(),
+            deployment.name().to_string(),
             theme::bold(ACCENT).add_modifier(Modifier::UNDERLINED),
         )),
         Line::from(Span::styled(
-            deployable.folder.display().to_string(),
+            deployment.file.display().to_string(),
             theme::faint(),
         )),
     ];
 
     section(&mut lines, "Target");
-    let endpoint = &deployable.endpoint;
+    let endpoint = &deployment.endpoint;
     let mut ssh = vec![Span::styled(endpoint.label(), theme::text())];
     if endpoint.is_alias() {
         ssh.push(Span::styled(
@@ -172,48 +169,77 @@ fn details(
     field(
         &mut lines,
         "folder",
-        vec![Span::styled(service.dir.clone(), theme::text())],
-    );
-    let mut unit = vec![Span::styled(
-        format!("{} · {}", service.name, service.manager.label()),
-        theme::text(),
-    )];
-    if let Live::Ready(status) = live
-        && !status.active.is_empty()
-    {
-        unit.push(Span::raw("  "));
-        unit.push(theme::badge(
-            &status.active,
-            theme::service_color(&status.active),
-        ));
-    }
-    field(&mut lines, "service", unit);
-    field(
-        &mut lines,
-        "runs as",
-        vec![Span::styled(deployable.run_as().to_string(), theme::text())],
-    );
-    field(
-        &mut lines,
-        "start",
-        vec![Span::styled(
-            bundle::start_line(deployable, None),
-            theme::text(),
-        )],
+        vec![Span::styled(deployment.dir().to_string(), theme::text())],
     );
     field(&mut lines, "live", live_summary(live, tick));
 
+    apps_section(&mut lines, deployment);
+
     server_section(&mut lines, facts);
     work_section(&mut lines, work);
-    pipeline_section(&mut lines, config);
-    policy_section(&mut lines, config, deployable);
+    steps_section(&mut lines, deployment);
+    policy_section(&mut lines, deployment);
 
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
-            .block(theme::panel(deployable.slug.clone(), false)),
+            .block(theme::panel(deployment.slug.clone(), false)),
         area,
     );
+}
+
+fn apps_section(lines: &mut Vec<Line<'static>>, deployment: &Deployment) {
+    section(lines, "Apps");
+    for (name, app) in deployment.apps() {
+        let kind = if app.process.is_some() {
+            let manager = deployment
+                .manager(name)
+                .map_or("no manager", Manager::label);
+            format!("process · {manager} · {}", deployment.process_name(name))
+        } else {
+            "static".to_string()
+        };
+        field(
+            lines,
+            name,
+            vec![
+                Span::styled(kind, theme::text()),
+                Span::styled(
+                    format!("  {}", deployment.source(name).display()),
+                    theme::faint(),
+                ),
+            ],
+        );
+        if let Some((program, rest)) = deployment.start(name) {
+            let program = match program {
+                Program::Tool(name) => name,
+                Program::Absolute(path) | Program::InRelease(path) => path,
+            };
+            let start = if rest.is_empty() {
+                program
+            } else {
+                format!("{program} {rest}")
+            };
+            field(lines, "", vec![Span::styled(start, theme::muted())]);
+        }
+        if let Some(url) = &app.steps.health.url {
+            field(
+                lines,
+                "",
+                vec![Span::styled(format!("health {url}"), theme::faint())],
+            );
+        }
+        if !app.shared.is_empty() {
+            field(
+                lines,
+                "",
+                vec![Span::styled(
+                    format!("shared: {}", app.shared.join(", ")),
+                    theme::faint(),
+                )],
+            );
+        }
+    }
 }
 
 /// The server's own numbers, once the agent has answered.
@@ -332,90 +358,52 @@ fn work_section(lines: &mut Vec<Line<'static>>, work: Option<&WorkReport>) {
     }
 }
 
-/// Pipeline rows: each step, where it runs and what it does.
-fn pipeline_section(lines: &mut Vec<Line<'static>>, config: &DeployConfig) {
-    section(lines, "Pipeline");
-    let pipeline = &config.pipeline;
-    let mut step = Step::new(lines);
-    step.commands("preflight", "server", &pipeline.preflight.run.server);
-    step.commands("preflight", "local", &pipeline.preflight.run.local);
-    if !pipeline.preflight.requires.is_empty() {
-        step.text("preflight", "needs", pipeline.preflight.requires.join(", "));
-    }
-    if pipeline.build.run.local.is_empty() {
-        step.faint("build", "nothing to build");
-    } else {
-        step.commands("build", "local", &pipeline.build.run.local);
-    }
-    let pack = &pipeline.pack;
-    if let Some(binary) = &pack.binary {
-        step.text("pack", "binary", binary.clone());
-    }
-    for (side, list) in [
-        ("project", &pack.files.include.project),
-        ("deploy", &pack.files.include.deploy),
-    ] {
-        if !list.is_empty() {
-            step.text("pack", side, list.join(", "));
+/// The release and app commands, step by step.
+fn steps_section(lines: &mut Vec<Line<'static>>, deployment: &Deployment) {
+    section(lines, "Steps");
+    let mut last = "";
+    let mut rows = 0;
+    for step in shipdeck_engine::deploy::Step::ALL {
+        let scopes = shipdeck_engine::deploy::scopes(deployment, step);
+        for scope in scopes {
+            let prefix = match scope.app {
+                Some(name) => format!("{name}/"),
+                None => String::new(),
+            };
+            for (side, list) in [("server", scope.server), ("local", scope.local)] {
+                for command in list.iter() {
+                    let name = if step.name() == last { "" } else { step.name() };
+                    last = step.name();
+                    let color = match side {
+                        "local" => OK,
+                        _ => VIOLET,
+                    };
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("  {name:<10}"), theme::text()),
+                        Span::styled(format!("{:<7}", step.key()), theme::faint()),
+                        Span::styled(format!("{prefix}{side}: "), Style::new().fg(color)),
+                        Span::styled(command_text(command), theme::text()),
+                    ]));
+                    rows += 1;
+                }
+            }
         }
     }
-    let excluded: Vec<&str> = pack
-        .files
-        .exclude
-        .project
-        .iter()
-        .chain(&pack.files.exclude.deploy)
-        .map(String::as_str)
-        .collect();
-    if !excluded.is_empty() {
-        step.text("pack", "leaves", excluded.join(", "));
+    if rows == 0 {
+        field(
+            lines,
+            "steps",
+            vec![Span::styled(
+                "no commands; shipdeck does the work",
+                theme::faint(),
+            )],
+        );
     }
-    step.commands("setup", "server", &pipeline.setup.run.server);
-    step.commands("setup", "check", &pipeline.setup.check.server);
-    let backup = &pipeline.backup;
-    if backup.keep.compressed == 0 {
-        step.faint("backup", "none: keep.compressed is 0");
-    } else {
-        let files = &backup.files;
-        let mut takes: Vec<&str> = Vec::new();
-        if files.deployed {
-            takes.push("deployed files");
-        }
-        takes.extend(files.include.iter().map(String::as_str));
-        step.text("backup", "takes", takes.join(", "));
-        if !files.exclude.is_empty() {
-            step.text("backup", "leaves", files.exclude.join(", "));
-        }
-    }
-    let health = &pipeline.health;
-    let waits = match &health.url {
-        Some(url) => format!("{url} · {}s", health.timeout_secs),
-        None if config.service.is_static() => {
-            format!("files served · {}s", health.timeout_secs)
-        }
-        None => format!(
-            "{} active · {}s",
-            config.service.manager.label(),
-            health.timeout_secs
-        ),
-    };
-    step.text("health", "waits", waits);
-    step.commands("health", "server", &health.check.server);
-    step.commands("health", "local", &health.check.local);
-    step.commands("done", "server", &pipeline.done.run.server);
-    step.commands("done", "local", &pipeline.done.run.local);
-    let rollback = match pipeline.failed.rollback {
-        Rollback::Ask => format!("asks, then rolls back after {ROLLBACK_ANSWER_SECS}s"),
-        Rollback::Auto => "rolls back at once".to_string(),
-    };
-    step.text("failed", "policy", rollback);
-    step.commands("failed", "local", &pipeline.failed.run.local);
 }
 
-/// Policy rows: what is kept, linked and used to start the service.
-fn policy_section(lines: &mut Vec<Line<'static>>, config: &DeployConfig, deployable: &Deployable) {
-    let service = &config.service;
-    let keep = &config.pipeline.backup.keep;
+/// Policy rows: what is kept, linked and used to start the processes.
+fn policy_section(lines: &mut Vec<Line<'static>>, deployment: &Deployment) {
+    let keep = deployment.keep();
     section(lines, "Policy");
     field(
         lines,
@@ -425,75 +413,34 @@ fn policy_section(lines: &mut Vec<Line<'static>>, config: &DeployConfig, deploya
             theme::text(),
         )],
     );
-    if !service.shared.is_empty() {
+    let shared = &deployment.deploy.release.shared;
+    if !shared.is_empty() {
         field(
             lines,
             "shared",
-            vec![Span::styled(service.shared.join(", "), theme::text())],
+            vec![Span::styled(shared.join(", "), theme::text())],
         );
     }
-    if let Some(file) = &service.env_file {
-        field(
-            lines,
-            "env file",
-            vec![Span::styled(file.clone(), theme::text())],
-        );
-    }
-    if let Some(path) = deployable.served_path() {
-        field(lines, "serves", vec![Span::styled(path, theme::text())]);
-        return;
-    }
-    let unit = if deployable.unit_template_path().is_file() {
-        "service.template"
-    } else {
-        "built-in template"
+    let mode = match deployment.rollback_mode() {
+        RollbackMode::Ask => format!("asks, then rolls back after {}s", deployment.ask_secs()),
+        RollbackMode::Auto => "rolls back at once".to_string(),
+        RollbackMode::Off => "never rolls back on its own".to_string(),
     };
-    field(lines, "unit", vec![Span::styled(unit, theme::text())]);
+    field(lines, "rollback", vec![Span::styled(mode, theme::text())]);
+    field(
+        lines,
+        "releases",
+        vec![Span::styled(
+            format!("{} apps", deployment.deploy.apps.len()),
+            theme::text(),
+        )],
+    );
 }
 
-/// Pipeline rows: the step's name once, then where each line runs.
-struct Step<'a> {
-    lines: &'a mut Vec<Line<'static>>,
-    last: &'static str,
-}
-
-impl<'a> Step<'a> {
-    fn new(lines: &'a mut Vec<Line<'static>>) -> Self {
-        Self { lines, last: "" }
-    }
-
-    fn row(&mut self, step: &'static str, side: &str, value: Span<'static>) {
-        let name = if step == self.last { "" } else { step };
-        self.last = step;
-        let side_color = match side {
-            "local" => OK,
-            "server" | "check" => VIOLET,
-            _ => MUTED,
-        };
-        self.lines.push(Line::from(vec![
-            Span::styled(format!("  {name:<10}"), theme::text()),
-            Span::styled(format!("{side:<8}"), Style::new().fg(side_color)),
-            value,
-        ]));
-    }
-
-    fn commands(&mut self, step: &'static str, side: &str, commands: &Commands) {
-        for (index, command) in commands.iter().enumerate() {
-            let side = if index == 0 { side } else { "" };
-            self.row(
-                step,
-                side,
-                Span::styled(command.trim().to_string(), theme::text()),
-            );
-        }
-    }
-
-    fn text(&mut self, step: &'static str, side: &str, text: String) {
-        self.row(step, side, Span::styled(text, theme::text()));
-    }
-
-    fn faint(&mut self, step: &'static str, text: &str) {
-        self.row(step, "", Span::styled(text.to_string(), theme::faint()));
+fn command_text(command: &Command) -> String {
+    match command {
+        Command::Sh(text) => text.trim().to_string(),
+        Command::Runner { runner, code } => format!("{}: {}", runner.key(), code.trim()),
     }
 }
 
@@ -514,28 +461,24 @@ fn field(lines: &mut Vec<Line<'static>>, name: &str, value: Vec<Span<'static>>) 
 fn empty(frame: &mut Frame, area: Rect, app: &App) {
     let root = app.root.display().to_string();
     let lines = vec![
-        Line::from(Span::styled("No deployables yet", theme::bold(ACCENT))),
+        Line::from(Span::styled("No deploys yet", theme::bold(ACCENT))),
         Line::default(),
         Line::from(Span::styled(
-            format!("shipdeck looks for folders with a shipdeck.yaml inside {root}"),
+            format!("shipdeck reads {root}/shipdeck.yaml (or .shipdeck)"),
             theme::text(),
         )),
         Line::default(),
+        Line::from(Span::styled("deploys:", Style::new().fg(VIOLET))),
         Line::from(Span::styled(
-            format!("{root}/server-prod/shipdeck.yaml"),
-            Style::new().fg(VIOLET),
-        )),
-        Line::from(Span::styled(
-            format!("{root}/server-prod/.env"),
+            "  production: deploy/production.yaml",
             Style::new().fg(VIOLET),
         )),
         Line::default(),
         Line::from(Span::styled(
-            "The README and examples/ show every shipdeck.yaml field.",
+            "The README and examples/ show every field.",
             theme::muted(),
         )),
     ];
-    // A longer hint than the screen saturates instead of wrapping.
     let height = u16::try_from(lines.len() + 4)
         .unwrap_or(u16::MAX)
         .min(area.height);

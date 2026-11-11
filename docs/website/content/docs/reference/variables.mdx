@@ -1,64 +1,100 @@
 ---
 title: Variables
-description: The SHIPDECK_* variables your pipeline commands see, which commands get which, and how service.env and the env file reach server commands.
+description: The placeholders and SHIPDECK_* variables your commands see, which commands get which, and how an app's environment reaches server commands.
 ---
 
-Every command you write under `pipeline` runs with a set of `SHIPDECK_*` variables that say what is being deployed, where, and at which step. Server commands also get the app's own environment.
+Every string in a deploy file can use `{{NAME}}` placeholders, and every command also gets
+each one as an environment variable. Server commands also get the app's own environment.
+
+## Placeholders
+
+shipdeck replaces a placeholder before it uses the string. It works in paths, commands,
+`env` values, nginx settings and `health.url`, and in `process.systemd.template`.
+
+| Placeholder | Value | Where it has a value |
+| --- | --- | --- |
+| `{{ROOT}}` | `/opt/shop`, the server `dir` | everywhere |
+| `{{CURRENT}}` | `/opt/shop/current` | everywhere |
+| `{{SHARED}}` | `/opt/shop/shared` | everywhere |
+| `{{BACKUPS}}` | `/opt/shop/backups` | everywhere |
+| `{{RELEASE}}` | `/opt/shop/releases/<id>` | from `build` on |
+| `{{RELEASE_ID}}` | `v1.4.0-ab12cd3-20261110.120000` | from `build` on |
+| `{{VERSION}}` | `1.4.0` | from `build` on |
+| `{{NAME}}` | `shop` | everywhere |
+| `{{HOST}}` | `prod`, `server.ssh.host` as written | everywhere |
+| `{{PROJECT}}` | the project folder on your PC | everywhere |
+| `{{CONFIG}}` | the deploy file's folder on your PC | everywhere |
+| `{{APP}}` | `api` | inside an app |
+| `{{APP_CURRENT}}` | `/opt/shop/current/apps/api` | inside an app |
+| `{{APP_RELEASE}}` | `/opt/shop/releases/<id>/apps/api` | inside an app, from `build` on |
+| `{{APP_SHARED}}` | `/opt/shop/shared/apps/api` | inside an app |
+| `{{SOURCE}}` | the app's source folder on your PC | inside an app |
+| `{{PROCESS}}` | `shop-api` | inside a process app |
+
+Rules:
+
+- A placeholder is `{{`, a name in capital letters, digits and `_`, then `}}`. Spaces inside
+  are allowed: `{{ ROOT }}` is `{{ROOT}}`. Other text with braces, such as JavaScript or
+  Python, is left alone.
+- An unknown name is an error that lists the known ones.
+- A name used where it has no value is an error. For example `{{APP}}` in `release:`, or
+  `{{RELEASE}}` in `preflight`: the release is named at the start of `build`.
+- shipdeck replaces the text as it is and adds no quotes. A path may hold spaces, so quote it
+  in a shell command: `cd "{{PROJECT}}"`.
+- Every placeholder is checked when the file is read, before anything runs.
 
 ## SHIPDECK_* variables
 
+A script file cannot see placeholders, so every command also gets each one as
+`SHIPDECK_<NAME>`: `{{CURRENT}}` is `$SHIPDECK_CURRENT`, `{{APP_SHARED}}` is
+`$SHIPDECK_APP_SHARED`. Four values change while a deploy runs, so they exist only as
+variables:
+
 | Variable | Value | When it is set |
 | --- | --- | --- |
-| `SHIPDECK_ACTION` | `deploy`, or `rollback` for a manual rollback from the Releases screen | always |
-| `SHIPDECK_STEP` | The step running the command: `preflight`, `build`, `setup`, `health`, `done`. In `failed` commands: the step that failed. | always |
-| `SHIPDECK_NAME` | `name` from shipdeck.yaml | always |
-| `SHIPDECK_SERVICE` | `service.name` | always |
-| `SHIPDECK_HOST` | `ssh.host` as written: the alias, not the address it resolves to | always |
-| `SHIPDECK_APP_DIR` | `dir` | always |
-| `SHIPDECK_SHARED_DIR` | `dir` followed by `/shared` | always |
-| `SHIPDECK_RELEASE` | The release id, such as `v1.4.0-ab12cd3-20261014.153012` | deploy: from build on, so not in preflight. Manual rollback: the target, from the start. |
-| `SHIPDECK_VERSION` | The version part of the id, such as `1.4.0` | as `SHIPDECK_RELEASE`. In a rollback, only when the target's id parses. |
-| `SHIPDECK_PREVIOUS` | The release that was live before this run | once known (preflight commands already see it), and only if something was live |
+| `SHIPDECK_ACTION` | `deploy`, or `rollback` | always |
+| `SHIPDECK_STEP` | The step running. In `failed` and `rollback`: the step that failed. | always |
+| `SHIPDECK_PREVIOUS` | The release that was live before | once known, and only if something was live |
 | `SHIPDECK_ERROR` | The first line of the error | `failed` commands only |
-| `SHIPDECK_FOLDER` | The deploy folder (where shipdeck.yaml is), absolute | local commands only |
-| `SHIPDECK_PROJECT` | `project`, absolute | local commands only |
 
-In `failed` commands, `SHIPDECK_STEP` can also be a step that takes no commands: `pack`, `upload`, `unpack`, `backup`, `switch`, `restart`, or `connect` in a manual rollback.
-
-A variable that is not set is absent, not empty. Under `set -u`, or when a missing value matters, write `${SHIPDECK_PREVIOUS:-none}`.
+A variable with no value is absent, not empty. Under `set -u`, write
+`${SHIPDECK_PREVIOUS:-none}`.
 
 ## Which commands get what
 
 | | Local commands | Server commands |
 | --- | --- | --- |
-| Run in | `project`, on your PC | the step's folder on the server, as the SSH user |
-| `SHIPDECK_*` above | yes | yes, except `SHIPDECK_FOLDER` and `SHIPDECK_PROJECT` |
-| `service.env` | no | yes |
-| `service.env_file` | no | yes, read from the release |
-| shipdeck's own environment | yes, inherited | no: the SSH session's environment on the server |
+| Run in | the project folder, or the app's `source`, on your PC | the step's folder on the server, as the SSH user |
+| `SHIPDECK_*` above | yes | yes |
+| `process.env` | no | yes |
+| `process.env_file` | no | yes, read from the release |
+| shipdeck's own environment | yes, inherited | no: the SSH session's environment, with the login shell's exports |
 | cargo progress variables | yes | no |
 
-Local commands inherit the environment you started shipdeck with, so `PATH`, tokens in your shell and so on are there. They do not get `service.env` or the env file: those describe the app on the server.
+Local commands inherit the environment you started shipdeck with, so `PATH`, tokens in your
+shell and so on are there. They do not get the app's environment: that describes the app on
+the server.
 
 ## Server commands and the app's environment
 
-Each server command runs in a small script that sets up the environment in this order, so later ones win:
+Each server command runs in a small script that sets up the environment in this order, so
+later ones win:
 
-1. `service.env`, each value exported as written.
-2. `service.env_file`, if set and present, read the way systemd reads `EnvironmentFile=`.
-3. The `SHIPDECK_*` variables.
+1. The login shell's exports (`server.ssh.shell_env`, on by default).
+2. `process.env`, each value exported as written.
+3. `process.env_file`, if set and present, read the way systemd reads `EnvironmentFile=`.
+4. The `SHIPDECK_*` variables.
 
-So a key in the env file overrides the same key in `service.env`, and nothing can override a `SHIPDECK_*` variable.
+So a key in the env file overrides the same key in `env`, and nothing can override a
+`SHIPDECK_*` variable.
 
-The env file is read from the release the step works with:
-
-| Step | Folder | Env file read from |
-| --- | --- | --- |
-| preflight | `dir` | `current/<env_file>`, the **live** release's. Skipped on a first deploy, when there is none. |
-| setup | `releases/<id>` | the new release (on a rollback to a backup, the release just unpacked) |
-| health, done | `current` | the new release, now live |
-
-The reader follows systemd's rules: blank lines and lines starting with `#` or `;` are skipped, an `export ` prefix is allowed, keys must be valid variable names, one pair of surrounding quotes is removed, and **nothing is expanded**: `$HOME` stays the text `$HOME`. A missing file is skipped without an error. [Environment and secrets](/docs/guides/environment) covers shipping the file.
+The env file is read from the release the step works with: the live one for `preflight`,
+`build` and `upload`; the new one for `setup`, `backup` and `switch`; the live one, now the
+new release, for `restart`, `nginx`, `health` and `done`. The reader follows systemd's
+rules: blank lines and lines starting with `#` or `;` are skipped, an `export ` prefix is
+allowed, keys must be valid variable names, one pair of surrounding quotes is removed, and
+**nothing is expanded**. A missing file is skipped without an error.
+[Environment and secrets](/docs/guides/environment) covers shipping the file.
 
 ## Cargo progress
 
@@ -70,7 +106,8 @@ Local commands also get:
 | `CARGO_TERM_PROGRESS_WIDTH` | `120` |
 | `CARGO_TERM_COLOR` | `never` |
 
-cargo then prints its `Building [====>  ] 283/286` line even though its output is not a terminal, and shipdeck turns it into the build step's progress bar (`N of M crates`). Other tools ignore these variables.
+cargo then prints its `Building [====>  ] 283/286` line even though its output is not a
+terminal, and shipdeck turns it into the build step's progress bar.
 
 ## Examples
 
@@ -78,7 +115,7 @@ cargo then prints its `Building [====>  ] 283/286` line even though its output i
 
 One script for success and failure, called from `done` and `failed`:
 
-```sh title="scripts/deploy/my-api-prod/notify.sh"
+```sh title="scripts/deploy/notify.sh"
 #!/bin/sh
 # Posts one line to a chat webhook. $1 is the message.
 set -eu
@@ -87,48 +124,53 @@ curl -fsS -X POST -H 'Content-Type: application/json' \
   "$CHAT_WEBHOOK_URL"
 ```
 
-```yaml title="scripts/deploy/my-api-prod/shipdeck.yaml"
-pipeline:
-  done:
-    run:
-      local: '$SHIPDECK_FOLDER/notify.sh "$SHIPDECK_ACTION $SHIPDECK_RELEASE is live (was ${SHIPDECK_PREVIOUS:-nothing})"'
-  failed:
-    run:
-      local: '$SHIPDECK_FOLDER/notify.sh "failed at $SHIPDECK_STEP: $SHIPDECK_ERROR"'
+```yaml title="scripts/deploy/production.yaml"
+release:
+  steps:
+    done:
+      local: './notify.sh "$SHIPDECK_ACTION $SHIPDECK_RELEASE_ID is live (was ${SHIPDECK_PREVIOUS:-nothing})"'
+    failed:
+      local: './notify.sh "failed at $SHIPDECK_STEP: $SHIPDECK_ERROR"'
 ```
 
-Local commands run in `project`, not in the deploy folder, so `$SHIPDECK_FOLDER` finds a script kept next to shipdeck.yaml. `CHAT_WEBHOOK_URL` comes from your own shell, since local commands inherit it.
+Local release commands run in the project folder, so a script next to the deploy file is
+found with a path from there, or with `{{CONFIG}}/notify.sh`. `CHAT_WEBHOOK_URL` comes from
+your own shell, since local commands inherit it.
 
 ### Migrations on deploy only
 
-Setup runs on a deploy, and again on a manual rollback to a release kept only as a backup, to remake what the backup left out (see [Releases](/docs/guides/releases#rolling-back-by-hand)). Done runs on both. Check `SHIPDECK_ACTION` in a command that should run on deploys only:
+`setup.server` runs on a deploy, and again on a rollback to a release kept only as a backup.
+`done` runs on a rollback too. Check `SHIPDECK_ACTION` in a command that should run on
+deploys only:
 
-```yaml title="shipdeck.yaml"
-pipeline:
-  setup:
-    run:
-      server:
-        - npm ci --omit=dev                                          # deploys and rollbacks
-        - '[ "$SHIPDECK_ACTION" = rollback ] || npm run migrate'     # deploys only
-  done:
-    run:
-      server: '[ "$SHIPDECK_ACTION" = rollback ] || ./bin/warm-cache'   # skipped on a rollback
+```yaml title="production.yaml"
+apps:
+  api:
+    steps:
+      setup:
+        server:
+          - npm ci --omit=dev                                       # deploys and rollbacks
+          - '[ "$SHIPDECK_ACTION" = rollback ] || npm run migrate'  # deploys only
 ```
 
-### Writing to the shared folder
+### A unit template
 
-```yaml title="shipdeck.yaml"
-pipeline:
-  setup:
-    run:
-      server: cp -n config/defaults.json "$SHIPDECK_SHARED_DIR/config.json"
+`process.systemd.template` uses the same names, plus the app's placeholders:
+
+```ini title="systemd/api.service"
+[Service]
+User={{ systemd.user }}
+WorkingDirectory={{APP_CURRENT}}
+ExecStart={{APP_CURRENT}}/server
+Environment=APP_RELEASE={{RELEASE_ID}}
 ```
 
-Server commands run under `set -e`, after `cd` into the step's folder, so relative paths point into the release.
+The built-in unit is written in the same way; see [systemd](/docs/man/systemd) for its
+contents.
 
 ## Next
 
 <Cards>
-  <Card title="The pipeline" href="/docs/guides/pipeline" description="Each step, where its commands run, and what a failure means." />
-  <Card title="Environment and secrets" href="/docs/guides/environment" description="service.env, the env file and shipping .env safely." />
+  <Card title="Pipeline" href="/docs/guides/pipeline" description="Each step, where its commands run, and what a failure means." />
+  <Card title="Environment and secrets" href="/docs/guides/environment" description="process.env, the env file and shipping .env safely." />
 </Cards>

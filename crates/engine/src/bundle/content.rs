@@ -1,108 +1,111 @@
-//! What a release holds, file by file: each file's SHA-256, which decides
-//! what the live release already has; the receipt the server checks the
-//! unpacked release against; and the fingerprint that tells whether
-//! anything changed at all.
+//! What a release holds, path by path, and the packing of it into one
+//! `.tar.zst`: hashes, the receipt the server checks, and the fingerprint
+//! that says whether anything changed.
 
+use std::collections::{BTreeMap, HashMap};
+use std::hash::BuildHasher;
 use std::io::{self, Read};
 use std::path::Path;
+use std::thread;
 
-use anyhow::{Context, Result};
-use chrono::DateTime;
+use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
+use zstd::stream::write::Encoder;
 
-use super::{Counting, Entry, ServiceFile, Source, service_file};
-use crate::config::Deployable;
-use crate::release::ReleaseName;
+use super::plan::{Entry, Plan, Source};
 
-/// Everything a release holds except its `release.json`, each file with
-/// its SHA-256.
-#[derive(Debug, Clone)]
-pub struct Contents {
-    pub(super) entries: Vec<Entry>,
-    /// The file shipdeck writes for the service, if it writes one.
-    pub(super) own: Vec<String>,
-    /// Project files a file from the deploy folder replaced.
-    pub replaced: Vec<String>,
-    /// Ecosystem files in the release PM2 never reads, because shipdeck
-    /// writes the app file from `pm2.options`.
-    pub unused_ecosystem: Vec<String>,
+/// The file each release carries in `.shipdeck/`.
+pub const MANIFEST_FILE: &str = ".shipdeck/release.json";
+
+/// zstd level for the bundle. The slower levels only pay off on uploads
+/// under about 100 KB/s.
+const LEVEL: i32 = 9;
+
+/// A packed release, ready to upload.
+#[derive(Debug)]
+pub struct Bundle {
+    pub data: Vec<u8>,
+    /// Files in the release, sent or reused.
+    pub files: usize,
+    /// Every path in the release, as it lands there, sent or reused.
+    pub paths: Vec<String>,
+    /// The release's size before compression, reused files included.
+    pub input_bytes: u64,
+    /// Files the live release already has: the server copies them from
+    /// `current` instead of unpacking them.
+    pub reused: usize,
+    pub reused_bytes: u64,
+    /// `sha256sum -c` input: `<hex>  ./<path>` lines.
+    pub receipt: Vec<u8>,
+    /// The reused files by the mode each gets: `./<path>` names, each
+    /// ending in a NUL.
+    pub reuse: BTreeMap<u32, Vec<u8>>,
 }
 
-impl Contents {
-    /// The files the live release may already have: every one from the
-    /// project or the deploy folder whose name `sha256sum` reads back.
-    /// shipdeck's own files change with each release and are always sent.
+impl Bundle {
+    /// Files in the archive itself.
     #[must_use]
-    pub fn candidates(&self) -> Vec<String> {
-        self.entries
-            .iter()
-            .filter(|entry| entry.is_candidate())
-            .map(|entry| entry.path.clone())
-            .collect()
+    pub fn sent(&self) -> usize {
+        self.files - self.reused
     }
+}
 
-    /// `sha256:<hex>` over what makes the release what it is: each path with
-    /// its kind, a file's mode and SHA-256, a link's target; the service file
-    /// rendered without the release's name, so a new id, version or build
-    /// time leave it alone; and `shipdeck.yaml`. Two releases with the same
-    /// fingerprint run the same files the same way.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the service file cannot be rendered for the fingerprint.
-    pub fn fingerprint(&self, deployable: &Deployable, start_path: Option<&str>) -> Result<String> {
-        let own = service_file(deployable, &unnamed(), start_path)?;
-        Ok(match own.as_ref() {
-            Some(file) => self.fingerprint_with(std::slice::from_ref(&file), &deployable.yaml),
-            None => self.fingerprint_with(&[], &deployable.yaml),
-        })
+/// Hashes every file in `plan`, filling in each entry's SHA-256;
+/// `progress(done, total)` follows the bytes read.
+///
+/// # Errors
+/// Returns an error when a file cannot be read.
+pub fn hash(plan: &mut Plan, mut progress: impl FnMut(u64, u64)) -> Result<()> {
+    let total: u64 = plan
+        .entries
+        .iter()
+        .filter(|entry| matches!(entry.source, Source::File(_)))
+        .map(|entry| entry.size)
+        .sum();
+    let mut done = 0u64;
+    progress(0, total);
+    for entry in &mut plan.entries {
+        entry.sha256 = match &entry.source {
+            Source::File(local) => Some(sha256_file(local, |n| {
+                done += n;
+                progress(done, total);
+            })?),
+            Source::Bytes(bytes) => Some(sha256(bytes)),
+            Source::Link(_) => None,
+        };
     }
+    Ok(())
+}
 
-    /// Fingerprints a shared release using its app files and resolved config.
-    #[must_use]
-    pub fn fingerprint_apps(&self, files: &[&ServiceFile], config: &str) -> String {
-        self.fingerprint_with(files, config)
-    }
-
-    /// The fingerprint, with the service file already rendered.
-    pub(super) fn fingerprint_with(&self, own: &[&ServiceFile], yaml: &str) -> String {
-        let mut entries: Vec<&Entry> = self
-            .entries
-            .iter()
-            .filter(|entry| !self.own.contains(&entry.path))
-            .collect();
-        entries.sort_by(|a, b| a.path.cmp(&b.path));
-        // Paths cannot hold a NUL, so NUL-ended fields never run together.
-        let mut hash = Sha256::new();
-        hash.update(b"shipdeck release content 1\0");
-        for entry in entries {
-            match &entry.source {
-                Source::Dir => field(&mut hash, b"d", entry.path.as_bytes()),
-                Source::Link(target) => {
-                    field(&mut hash, b"l", entry.path.as_bytes());
-                    // The bytes as written on Unix; UTF-8 for the `/` path a
-                    // Windows link becomes.
-                    hash.update(target.as_os_str().as_encoded_bytes());
-                    hash.update(b"\0");
-                }
-                Source::File(_) | Source::Bytes(_) => {
-                    field(&mut hash, b"f", entry.path.as_bytes());
-                    hash.update(format!("{:o}\0", entry.mode));
-                    hash.update(entry.sha256.as_deref().unwrap_or_default());
-                    hash.update(b"\0");
-                }
+/// `sha256:<hex>` over what makes the release what it is: each path with
+/// its kind, a file's mode and SHA-256, a link's target. The settings file
+/// is in the release, so a changed config is a changed release.
+#[must_use]
+pub fn fingerprint(plan: &Plan) -> String {
+    let mut entries: Vec<&Entry> = plan
+        .entries
+        .iter()
+        .filter(|entry| entry.path != MANIFEST_FILE)
+        .collect();
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+    let mut hash = Sha256::new();
+    hash.update(b"shipdeck release content 2\0");
+    for entry in entries {
+        match &entry.source {
+            Source::Link(target) => {
+                field(&mut hash, b"l", entry.path.as_bytes());
+                hash.update(target.as_os_str().as_encoded_bytes());
+                hash.update(b"\0");
+            }
+            Source::File(_) | Source::Bytes(_) => {
+                field(&mut hash, b"f", entry.path.as_bytes());
+                hash.update(format!("{:o}\0", entry.mode));
+                hash.update(entry.sha256.as_deref().unwrap_or_default());
+                hash.update(b"\0");
             }
         }
-        let mut own = own.to_vec();
-        own.sort_by(|a, b| a.name.cmp(&b.name));
-        for own in own {
-            field(&mut hash, b"s", own.name.as_bytes());
-            hash.update(sha256(own.text.as_bytes()));
-            hash.update(b"\0");
-        }
-        field(&mut hash, b"y", sha256(yaml.as_bytes()).as_bytes());
-        format!("sha256:{}", hex(hash))
     }
+    format!("sha256:{}", hex(hash))
 }
 
 /// One NUL-ended record: its kind, then its text.
@@ -110,11 +113,6 @@ fn field(hash: &mut Sha256, kind: &[u8], text: &[u8]) {
     hash.update(kind);
     hash.update(text);
     hash.update(b"\0");
-}
-
-/// The release name a fingerprint renders the service file with.
-fn unnamed() -> ReleaseName {
-    ReleaseName::new("0.0.0", "unnamed", false, DateTime::UNIX_EPOCH)
 }
 
 /// Whether `sha256sum` reads a path back as it was written. GNU and
@@ -125,43 +123,12 @@ pub fn listable(path: &str) -> bool {
     !path.contains(['\n', '\r', '\\'])
 }
 
-impl Entry {
-    /// From the project or the deploy folder, under a name `sha256sum`
-    /// reads back.
-    pub(super) fn is_candidate(&self) -> bool {
-        matches!(self.source, Source::File(_)) && listable(&self.path)
-    }
-}
-
-/// Hashes every file in `entries`; `progress(done, total)` follows the
-/// bytes read.
-pub(super) fn hash_all(entries: &mut [Entry], mut progress: impl FnMut(u64, u64)) -> Result<()> {
-    let total: u64 = entries
-        .iter()
-        .filter(|e| matches!(e.source, Source::File(_)))
-        .map(|e| e.size)
-        .sum();
-    let mut done = 0u64;
-    progress(0, total);
-    for entry in entries {
-        entry.sha256 = match &entry.source {
-            Source::File(local) => Some(sha256_file(local, |n| {
-                done += n;
-                progress(done, total);
-            })?),
-            Source::Bytes(bytes) => Some(sha256(bytes)),
-            Source::Dir | Source::Link(_) => None,
-        };
-    }
-    Ok(())
-}
-
-pub(super) fn sha256(bytes: &[u8]) -> String {
+pub(crate) fn sha256(bytes: &[u8]) -> String {
     base16ct::lower::encode_string(&Sha256::digest(bytes))
 }
 
 /// The digest so far, as lowercase hex.
-pub(super) fn hex(hash: Sha256) -> String {
+pub(crate) fn hex(hash: Sha256) -> String {
     base16ct::lower::encode_string(&hash.finalize())
 }
 
@@ -180,11 +147,9 @@ fn sha256_file(path: &Path, on_read: impl FnMut(u64)) -> Result<String> {
     Ok(hex(reader.inner.hash))
 }
 
-/// Hashes what is read through it, so packing can tell a file changed
-/// after it was hashed.
-pub(super) struct Hashing<R> {
-    pub inner: R,
-    pub hash: Sha256,
+struct Hashing<R> {
+    inner: R,
+    hash: Sha256,
 }
 
 impl<R: Read> Read for Hashing<R> {
@@ -195,9 +160,22 @@ impl<R: Read> Read for Hashing<R> {
     }
 }
 
-/// `sha256sum -c` input: `<hex>  ./<path>` for every file in `entries`
-/// whose name it reads back, sorted by path.
-pub(super) fn receipt<'a>(entries: impl Iterator<Item = &'a Entry>) -> Vec<u8> {
+struct Counting<R, F> {
+    inner: R,
+    on_read: F,
+}
+
+impl<R: Read, F: FnMut(u64)> Read for Counting<R, F> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        (self.on_read)(n as u64);
+        Ok(n)
+    }
+}
+
+/// `sha256sum -c` input: `<hex>  ./<path>` for every file whose name it
+/// reads back, sorted by path.
+fn receipt<'a>(entries: impl Iterator<Item = &'a Entry>) -> Vec<u8> {
     let mut lines: Vec<(&str, &str)> = entries
         .filter(|entry| listable(&entry.path))
         .filter_map(|entry| Some((entry.path.as_str(), entry.sha256.as_deref()?)))
@@ -209,3 +187,146 @@ pub(super) fn receipt<'a>(entries: impl Iterator<Item = &'a Entry>) -> Vec<u8> {
     }
     text
 }
+
+/// Packs the release. A file whose SHA-256 `on_server` has under its path
+/// stays out of the archive, to be copied from the live release.
+/// `progress(done, total)` is called as input bytes are compressed.
+///
+/// # Errors
+/// Fails when a file changes while it is packed or the archive cannot be
+/// written.
+pub fn pack<S: BuildHasher>(
+    plan: &Plan,
+    on_server: &HashMap<String, String, S>,
+    mut progress: impl FnMut(u64, u64),
+) -> Result<Bundle> {
+    let entries: Vec<&Entry> = plan.entries.iter().collect();
+    let is_reused = |entry: &Entry| {
+        entry.is_candidate()
+            && entry.sha256.is_some()
+            && on_server.get(&entry.path) == entry.sha256.as_ref()
+    };
+    let paths = entries.iter().map(|entry| entry.path.clone()).collect();
+    let files = entries
+        .iter()
+        .filter(|entry| !matches!(entry.source, Source::Link(_)))
+        .count();
+    let input_bytes: u64 = entries.iter().map(|entry| entry.size).sum();
+    let (reuse, reused, reused_bytes) = reuse_lists(&entries, &is_reused);
+    let receipt = receipt(entries.iter().copied());
+    let total = input_bytes.saturating_sub(reused_bytes);
+    let mtime = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let data = archive(&entries, &is_reused, mtime, total, &mut progress)?;
+    Ok(Bundle {
+        data,
+        files,
+        paths,
+        input_bytes,
+        reused,
+        reused_bytes,
+        receipt,
+        reuse,
+    })
+}
+
+/// What the live release already holds, per mode, as the archive wants it.
+fn reuse_lists(
+    entries: &[&Entry],
+    is_reused: &impl Fn(&Entry) -> bool,
+) -> (BTreeMap<u32, Vec<u8>>, usize, u64) {
+    let mut reuse: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
+    let (mut count, mut bytes) = (0, 0);
+    for entry in entries.iter().filter(|entry| is_reused(entry)) {
+        let list = reuse.entry(entry.mode).or_default();
+        list.extend_from_slice(b"./");
+        list.extend_from_slice(entry.path.as_bytes());
+        list.push(0);
+        count += 1;
+        bytes += entry.size;
+    }
+    (reuse, count, bytes)
+}
+
+/// Writes the tar and compresses it, calling `progress` as bytes go in.
+fn archive(
+    entries: &[&Entry],
+    is_reused: &impl Fn(&Entry) -> bool,
+    mtime: u64,
+    total: u64,
+    progress: &mut impl FnMut(u64, u64),
+) -> Result<Vec<u8>> {
+    let mut tar = tar::Builder::new(encoder()?);
+    let mut done = 0u64;
+    progress(0, total);
+
+    for entry in entries.iter().filter(|entry| !is_reused(entry)) {
+        let mut header = tar::Header::new_gnu();
+        header.set_mode(entry.mode);
+        header.set_mtime(mtime);
+        header.set_uid(0);
+        header.set_gid(0);
+        header.set_size(entry.size);
+        match &entry.source {
+            Source::Link(target) => {
+                header.set_entry_type(tar::EntryType::Symlink);
+                tar.append_link(&mut header, &entry.path, target)
+                    .with_context(|| format!("packing the link {}", entry.path))?;
+            }
+            Source::Bytes(bytes) => {
+                header.set_entry_type(tar::EntryType::Regular);
+                tar.append_data(&mut header, &entry.path, bytes.as_slice())?;
+                done += entry.size;
+                progress(done, total);
+            }
+            Source::File(local) => {
+                header.set_entry_type(tar::EntryType::Regular);
+                let file = std::fs::File::open(local)
+                    .with_context(|| format!("opening {}", local.display()))?;
+                let mut reader = Counting {
+                    inner: Hashing {
+                        inner: file,
+                        hash: Sha256::new(),
+                    },
+                    on_read: |n| {
+                        done += n;
+                        progress(done, total);
+                    },
+                };
+                tar.append_data(&mut header, &entry.path, &mut reader)
+                    .with_context(|| format!("packing {}", local.display()))?;
+                let packed = hex(reader.inner.hash);
+                if Some(&packed) != entry.sha256.as_ref() {
+                    bail!(
+                        "{} changed while the release was packed; deploy again once nothing writes to it",
+                        local.display()
+                    );
+                }
+            }
+        }
+    }
+
+    tar.into_inner()?.finish().context("finishing the archive")
+}
+
+/// A zstd stream on every core, with a checksum so `zstd -d` on the server
+/// refuses a damaged upload.
+fn encoder() -> Result<Encoder<'static, Vec<u8>>> {
+    let mut encoder = Encoder::new(Vec::new(), LEVEL)?;
+    encoder.include_checksum(true)?;
+    let workers = thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    encoder.multithread(u32::try_from(workers).unwrap_or(1))?;
+    Ok(encoder)
+}
+
+impl Entry {
+    /// A regular file whose name `sha256sum` reads back.
+    fn is_candidate(&self) -> bool {
+        matches!(self.source, Source::File(_) | Source::Bytes(_)) && listable(&self.path)
+    }
+}
+
+#[cfg(test)]
+#[path = "content_tests.rs"]
+mod tests;

@@ -12,7 +12,7 @@ use shipdeck_engine::remote::Control;
 
 use std::time::Instant;
 
-use shipdeck_engine::config::{ROLLBACK_ANSWER_SECS, Rollback};
+use shipdeck_engine::config::{Command, RollbackMode};
 use shipdeck_engine::deploy::report::{RollbackQuestion, UnchangedQuestion};
 
 use super::app::{App, Live, Modal};
@@ -294,8 +294,7 @@ type Dialog = (
 
 fn confirm_deploy(app: &App, index: usize, missing: Option<&str>) -> Dialog {
     let deployable = &app.deployables[index];
-    let config = &deployable.config;
-    let pipeline = &config.pipeline;
+    let steps = deployable.steps();
     let live = match &app.live[index] {
         Live::Ready(status) => status.current.as_deref().map_or_else(
             || "nothing yet".into(),
@@ -303,29 +302,40 @@ fn confirm_deploy(app: &App, index: usize, missing: Option<&str>) -> Dialog {
         ),
         _ => "unknown until preflight".into(),
     };
-    let build = match pipeline.build.run.local.0.as_slice() {
+    let build_commands = &steps.build.local.0;
+    let build = match build_commands.as_slice() {
         [] => "nothing to build".to_string(),
-        [one] => one.trim().to_string(),
-        [first, rest @ ..] => format!("{} (+{} more)", first.trim(), rest.len()),
+        [one] => command_text(one),
+        [first, rest @ ..] => format!("{} (+{} more)", command_text(first), rest.len()),
     };
-    let failing = match pipeline.failed.rollback {
-        Rollback::Ask => format!(
+    let failing = match deployable.rollback_mode() {
+        RollbackMode::Ask => format!(
             "If it fails after the switch, shipdeck asks before putting the previous release back, \
-             and does so on its own after {ROLLBACK_ANSWER_SECS} s."
+             and does so on its own after {} s.",
+            deployable.ask_secs()
         ),
-        Rollback::Auto => {
+        RollbackMode::Auto => {
             "If it fails after the switch, the previous release is put back at once.".into()
+        }
+        RollbackMode::Off => {
+            "If it fails after the switch, the failed release stays live; roll back by hand.".into()
         }
     };
 
+    let process = deployable
+        .first_process()
+        .map_or_else(|| "static".to_string(), |app| deployable.process_name(app));
     let mut lines = vec![
-        Line::from(Span::styled(config.name.clone(), theme::bold(ACCENT))),
+        Line::from(Span::styled(
+            deployable.name().to_string(),
+            theme::bold(ACCENT),
+        )),
         Line::default(),
         row(
             "to",
-            format!("{}:{}", deployable.endpoint.label(), config.service.dir),
+            format!("{}:{}", deployable.endpoint.label(), deployable.dir()),
         ),
-        row("service", config.service.name.clone()),
+        row("process", process),
         row("build", build),
         row("live now", live),
         Line::default(),
@@ -338,10 +348,10 @@ fn confirm_deploy(app: &App, index: usize, missing: Option<&str>) -> Dialog {
     ];
     if let Some(missing) = missing {
         lines.push(Line::default());
-        let when = if pipeline.preflight.run.local.is_empty() {
+        let when = if deployable.steps().preflight.local.is_empty() {
             "The deploy will stop at Preflight, before building."
         } else {
-            "pipeline.preflight.run.local must create them, or the deploy stops at Preflight."
+            "steps.preflight.local must create them, or the deploy stops at Preflight."
         };
         lines.push(Line::from(Span::styled(
             format!("{missing}. {when}"),
@@ -410,7 +420,10 @@ fn ask_rollback(app: &App, index: usize, question: &RollbackQuestion, deadline: 
 
 fn confirm_control(app: &App, index: usize, action: Control) -> Dialog {
     let deployable = &app.deployables[index];
-    let service = &deployable.config.service;
+    let process = deployable
+        .first_process()
+        .map(|app| deployable.process_name(app))
+        .unwrap_or_default();
     let verb = action.verb();
     let what = match action {
         Control::Stop => {
@@ -421,7 +434,7 @@ fn confirm_control(app: &App, index: usize, action: Control) -> Dialog {
     let lines = vec![
         Line::from(vec![
             Span::styled(format!("{} ", capitalized(verb)), theme::bold(TEXT)),
-            Span::styled(service.name.clone(), theme::bold(VIOLET)),
+            Span::styled(process, theme::bold(VIOLET)),
             Span::styled(
                 format!(" on {}?", deployable.endpoint.label()),
                 theme::bold(TEXT),
@@ -478,10 +491,13 @@ fn confirm_rollback(
     from_backup: bool,
     current: Option<&str>,
 ) -> Dialog {
-    let config = &app.deployables[index].config;
+    let deployable = &app.deployables[index];
     let tag = |id: &str| ReleaseName::parse(id).map(|n| n.tag()).unwrap_or_default();
     let mut lines = vec![
-        Line::from(Span::styled(config.name.clone(), theme::bold(ACCENT))),
+        Line::from(Span::styled(
+            deployable.name().to_string(),
+            theme::bold(ACCENT),
+        )),
         Line::default(),
         row("roll back to", format!("{target}  {}", tag(target))),
         row(
@@ -492,7 +508,7 @@ fn confirm_rollback(
     ];
     if from_backup {
         lines.push(Line::from(Span::styled(
-            "This release is a backup: it is unpacked and set up again with pipeline.setup first.",
+            "This release is a backup: it is unpacked and set up again with its own setup.server first.",
             Style::new().fg(VIOLET),
         )));
     }
@@ -507,6 +523,13 @@ fn confirm_rollback(
         lines,
         vec![("y", "roll back".into()), ("n", "cancel".into())],
     )
+}
+
+fn command_text(command: &Command) -> String {
+    match command {
+        Command::Sh(text) => text.trim().to_string(),
+        Command::Runner { runner, code } => format!("{}: {}", runner.key(), code.trim()),
+    }
 }
 
 fn row(name: &str, value: String) -> Line<'static> {

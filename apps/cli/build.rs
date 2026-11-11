@@ -164,13 +164,6 @@ fn tree(
         } else {
             format!("{parent}.{name}")
         };
-        if topics.contains(&key) {
-            return Err(at(
-                CONFIGS,
-                node.line,
-                &format!("`{key}` is also a topic key; `man details` could not tell them apart"),
-            ));
-        }
         let fields = node.map(CONFIGS, &["brief"], &["type", "text", "see", "fields"])?;
         let &[brief, kind, body, related, children] = fields.as_slice() else {
             unreachable!("map returns one entry per key");

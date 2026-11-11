@@ -1,6 +1,6 @@
 ---
 title: Upgrading
-description: Install a newer shipdeck, point each shipdeck.yaml's schema line at the new tag, and renew the server's sudo rule when a release changes it.
+description: Install a newer shipdeck, update each schema line, and renew the server's sudo rule when a release changes it.
 ---
 
 ## Install the new version
@@ -10,65 +10,113 @@ Run the same command you installed with:
 - the install script: `curl -LsSf https://shipdeck.naz.ovh/install.sh | sh` again;
 - cargo-binstall: `cargo binstall --git https://github.com/Naz-Ovh/shipdeck shipdeck` again;
 - bin: `bin update shipdeck`;
-- cargo: `cargo install --git https://github.com/Naz-Ovh/shipdeck --tag <tag> shipdeck`, with `--force` if cargo says the binary is already installed.
+- cargo: `cargo install --git https://github.com/Naz-Ovh/shipdeck --tag <tag> shipdeck`, with
+  `--force` if cargo says the binary is already installed.
 
-`shipdeck --version` prints the version you now run. [Installation](/docs/getting-started/installation) has every way in.
+`shipdeck --version` prints the version you now run.
+[Installation](/docs/getting-started/installation) has every way in.
 
 ## Update the schema line
 
-The schema line at the top of each `shipdeck.yaml` names a release:
+Each config file can start with a schema line naming a release:
 
-```yaml title="shipdeck.yaml"
+```yaml
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v<version>/docs/schema/deploy.schema.json
 ```
 
-Change the tag to the new one, so your editor completes the new version's fields. If you map the schema in `.vscode/settings.json` instead, update the URL there. [shipdeck.yaml](/docs/reference/shipdeck-yaml#editor-completion) shows both. shipdeck itself ignores the line.
+Change the tag to the new one, so your editor completes the new version's fields. If you map
+the schema in `.vscode/settings.json` instead, update the URL there. shipdeck itself ignores
+the line. [Config](/docs/reference/config#editor-completion) shows both.
 
-## Rename `deploy.yaml` to `shipdeck.yaml`
+## Config format 2
 
-shipdeck no longer looks for `deploy.yaml` or `deploy.yml`. A folder with only
-the old name has no config and is skipped. Rename the file in every deployable
-folder:
+<Callout type="warn" title="This is a clean break">
+The old config format is gone. There is no migration command and no compatibility mode: an
+old file fails with unknown-key problems, which name the key and often the new one. Shipdeck
+is in alpha, so this was done in one step.
 
-```sh
-mv deploy.yaml shipdeck.yaml
-```
+A rollback to a release made with the old format is refused: "this release was made before
+config format 2; deploy again".
+</Callout>
 
-Use `shipdeck.yml` if you prefer. Never keep both names in one folder.
+What changed, in short:
 
-## Move `dir` to the top level
+| Old | Format 2 |
+| --- | --- |
+| A deploy root scanned for subfolders with `shipdeck.yaml` | One project file in the folder you run shipdeck in |
+| A deploy is a folder | A deploy is one file, anywhere |
+| `shipdeck.yml` also accepted | `shipdeck.yaml` or `.shipdeck` only |
+| App files (`apps: {admin: _admin.yaml}`) | Apps inline in the deploy file |
+| `service.template` found next to `shipdeck.yaml` | `process.systemd.template`, a path you write |
+| `project` (top) | The project folder: where you run shipdeck |
+| `project` (app) | `apps.<app>.source` |
+| `ssh`, `dir` | `server.ssh`, `server.dir` |
+| `service`, `process_manager`, `start` | `apps.<app>.process` |
+| `manager: systemd`, `process_manager.name` | the block itself: `systemd:`, `pm2:` or `oxmgr:` |
+| `service.run_as` | `systemd.user` |
+| A unit template was the only way to change the unit | `systemd.options`, by section |
+| PM2 `options` silently replace shipdeck's `name` and `cwd` | An error |
+| `static.root` (top) | `apps.<app>.static: true` and `apps.<app>.nginx.root` |
+| `pipeline` | `release.steps` and `apps.<app>.steps` |
+| `pipeline.pack.files.include.project` | `files` |
+| `pipeline.pack.files.exclude.*` | `exclude` |
+| `pipeline.pack.binary` | `apps.<app>.binary` |
+| `run: {local, server}` | `local`, `server` on the step itself |
+| `setup.check.server` | the end of `setup.server` |
+| `health.check.*` | `health.local`, `health.server` |
+| top `pipeline` copied into apps | nothing is copied |
+| `release.json`, unit files at the release root | `.shipdeck/` |
+| `shipdeck-monorepo.json` | `.shipdeck/settings.json` |
+| `SHIPDECK_APP_DIR`, `SHIPDECK_FOLDER` | `{{ROOT}}`, `{{CONFIG}}`, and the same variables |
+| `SHIPDECK_RELEASE` (the name) | `{{RELEASE_ID}}`; `{{RELEASE}}` is now the folder |
+| Unit template `{{dir}}`, `{{workdir}}` and others | the placeholders in [Variables](/docs/reference/variables) |
+| `pipeline.backup.keep` | `release.steps.backup.keep` |
+| `failed.rollback` | `rollback.mode`, which adds `off` |
+| A fixed 30-second rollback question | `rollback.ask_secs` |
+| A rollback checks only the process state | It runs the restored release's health checks |
+| A rollback by hand runs `done` | Every rollback runs `rollback`, then the restored release's setup (from a backup), health and done |
+| `pipeline.backup.files.include`, `.exclude` | `steps.backup.include`, `.exclude` |
+| `pipeline.backup.files.deployed` | Removed: a backup always holds what was uploaded |
+| Rollback to a backup: unpack, set up, switch | Every step after upload, as for a fresh upload |
 
-Newer shipdeck reads the folder that holds `current`, `releases/`, `backups/`
-and `shared/` from a top-level `dir`. It no longer accepts `service.dir` or
-`static.dir`; an old file stops with `unknown key service.dir`.
+The whole design, with every rule and the reasoning, is in
+[the config-v2 design page](https://github.com/Naz-Ovh/shipdeck/blob/main/docs/feature/config-v2.md).
 
-Before:
+### Doing it
 
-```yaml
-service:
-  name: my-api
-  dir: /opt/my-api
-```
+1. Add a project file in the folder you run shipdeck in:
 
-After:
+   ```yaml title="shipdeck.yaml"
+   deploys:
+     production: scripts/deploy/production.yaml
+   ```
 
-```yaml
-dir: /opt/my-api
-service:
-  name: my-api
-```
+2. Turn each old deploy folder's `shipdeck.yaml` into one deploy file: `name`, `server`, and
+   one entry per app under `apps`. `shipdeck init` writes a working file to start from.
+3. Point commands at the deploy instead of the folder:
+   `shipdeck deploy production`, `shipdeck rollback production <release>`.
+4. Run `shipdeck tree production` to check what ships before you deploy.
+5. Deploy once so the server has a release with `.shipdeck/settings.json`. Only then can a
+   later rollback restore its settings.
 
-A monorepo already has a top-level `dir`; nothing moves there. A static site
-also uses the top-level `dir` and keeps only `static.root`.
+## Renew the sudo rule
+
+A release that changes the commands shipdeck runs as root needs `scripts/server-setup.sh`
+run once more as root on the server, or `shipdeck setup` from your PC. The release notes say
+when it is needed. A server set up before config format 2 needs it for the
+`.shipdeck/` unit path: units are now installed from
+`current/.shipdeck/<process>.service`.
 
 ## Read the release notes
 
-The [releases on GitHub](https://github.com/Naz-Ovh/shipdeck/releases) say what changed. shipdeck checks every `shipdeck.yaml` under the deploy root before it starts, so a key it no longer knows shows up as a [config problem](/docs/reference/config-problems) with the line it is on, before anything runs.
-
-## Renew the sudo rule
+The [releases on GitHub](https://github.com/Naz-Ovh/shipdeck/releases) say what changed.
+shipdeck checks every config file it reads before it starts, so a key it no longer knows
+shows up as a [config problem](/docs/reference/config-problems) with the line it is on,
+before anything runs.
 
 ## Next
 
 <Cards>
-  <Card title="shipdeck.yaml" href="/docs/reference/shipdeck-yaml" description="Every field with its default and rules." />
+  <Card title="Config" href="/docs/reference/config" description="The project file, the deploy file, and every rule." />
+  <Card title="Config problems" href="/docs/reference/config-problems" description="Every message shipdeck prints for a file it cannot use." />
 </Cards>

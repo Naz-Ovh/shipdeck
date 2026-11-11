@@ -1,6 +1,6 @@
 # The manual's topics, in the order `shipdeck man index` prints them. Each
 # key's text is in details.yaml; build.rs refuses a key missing from either.
-# shipdeck.yaml's properties are in configs.yaml, not here.
+# Config properties are in configs.yaml, not here.
 #
 # key:   what `shipdeck man details <KEY>` takes; lowercase, `.` and `-`
 # brief: a few words saying what the page answers
@@ -23,7 +23,7 @@
     - { key: cli.work, brief: "`shipdeck work`: interrupted files, uncertain activation, cleanup" }
     - { key: cli.events, brief: "`shipdeck events`: numbered server events" }
     - { key: cli.setup, brief: "`shipdeck setup`: guided one-time server setup" }
-    - { key: cli.init, brief: "`shipdeck init`: new deployable from a preset" }
+    - { key: cli.init, brief: "`shipdeck init`: a project file and a deploy file from a preset" }
     - { key: cli.schema, brief: "`--schema` and editor completion" }
     - { key: cli.man, brief: "`shipdeck man`: this manual" }
     - { key: exit-codes, brief: "exit codes and what to do next" }
@@ -34,41 +34,44 @@
     - { key: hosts, brief: "~/.ssh/config aliases, host keys, sessions" }
     - { key: shell-env, brief: "server commands load the login shell's files (nvm, PATH); how pm2 is found" }
 
-- section: shipdeck.yaml (properties - shipdeck man configs)
+- section: Config (properties - shipdeck man configs)
   topics:
-    - { key: config, brief: "deploy root, discovery, the launch check, YAML notes" }
-    - { key: config.files, brief: "file patterns: sources, globs, `!`, never-shipped" }
-    - { key: config.commands, brief: "run/check, local/server: where and how commands run" }
-    - { key: config.variables, brief: "SHIPDECK_* variables and command environments" }
+    - { key: config, brief: "the project file, the deploy file, paths, YAML notes" }
+    - { key: config.files, brief: "file entries, `to`, patterns, where each file lands" }
+    - { key: config.commands, brief: "local/server commands, runners, where each runs" }
+    - { key: config.variables, brief: "placeholders and SHIPDECK_* environment variables" }
     - { key: config.problems, brief: "launch errors, common fixes, moved keys" }
-    - { key: config.template, brief: "service.template and its placeholders" }
+    - { key: config.template, brief: "process.systemd.template and its placeholders" }
 
 - section: Pipeline
   topics:
-    - { key: steps, brief: "all steps, what each does, failure behaviour" }
+    - { key: steps, brief: "all twelve steps, their order and failure behaviour" }
     - { key: step.preflight, brief: "checks before anything is built" }
-    - { key: step.build, brief: "release naming, build, binary checks" }
-    - { key: step.pack, brief: "hashing, fingerprint, archive" }
-    - { key: step.upload, brief: "upload and unpack, sha256 verify" }
+    - { key: step.build, brief: "release naming, build, file collection, binary checks" }
+    - { key: step.upload, brief: "packing, upload, unpack, sha256 verify, shared links" }
     - { key: step.setup, brief: "server commands in the new release" }
     - { key: step.backup, brief: "what goes into backups/<id>.tar.zst" }
-    - { key: step.switch, brief: "switch current, install unit, restart" }
-    - { key: step.health, brief: "probes, crash detection, checks, timeout" }
+    - { key: step.switch, brief: "switch current, install units" }
+    - { key: step.restart, brief: "restart the processes, retire the old ones" }
+    - { key: step.nginx, brief: "parsed and checked; not built yet" }
+    - { key: step.health, brief: "each try's commands, the health url, the timeout" }
     - { key: step.done, brief: "tidying old releases, post-live commands" }
-    - { key: step.failed, brief: "local commands after any failure" }
+    - { key: step.rollback, brief: "the rollback step and its action" }
+    - { key: step.failed, brief: "commands after any failure" }
 
 - section: Releases
   topics:
-    - { key: releases, brief: "ids, release.json, server layout, retention" }
+    - { key: releases, brief: "ids, the server layout, .shipdeck/, retention" }
     - { key: delta, brief: "only changed files are uploaded" }
-    - { key: unchanged, brief: "fingerprint; nothing-changed handling (exit 6)" }
-    - { key: rollback, brief: "rollback after failure, by hand, from backup" }
+    - { key: unchanged, brief: "the fingerprint; nothing-changed handling (exit 6)" }
+    - { key: rollback, brief: "rollback after failure, by hand, from backup; the command table" }
     - { key: service-control, brief: "TUI :logs :restart :stop :start" }
 
-- section: Service managers
+- section: Apps and managers
   topics:
-    - { key: systemd, brief: "the unit, hardening, ExecStart resolution" }
-    - { key: pm2, brief: "PM2 app file, ecosystem, reload, health" }
+    - { key: systemd, brief: "the unit, options by section, hardening, ExecStart" }
+    - { key: pm2, brief: "PM2 file, options, ecosystem, reload" }
+    - { key: monorepo, brief: "several apps in one release" }
 
 - section: Server
   topics:
@@ -79,10 +82,6 @@
 - section: Help
   topics:
     - { key: presets, brief: "what each init preset writes" }
-    - { key: examples, brief: "complete shipdeck.yaml files" }
-    - { key: recipes, brief: "migrations, secrets, CI, monorepo, cross-compile" }
+    - { key: examples, brief: "complete project and deploy files" }
+    - { key: recipes, brief: "migrations, secrets, CI, cross-compile, binary placement" }
     - { key: troubleshooting, brief: "error messages and fixes" }
-
-- section: Monorepos
-  topics:
-    - { key: monorepo, brief: "several apps in one release, hooks, backups and rollback" }

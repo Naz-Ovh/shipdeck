@@ -1,11 +1,11 @@
-//! The first look at a shipdeck.yaml: its shape against the JSON schema, so
-//! a wrong key or a value of the wrong kind is caught with its line, all at
+//! The first look at a deploy file: its shape against the JSON schema, so a
+//! wrong key or a value of the wrong kind is caught with its line, all at
 //! once. What passes is handed on as plain JSON for serde.
 
 use serde_json::{Map, Value as Json};
 
 use super::problem::{Problem, Span};
-use super::schema;
+use super::types::Runner;
 use super::yaml::{Node, Value};
 
 /// What the shape check found.
@@ -15,13 +15,7 @@ pub struct Checked {
     pub problems: Vec<Problem>,
 }
 
-/// Checks `root` against the schema.
-pub fn structure(root: &Node) -> Checked {
-    let schema = schema::generate();
-    structure_with(root, &schema)
-}
-
-/// Checks a YAML tree against a supplied config schema.
+/// Checks a YAML tree against a config schema.
 pub(super) fn structure_with(root: &Node, schema: &Json) -> Checked {
     let mut walk = Walk {
         root: schema,
@@ -103,6 +97,10 @@ impl<'s> Walk<'s> {
         probe.problems.is_empty()
     }
 
+    fn is_command(schema: &Json) -> bool {
+        schema.get("title").and_then(Json::as_str) == Some("Command")
+    }
+
     /// Checks one node; `key` is where it was named, for problems about the
     /// node as a whole.
     fn node(
@@ -118,6 +116,19 @@ impl<'s> Walk<'s> {
         } else {
             node.span
         });
+
+        if Self::is_command(schema) {
+            return match &node.value {
+                Value::Map(_) => self.command_map(node, path, at),
+                Value::Scalar {
+                    text, tag: None, ..
+                } if !node.is_null() => Some(Json::String(text.clone())),
+                _ => {
+                    self.mismatch(node, schema, &["string", "object"], path, at);
+                    None
+                }
+            };
+        }
 
         if let Some(choices) = schema
             .get("anyOf")
@@ -171,11 +182,18 @@ impl<'s> Walk<'s> {
         key: Option<Span>,
         at: Option<Span>,
     ) -> Option<Json> {
+        // A command map is checked in one place, so its own message is the
+        // only one the reader sees.
+        if matches!(node.value, Value::Map(_))
+            && let Some(command) = choices
+                .iter()
+                .find(|choice| Self::is_command(self.resolve(choice)))
+        {
+            return self.node(node, command, path, key);
+        }
         if let Some(fit) = choices.iter().find(|choice| self.fits(node, choice)) {
             return self.node(node, fit, path, key);
         }
-        // Report against the alternative of the node's own kind, which says
-        // more than "matches none".
         let kind = kind_of(node);
         if let Some(same) = choices.iter().find(|choice| {
             let choice = self.resolve(choice);
@@ -247,6 +265,47 @@ impl<'s> Walk<'s> {
                 .label(format!("found {}", node.kind())),
         );
         None
+    }
+
+    /// A command map: exactly one known runner and its code.
+    fn command_map(&mut self, node: &Node, path: &[String], at: Option<Span>) -> Option<Json> {
+        let Value::Map(entries) = &node.value else {
+            return None;
+        };
+        let help = "a command is text, or one runner and its code. Put the whole command in \
+                    quotes if it holds `: `";
+        match entries.as_slice() {
+            [(key, value)] if Runner::from_key(&key.text).is_some() => {
+                let Value::Scalar {
+                    text, tag: None, ..
+                } = &value.value
+                else {
+                    self.problems.push(
+                        Problem::new(format!("`{}` runner code must be text", dotted(path)))
+                            .at(Some(value.span))
+                            .label(format!("found {}", value.kind())),
+                    );
+                    return None;
+                };
+                let mut map = Map::new();
+                map.insert(key.text.clone(), Json::String(text.clone()));
+                Some(Json::Object(map))
+            }
+            _ => {
+                let keys: Vec<String> = entries.iter().map(|(key, _)| key.text.clone()).collect();
+                self.problems.push(
+                    Problem::new(format!(
+                        "`{}` reads as a command map with {}",
+                        dotted(path),
+                        keys.join(", ")
+                    ))
+                    .at(at)
+                    .label("not a command")
+                    .help(help),
+                );
+                None
+            }
+        }
     }
 
     /// Each item of an array, checked against `items`.
@@ -322,7 +381,6 @@ impl<'s> Walk<'s> {
         let mut problem = Problem::new(format!("`{}` must be {}", dotted(path), wanted(types)))
             .at(at)
             .label(format!("found {}", node.kind()));
-        // `run: npm test` instead of `run: { local: npm test }`.
         if let Some(properties) = schema.get("properties").and_then(Json::as_object) {
             let sides: Vec<&str> = ["local", "server"]
                 .into_iter()
@@ -333,7 +391,7 @@ impl<'s> Walk<'s> {
                     Value::Scalar { text, .. } => text.clone(),
                     _ => "…".into(),
                 };
-                let last = path.last().map_or("run", String::as_str);
+                let last = path.last().map_or("step", String::as_str);
                 problem = problem
                     .label("say where it runs")
                     .help(format!("`{last}: {{ {}: {example} }}`", sides[0]));
@@ -456,7 +514,6 @@ fn core_schema(text: &str) -> Option<Json> {
     if digits(unsigned, 10) {
         return text.parse::<i64>().ok().map(Json::from);
     }
-    // [-+]? ( \.[0-9]+ | [0-9]+ ( \.[0-9]* )? ) ( [eE] [-+]? [0-9]+ )?
     let (mantissa, exponent) = match unsigned.split_once(['e', 'E']) {
         Some((m, e)) => (m, Some(e.strip_prefix(['-', '+']).unwrap_or(e))),
         None => (unsigned, None),
@@ -519,93 +576,10 @@ fn choice_help(walk: &Walk, choices: &[Json]) -> String {
         .join(" or ")
 }
 
-/// The steps shipdeck runs itself, with where their commands belong instead.
-const SHIPDECK_STEPS: [(&str, &str); 4] = [
-    (
-        "upload",
-        "commands before the upload go in `pipeline.build.run.local`",
-    ),
-    (
-        "unpack",
-        "commands for the unpacked release go in `pipeline.setup.run.server`",
-    ),
-    (
-        "switch",
-        "commands before the switch go in `pipeline.setup.run.server`; after it, in `pipeline.done.run`",
-    ),
-    (
-        "restart",
-        "checks after the restart go in `pipeline.health.check`",
-    ),
-];
-
 fn unknown_key(path: &[String], known: &[&str], at: Span) -> Problem {
     let key = path.last().map(String::as_str).unwrap_or_default();
     let parent = dotted(&path[..path.len() - 1]);
     let full = dotted(path);
-
-    if parent == "pipeline"
-        && let Some((step, help)) = SHIPDECK_STEPS.iter().find(|(step, _)| *step == key)
-    {
-        return Problem::new(format!("{step} does not take commands"))
-            .at(Some(at))
-            .label(format!("{step} is done by shipdeck"))
-            .help(*help);
-    }
-
-    // `pipeline.build.run.server` and friends.
-    let segments: Vec<&str> = path.iter().map(String::as_str).collect();
-    if let [
-        "pipeline",
-        step,
-        "run" | "check",
-        side @ ("local" | "server"),
-    ] = segments.as_slice()
-    {
-        let (where_, only) = if *side == "server" {
-            ("on the server", "on your PC only")
-        } else {
-            ("on your PC", "on the server only")
-        };
-        let help = match (*step, *side) {
-            ("build", _) => "the server sets up the release in `pipeline.setup.run.server`",
-            ("setup", _) => {
-                "commands on your PC go in `pipeline.preflight.run.local` or `pipeline.build.run.local`"
-            }
-            ("failed", _) => "the server may be out of reach when a step fails",
-            _ => "",
-        };
-        let mut problem = Problem::new(format!("{step} cannot run commands {where_}"))
-            .at(Some(at))
-            .label(format!("{step} runs {only}"));
-        if !help.is_empty() {
-            problem = problem.help(help);
-        }
-        return problem;
-    }
-    if let ["pipeline", step, "run" | "check"] = segments.as_slice() {
-        let help = match (*step, key) {
-            ("health", "run") => {
-                "health takes `check`: commands that must pass for the release to count as healthy"
-                    .to_string()
-            }
-            (_, "check") if known.contains(&"run") => {
-                format!("{step} takes `run`; a failing command already stops it")
-            }
-            _ => format!("{step} takes {}", known_list(known)),
-        };
-        return Problem::new(format!("{step} has no `{key}`"))
-            .at(Some(at))
-            .label(format!("not a field of {step}"))
-            .help(help);
-    }
-    if let ["pipeline", "pack", "files", "include" | "exclude", _] = segments.as_slice() {
-        return Problem::new(format!("unknown key `{full}`"))
-            .at(Some(at))
-            .label("not a source")
-            .help("sources are project and deploy");
-    }
-
     let mut problem = Problem::new(format!("unknown key `{full}`"))
         .at(Some(at))
         .label("unknown key");
@@ -626,8 +600,7 @@ fn unknown_key(path: &[String], known: &[&str], at: Span) -> Problem {
 }
 
 fn known_list(known: &[&str]) -> String {
-    let named: Vec<&str> = known.to_vec();
-    or_and(&named, "and")
+    or_and(known, "and")
 }
 
 fn or_and(items: &[&str], word: &str) -> String {
@@ -663,16 +636,18 @@ fn similar(a: &str, b: &str) -> bool {
 
 fn missing_help(path: &[String]) -> String {
     match dotted(path).as_str() {
-        "name" => "add `name: My API (prod)` at the top".into(),
-        "ssh" => "add `ssh: { host: my-server, user: deploy }`".into(),
-        "ssh.host" => "add `host:` with the server's address or a ~/.ssh/config alias".into(),
-        "dir" => "add `dir: /opt/my-api`, the folder that holds current and releases".into(),
-        "service" => "add `service: { name: my-api }`".into(),
-        "service.name" => "add `name: my-api` (the unit becomes my-api.service)".into(),
+        "name" => "add `name: shop` at the top".into(),
+        "server" => "add `server: { ssh: { host: my-server }, dir: /opt/shop }`".into(),
+        "server.ssh" => "add `ssh: { host: my-server }`".into(),
+        "server.ssh.host" => {
+            "add `host:` with the server's address or a ~/.ssh/config alias".into()
+        }
+        "server.dir" => "add `dir: /opt/shop`, the folder that holds current and releases".into(),
+        "apps" => "add at least one app under `apps:`".into(),
         other => format!("add `{}:`", other.rsplit('.').next().unwrap_or(other)),
     }
 }
 
 #[cfg(test)]
-#[path = "check_test.rs"]
+#[path = "check_tests.rs"]
 mod tests;

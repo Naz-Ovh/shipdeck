@@ -17,7 +17,7 @@ fn what_runs_with_sudo_is_what_the_rule_allows() {
         assert_eq!(shell, format!("systemctl {} 'my-api'", action.verb()));
         assert!(allowed.contains(&words(&shell)), "{shell}");
     }
-    let follow = log_script(Manager::Systemd, "my-api", "my-api", "sudo -n ");
+    let follow = log_script(Some(Manager::Systemd), "my-api", "my-api", "sudo -n ");
     assert_eq!(
         follow,
         "sudo -n journalctl -u 'my-api' -f -n 200 --no-pager"
@@ -38,7 +38,7 @@ fn control_commands_stay_out_of_what_a_deploy_needs() {
 #[test]
 fn pm2_logs_need_no_sudo() {
     assert_eq!(
-        log_script(Manager::Pm2, "my-api", "web", ""),
+        log_script(Some(Manager::Pm2), "my-api", "web", ""),
         "pm2 logs 'web' --raw --lines 200"
     );
 }

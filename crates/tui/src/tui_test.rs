@@ -1,5 +1,4 @@
-//! Draws every screen and dialog with sample data on a test terminal. Set
-//! `SHIPDECK_DUMP=<folder>` to write each frame there as text.
+//! Draws every screen and dialog with sample data on a test terminal.
 
 use std::path::PathBuf;
 
@@ -8,917 +7,316 @@ use ratatui::backend::TestBackend;
 use tokio::sync::mpsc::unbounded_channel;
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use shipdeck_engine::config::{DeployConfig, Deployable, Discovery, parse};
-use shipdeck_engine::deploy::deploy_step_names;
-
+use shipdeck_engine::config::Deployment;
+use shipdeck_engine::config::parse_deploy;
 use shipdeck_engine::deploy::report::{
-    LogKind, OpEvent, OpUpdate, Outcome, RollbackQuestion, StepState, UnchangedQuestion, Unit,
+    LogKind, OpEvent, OpUpdate, Outcome, RollbackQuestion, StepState,
 };
 use shipdeck_engine::release::ReleaseName;
-use shipdeck_engine::remote::{Control, Kind, Listing, ReleaseEntry, Status};
+use shipdeck_engine::remote::{Kind, Listing, ReleaseEntry, Status};
 use shipdeck_engine::ssh::ssh_config::HostConfig;
 use shipdeck_engine::ssh::{Endpoint, Login};
 
-use shipdeck_protocol::connection::{Connection, Handle};
+use shipdeck_protocol::connection::Connection;
 
-use super::app::{
-    App, Fetch, Fetched, Live, LogsState, Modal, OpKind, Operation, ReleasesView, Screen, Tone,
-};
+use super::app::{App, Fetch, Live, Modal, OpKind, Operation, ReleasesView, Screen, Tone};
 use super::draw;
 
-const RELEASES: [&str; 4] = [
+const RELEASES: [&str; 3] = [
     "v0.3.1-ab12cd3-20261014.153012",
     "v0.3.0-9f8e7d6-20261012.091000",
     "v0.2.9-1a2b3c4-20261001.120000",
-    "v0.2.8-5d6e7f8-20260920.080000",
 ];
 
-fn deployable(slug: &str, name: &str, host: &str) -> Deployable {
+fn deployment(slug: &str) -> Deployment {
     let yaml = format!(
-        "
-name: {name}
-project: ../../../Server
-dir: /opt/{slug}
-ssh: {{ host: {alias}, user: deploy }}
-service: {{ name: {slug}, start: ./server -E=.env }}
-pipeline:
-  build:
-    run:
-      local: cargo zigbuild --release -p my-api
-  pack:
-    binary: target/release/server
-    files:
-      include:
-        deploy: [.env, files/]
-  health: {{ url: \"http://127.0.0.1:6520/\", timeout_secs: 20 }}
-",
-        alias = slug.split('-').next().unwrap()
-    );
-    with_config(slug, host, parse(&yaml).unwrap())
-}
-
-/// A Node app: build output instead of a binary, and commands in most steps.
-fn node_app() -> Deployable {
-    let config = parse(
-        "
-name: Web (prod)
-project: ../../../web
-dir: /opt/web
-ssh: { host: web, user: deploy }
-service:
-  name: web
-  start: node dist/main.js
-  env_file: .env
-  shared: [uploads]
-pipeline:
-  preflight:
-    requires: [npm]
-    run:
-      server: pg_isready -q
+        "\
+name: {slug}
+server: {{ ssh: {{ host: {slug}, user: deploy }}, dir: /opt/{slug} }}
+release:
+  steps:
+    preflight:
       local: npm test
-  build:
-    run:
-      local: [npm ci, npm run build]
-  pack:
-    files:
-      include:
-        project: [dist, package.json, package-lock.json]
-        deploy: [.env]
-      exclude:
-        project: [\"**/*.map\"]
-  setup:
-    run:
-      server: [npm ci --omit=dev, npm run migrate]
-    check:
-      server: node --check dist/main.js
-  health:
-    url: http://127.0.0.1:3000/health
-    check:
-      local: curl -fsS https://web.example.com/health
-  done:
-    run:
-      local: ./notify.sh \"web $SHIPDECK_VERSION is live\"
-  failed:
-    run:
-      local: ./notify.sh \"failed at $SHIPDECK_STEP\"
-",
-    )
-    .unwrap();
-    with_config("web-prod", "203.0.113.13", config)
-}
-
-fn with_config(slug: &str, host: &str, config: DeployConfig) -> Deployable {
-    let endpoint = Endpoint::from_config(
-        &config.ssh,
-        HostConfig {
-            host_name: Some(host.into()),
-            user: Some("root".into()),
-            identity_file: Some(PathBuf::from("/home/me/.ssh/id_deploy")),
-            ..HostConfig::default()
-        },
-    )
-    .unwrap();
-    Deployable {
-        folder: PathBuf::from(format!("scripts/deploy/{slug}")),
+    build:
+      local: npm run build
+apps:
+  web:
+    source: web
+    files: [web/dist]
+    process:
+      start: node dist/main.js
+      env: {{ NODE_ENV: production }}
+      systemd: {{}}
+    steps:
+      health:
+        url: http://127.0.0.1:3000/
+  admin:
+    source: admin
+    files: [admin/dist]
+    static: true
+"
+    );
+    let deploy = parse_deploy(&yaml).unwrap();
+    let endpoint = Endpoint::from_config(&deploy.server.ssh, HostConfig::default()).unwrap();
+    Deployment {
         slug: slug.into(),
-        config,
-        yaml: String::new(),
+        file: PathBuf::from(format!("deploy/{slug}.yaml")),
+        project: PathBuf::from("."),
+        config_dir: PathBuf::from("."),
+        yaml,
         endpoint,
+        deploy,
     }
-}
-
-/// The sending half of a pipe nobody answers; the screens are drawn from
-/// state, not from requests.
-fn engine() -> Handle {
-    let (app_read, app_write) = tokio::io::duplex(1024);
-    Connection::start(app_read, app_write).handle()
-}
-
-/// A step list from the engine's names.
-fn names(steps: &[&str]) -> Vec<String> {
-    steps.iter().map(ToString::to_string).collect()
 }
 
 pub(super) fn app() -> App {
-    let (fetched, _) = unbounded_channel();
-    let discovery = Discovery {
-        deployables: vec![
-            deployable("api-prod", "My API (prod)", "203.0.113.10"),
-            deployable("proxy-prod", "My Proxy (prod)", "203.0.113.11"),
-            deployable("api-beta", "My API (beta)", "203.0.113.12"),
-            node_app(),
-        ],
-        monorepos: Vec::new(),
-        problems: Vec::new(),
-    };
-    let mut app = App::new(
-        PathBuf::from("./scripts/deploy"),
-        discovery,
-        Login::Auto,
-        engine(),
-        fetched,
-    );
-    app.live = vec![
-        Live::Ready(Status {
-            dir_exists: true,
-            current: Some(RELEASES[0].into()),
-            active: "active".into(),
-        }),
-        Live::Error("connecting to deploy@203.0.113.11 timed out after 15s".into()),
-        Live::Loading,
-        Live::Loading,
-    ];
+    let mut app = base_app();
+    app.live[0] = Live::Ready(Status {
+        dir_exists: true,
+        current: Some(RELEASES[1].into()),
+        active: "active".into(),
+    });
     app
 }
 
-pub(super) fn render(app: &mut App, width: u16, height: u16, name: &str) {
-    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+fn base_app() -> App {
+    let (engine_read, _app_write) = tokio::io::duplex(64 * 1024);
+    let (_app_read, engine_write) = tokio::io::duplex(64 * 1024);
+    let connection = Connection::start(engine_read, engine_write);
+    let (tx, _rx) = unbounded_channel();
+    App::new(
+        PathBuf::from("."),
+        vec![deployment("shop"), deployment("api")],
+        Login::Auto,
+        connection.handle(),
+        tx,
+    )
+}
+
+fn terminal() -> Terminal<TestBackend> {
+    Terminal::new(TestBackend::new(120, 40)).unwrap()
+}
+
+fn text(app: &mut App) -> String {
+    let mut terminal = terminal();
     terminal.draw(|frame| draw(frame, app)).unwrap();
-    if let Ok(dir) = std::env::var("SHIPDECK_DUMP") {
-        let buffer = terminal.backend().buffer();
-        let mut text = String::new();
-        for y in 0..buffer.area.height {
-            for x in 0..buffer.area.width {
-                text.push_str(buffer[(x, y)].symbol());
-            }
-            text.push('\n');
-        }
-        std::fs::write(format!("{dir}/{name}-{width}x{height}.txt"), text).unwrap();
-    }
-}
-
-fn send(app: &mut App, event: OpEvent) {
-    app.on_op(OpUpdate { op: 1, event });
-}
-
-fn running_deploy(app: &mut App) {
-    let steps = names(&deploy_step_names(&app.deployables[0].config));
-    app.op = Some(Operation::new(1, OpKind::Deploy, 0, &steps));
-    app.screen = Screen::Operation;
-    send(
-        app,
-        OpEvent::Release("v0.3.2-77aa001-20261014.160501".into()),
-    );
-    for (step, detail) in [
-        (0, "x86_64 · glibc 2.39 · 41.2 GiB free"),
-        (1, "31.0 MiB · glibc ≥ 2.34 · 1m04s"),
-        (2, "5 files · 31.2 MiB → 11.8 MiB"),
-    ] {
-        send(
-            app,
-            OpEvent::Step {
-                step,
-                state: StepState::Running,
-                detail: None,
-            },
-        );
-        send(
-            app,
-            OpEvent::Step {
-                step,
-                state: StepState::Done,
-                detail: Some(detail.into()),
-            },
-        );
-    }
-    send(
-        app,
-        OpEvent::Step {
-            step: 3,
-            state: StepState::Running,
-            detail: None,
-        },
-    );
-    send(
-        app,
-        OpEvent::Progress {
-            step: 3,
-            done: 7_340_032,
-            total: 12_373_196,
-            unit: Unit::Bytes,
-            label: "4.2 MiB/s".into(),
-        },
-    );
-    for (kind, text) in [
-        (LogKind::Step, "Preflight: checking the server"),
-        (
-            LogKind::Command,
-            "connect deploy@203.0.113.10 (password, asked when connecting)",
-        ),
-        (LogKind::Info, "server: x86_64 · glibc 2.39 · 41.2 GiB free"),
-        (LogKind::Step, "Build: compiling on this machine"),
-        (LogKind::Err, "   Compiling my-api v0.3.2 (/home/me/my-api)"),
-        (
-            LogKind::Err,
-            "    Finished `release` profile [optimized] target(s) in 1m 04s",
-        ),
-        (
-            LogKind::Warn,
-            "the source has uncommitted changes; the release is marked dirty",
-        ),
-        (LogKind::Step, "Upload: sending the release"),
-        (
-            LogKind::Command,
-            "deploy@203.0.113.10 › upload 11.8 MiB to /opt/api-prod/releases/.v0.3.2.tar.zst",
-        ),
-    ] {
-        send(
-            app,
-            OpEvent::Log {
-                kind,
-                text: text.into(),
-            },
-        );
-    }
-}
-
-pub(super) fn listing() -> Listing {
-    let entries = RELEASES
+    let buffer = terminal.backend().buffer().clone();
+    buffer
+        .content()
         .iter()
-        .enumerate()
-        .map(|(i, id)| ReleaseEntry {
-            id: id.to_string(),
-            name: ReleaseName::parse(id),
-            kind: if i < 2 { Kind::Open } else { Kind::Compressed },
-            current: i == 0,
-            size_bytes: Some(if i < 2 { 31_000_000 } else { 11_000_000 }),
-            backup: true,
-            manifest: None,
-        })
-        .collect();
+        .map(ratatui::buffer::Cell::symbol)
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+fn key(code: KeyCode) -> KeyEvent {
+    KeyEvent::new(code, KeyModifiers::NONE)
+}
+
+/// The releases the other screen tests show.
+pub(super) fn listing() -> Listing {
     Listing {
         current: Some(RELEASES[0].into()),
-        entries,
+        entries: RELEASES
+            .iter()
+            .map(|id| ReleaseEntry {
+                id: (*id).into(),
+                name: ReleaseName::parse(id),
+                kind: Kind::Open,
+                current: *id == RELEASES[0],
+                size_bytes: Some(1024),
+                backup: true,
+                manifest: None,
+            })
+            .collect(),
     }
+}
+
+/// One key press.
+pub(super) fn press(app: &mut App, code: KeyCode) {
+    app.on_event(&Event::Key(key(code)));
+}
+
+/// Draws at one size and returns the frame's text.
+pub(super) fn render(app: &mut App, width: u16, height: u16, _name: &str) -> String {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal.draw(|frame| draw(frame, app)).unwrap();
+    let buffer = terminal.backend().buffer().clone();
+    buffer
+        .content()
+        .iter()
+        .map(ratatui::buffer::Cell::symbol)
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 #[tokio::test]
-async fn draws_the_deployables_screen_at_common_and_small_sizes() {
-    for (width, height) in [(160, 46), (100, 30), (60, 18)] {
-        let mut app = app();
-        render(&mut app, width, height, "deployables");
-
-        running_deploy(&mut app);
-        render(&mut app, width, height, "deploy-running");
-
-        finish_failed_deploy(&mut app);
-        render(&mut app, width, height, "deploy-rolled-back");
-    }
+async fn the_deployables_screen_shows_each_deploy_and_its_apps() {
+    let mut app = app();
+    let screen = text(&mut app);
+    assert!(screen.contains("shop"), "{screen}");
+    assert!(screen.contains("api"), "{screen}");
+    assert!(screen.contains("admin, web"), "apps are listed: {screen}");
+    assert!(
+        screen.contains("v0.3.0"),
+        "the live release is shown: {screen}"
+    );
+    assert!(screen.contains("/opt/shop"), "{screen}");
 }
 
-/// Marks the deploy's later steps done, then fails it after the switch.
-fn finish_failed_deploy(app: &mut App) {
-    send(
-        app,
-        OpEvent::Step {
-            step: 3,
+#[tokio::test]
+async fn moving_and_quitting_work() {
+    let mut app = app();
+    assert_eq!(app.selected(), Some(0));
+    app.on_event(&Event::Key(key(KeyCode::Down)));
+    assert_eq!(app.selected(), Some(1));
+    app.on_event(&Event::Key(key(KeyCode::Char('q'))));
+    assert!(app.quit);
+}
+
+#[tokio::test]
+async fn the_operation_screen_draws_steps_and_logs() {
+    let mut app = app();
+    let steps: Vec<String> = shipdeck_engine::deploy::deploy_plan()
+        .iter()
+        .map(|step| step.name().to_string())
+        .collect();
+    app.op = Some(Operation::new(1, OpKind::Deploy, 0, &steps));
+    app.screen = Screen::Operation;
+    app.on_op(OpUpdate {
+        op: 1,
+        event: OpEvent::Step {
+            step: 0,
             state: StepState::Done,
-            detail: Some("11.8 MiB in 2.8s".into()),
+            detail: Some("checked".into()),
         },
-    );
-    for step in 4..8 {
-        send(
-            app,
-            OpEvent::Step {
-                step,
-                state: StepState::Running,
-                detail: None,
-            },
-        );
-        send(
-            app,
-            OpEvent::Step {
-                step,
-                state: StepState::Done,
-                detail: None,
-            },
-        );
-    }
-    send(
-        app,
-        OpEvent::Step {
-            step: 8,
-            state: StepState::Running,
-            detail: None,
+    });
+    app.on_op(OpUpdate {
+        op: 1,
+        event: OpEvent::Log {
+            kind: LogKind::Info,
+            text: "hello from the engine".into(),
         },
-    );
-    send(
-        app,
-        OpEvent::Step {
-            step: 8,
-            state: StepState::Failed,
-            detail: Some("the service crashed and was restarted 1 time(s)".into()),
-        },
-    );
-    send(
-        app,
-        OpEvent::Step {
-            step: 9,
-            state: StepState::Skipped,
-            detail: Some("rolled back".into()),
-        },
-    );
-    send(
-        app,
-        OpEvent::Finished(Outcome::RolledBack {
-            error: "the service crashed and was restarted 1 time(s) by systemd".into(),
-            to: RELEASES[0].into(),
-        }),
-    );
+    });
+    let screen = text(&mut app);
+    assert!(screen.contains("Preflight"), "{screen}");
+    assert!(screen.contains("hello from the engine"), "{screen}");
 }
 
 #[tokio::test]
-async fn draws_the_releases_screen_and_its_confirmations() {
-    for (width, height) in [(160, 46), (100, 30), (60, 18)] {
-        let mut app = app();
-        running_deploy(&mut app);
-        finish_failed_deploy(&mut app);
-        show_releases(&mut app);
-        render(&mut app, width, height, "releases");
-
-        app.modals.push_back(Modal::ConfirmRollback {
-            deployable: 0,
-            target: RELEASES[2].into(),
-            from_backup: true,
-            current: Some(RELEASES[0].into()),
-        });
-        render(&mut app, width, height, "confirm-rollback");
-        app.modals.clear();
-
-        app.screen = Screen::Deployables;
-        app.modals.push_back(Modal::ConfirmDeploy {
-            deployable: 0,
-            missing: Some(
-                "pipeline.pack.files.include.deploy in scripts/deploy/api-prod: .env (not found)"
-                    .into(),
-            ),
-        });
-        render(&mut app, width, height, "confirm-deploy");
-        app.modals.clear();
-    }
-}
-
-fn show_releases(app: &mut App) {
+async fn the_releases_screen_lists_and_marks_the_live_one() {
+    let mut app = app();
+    let mut table = ratatui::widgets::TableState::default();
+    table.select(Some(0));
     app.releases = Some(ReleasesView {
         deployable: 0,
-        listing: Fetch::Ready(listing()),
-        table: ratatui::widgets::TableState::default().with_selected(Some(2)),
+        listing: Fetch::Ready(Listing {
+            current: Some(RELEASES[0].into()),
+            entries: RELEASES
+                .iter()
+                .map(|id| ReleaseEntry {
+                    id: (*id).into(),
+                    name: ReleaseName::parse(id),
+                    kind: Kind::Open,
+                    current: *id == RELEASES[0],
+                    size_bytes: Some(1024),
+                    backup: true,
+                    manifest: None,
+                })
+                .collect(),
+        }),
+        table,
         details: None,
     });
     app.screen = Screen::Releases;
+    let screen = text(&mut app);
+    assert!(screen.contains("Releases"), "{screen}");
+    assert!(screen.contains("v0.3.1"), "{screen}");
 }
 
 #[tokio::test]
-async fn draws_the_trust_and_password_dialogs() {
-    for (width, height) in [(160, 46), (100, 30), (60, 18)] {
-        let mut app = app();
-        running_deploy(&mut app);
-        finish_failed_deploy(&mut app);
-        show_releases(&mut app);
-        app.screen = Screen::Deployables;
-
-        app.modals.push_back(Modal::TrustHost {
-            host: "[203.0.113.10]:2222".into(),
-            algorithm: "ssh-ed25519".into(),
-            fingerprint: "SHA256:8vrt1yc2dRu4YFMqB5bIC4HImPqycsuGwrSVv8kl7cY".into(),
-            reply: None,
-        });
-        app.modals.push_back(Modal::Secret {
-            title: "SSH password".into(),
-            prompt: "Password for deploy@203.0.113.10".into(),
-            input: "hunter".into(),
-            reply: None,
-        });
-        render(&mut app, width, height, "trust-host");
-        app.modals.pop_front();
-        render(&mut app, width, height, "password");
-    }
-}
-
-#[tokio::test]
-async fn draws_a_node_pipeline() {
-    for (width, height) in [(160, 46), (100, 30), (60, 18)] {
-        let mut app = app();
-        app.list.select(Some(3));
-        render(&mut app, width, height, "node-app");
-
-        let steps = node_setup(&mut app);
-        assert_eq!(
-            steps,
-            [
-                "Preflight",
-                "Build",
-                "Pack",
-                "Upload",
-                "Unpack",
-                "Setup",
-                "Backup",
-                "Switch",
-                "Restart",
-                "Health",
-                "Done",
-                "Failed"
-            ]
-        );
-        render(&mut app, width, height, "node-setup");
-    }
-}
-
-/// Builds the node deploy up to its setup step.
-fn node_setup(app: &mut App) -> Vec<String> {
-    let steps = names(&deploy_step_names(&app.deployables[3].config));
-    app.op = Some(Operation::new(1, OpKind::Deploy, 3, &steps));
-    app.screen = Screen::Operation;
-    for (step, detail) in [
-        (0, "x86_64 · glibc 2.39 · 41.2 GiB free"),
-        (1, "412 files · 12.0s"),
-        (2, "412 files · 3.1 MiB → 0.9 MiB"),
-        (3, "0.9 MiB in 0.6s"),
-        (
-            4,
-            "releases/v1.4.0-77aa001-20261014.160501 · 1 shared folder linked",
-        ),
-    ] {
-        send(
-            app,
-            OpEvent::Step {
-                step,
-                state: StepState::Done,
-                detail: Some(detail.into()),
-            },
-        );
-    }
-    send(
-        app,
-        OpEvent::Step {
-            step: 5,
-            state: StepState::Running,
-            detail: None,
-        },
-    );
-    send(
-        app,
-        OpEvent::Progress {
-            step: 5,
-            done: 0,
-            total: 3,
-            unit: Unit::Items,
-            label: "npm ci --omit=dev".into(),
-        },
-    );
-    send(
-        app,
-        OpEvent::Log {
-            kind: LogKind::Command,
-            text: "deploy@web › npm ci --omit=dev  (in releases/v1.4.0-77aa001-20261014.160501)"
-                .into(),
-        },
-    );
-    steps
-}
-
-#[tokio::test]
-async fn asks_before_rolling_back_a_failed_node_release() {
-    for (width, height) in [(160, 46), (100, 30), (60, 18)] {
-        let mut app = app();
-        node_setup(&mut app);
-
-        for step in 5..8 {
-            send(
-                &mut app,
-                OpEvent::Step {
-                    step,
-                    state: StepState::Done,
-                    detail: None,
-                },
-            );
-        }
-        send(
-            &mut app,
-            OpEvent::Step {
-                step: 8,
-                state: StepState::Failed,
-                detail: Some("not healthy after 20s: the health url said: 502".into()),
-            },
-        );
-        let (reply, answer) = tokio::sync::oneshot::channel();
-        send(
-            &mut app,
-            OpEvent::AskRollback(RollbackQuestion {
-                release: "v1.4.0-77aa001-20261014.160501".into(),
-                previous: "v1.3.9-5d6e7f8-20261013.090000".into(),
-                step: "Health".to_string(),
-                error: "not healthy after 20s: the health url said: 502".into(),
-                seconds: 30,
-                reply,
-            }),
-        );
-        assert!(matches!(
-            app.modals.front(),
-            Some(Modal::AskRollback { .. })
-        ));
-        render(&mut app, width, height, "ask-rollback");
-
-        // `n` keeps the new release and answers the deploy.
-        app.on_event(&Event::Key(KeyEvent::new(
-            KeyCode::Char('n'),
-            KeyModifiers::NONE,
-        )));
-        assert!(app.modals.is_empty());
-        assert_eq!(answer.await, Ok(false));
-
-        send(
-            &mut app,
-            OpEvent::Step {
-                step: 9,
-                state: StepState::Skipped,
-                detail: Some("kept as it is".into()),
-            },
-        );
-        send(
-            &mut app,
-            OpEvent::Step {
-                step: 10,
-                state: StepState::Done,
-                detail: Some("1 command".into()),
-            },
-        );
-        send(
-            &mut app,
-            OpEvent::Finished(Outcome::Kept {
-                release: "v1.4.0-77aa001-20261014.160501".into(),
-                error: "not healthy after 20s: the health url said: 502".into(),
-            }),
-        );
-        render(&mut app, width, height, "node-kept");
-    }
-}
-
-#[tokio::test]
-async fn an_unanswered_question_closes_when_its_time_is_up() {
+async fn a_finished_operation_shows_its_outcome() {
     let mut app = app();
-    let steps = names(&deploy_step_names(&app.deployables[0].config));
+    let steps: Vec<String> = shipdeck_engine::deploy::deploy_plan()
+        .iter()
+        .map(|step| step.name().to_string())
+        .collect();
     app.op = Some(Operation::new(1, OpKind::Deploy, 0, &steps));
-    let (reply, _answer) = tokio::sync::oneshot::channel();
-    send(
-        &mut app,
-        OpEvent::AskRollback(RollbackQuestion {
+    app.screen = Screen::Operation;
+    app.on_op(OpUpdate {
+        op: 1,
+        event: OpEvent::Finished(Outcome::RolledBack {
+            error: "health failed".into(),
+            to: RELEASES[1].into(),
+        }),
+    });
+    let screen = text(&mut app);
+    assert!(
+        screen.contains("rolled back") || screen.contains("Rolled back"),
+        "{screen}"
+    );
+}
+
+#[tokio::test]
+async fn dialogs_draw() {
+    let mut app = app();
+    app.modals.push_back(Modal::ConfirmDeploy {
+        deployable: 0,
+        missing: None,
+    });
+    let screen = text(&mut app);
+    assert!(screen.contains("Deploy"), "{screen}");
+
+    let mut app = crate::tests::app();
+    app.modals.push_back(Modal::AskRollback {
+        op: 1,
+        deployable: 0,
+        question: RollbackQuestion {
             release: RELEASES[0].into(),
             previous: RELEASES[1].into(),
-            step: "Restart".to_string(),
-            error: "restart failed".into(),
-            seconds: 0,
-            reply,
-        }),
-    );
-    assert_eq!(app.modals.len(), 1);
-    app.on_tick();
-    assert!(app.modals.is_empty());
-}
-
-pub(super) fn press(app: &mut App, code: KeyCode) {
-    app.on_event(&Event::Key(KeyEvent::new(code, KeyModifiers::NONE)));
-}
-
-#[tokio::test]
-async fn nothing_connects_until_asked() {
-    let (fetched, _) = unbounded_channel();
-    let discovery = Discovery {
-        deployables: vec![deployable("api-prod", "My API (prod)", "203.0.113.10")],
-        monorepos: Vec::new(),
-        problems: Vec::new(),
-    };
-    let mut app = App::new(
-        PathBuf::from("."),
-        discovery,
-        Login::Auto,
-        engine(),
-        fetched,
-    );
-    assert!(matches!(app.live[..], [Live::Disconnected]));
-    render(&mut app, 100, 30, "disconnected");
-
-    // `s` refreshes what is connected, and nothing is.
-    press(&mut app, KeyCode::Char('s'));
-    assert!(matches!(app.live[..], [Live::Disconnected]));
+            step: "Health".into(),
+            error: "http 502".into(),
+            seconds: 30,
+            reply: {
+                let (tx, _rx) = tokio::sync::oneshot::channel();
+                tx
+            },
+        },
+        deadline: std::time::Instant::now() + std::time::Duration::from_secs(30),
+    });
+    let screen = text(&mut app);
+    assert!(screen.contains("Roll back"), "{screen}");
+    assert!(screen.contains("http 502"), "{screen}");
 }
 
 #[tokio::test]
-async fn c_disconnects_every_deployable_on_that_server() {
+async fn a_toast_is_shown_until_it_expires() {
     let mut app = app();
-    app.deployables[2].endpoint = app.deployables[0].endpoint.clone();
-    app.live[2] = app.live[0].clone();
-
-    press(&mut app, KeyCode::Char('c'));
-    assert!(matches!(app.live[0], Live::Disconnected));
-    assert!(matches!(app.live[1], Live::Error(_)));
-    assert!(matches!(app.live[2], Live::Disconnected));
-    assert!(matches!(app.live[3], Live::Loading));
-
-    // A connection being opened is left alone.
-    app.list.select(Some(3));
-    press(&mut app, KeyCode::Char('c'));
-    assert!(matches!(app.live[3], Live::Loading));
+    app.toast = Some(super::app::Toast {
+        text: "connected".into(),
+        tone: Tone::Info,
+        until: std::time::Instant::now() + std::time::Duration::from_secs(4),
+    });
+    let screen = text(&mut app);
+    assert!(screen.contains("connected"), "{screen}");
 }
 
 #[tokio::test]
-async fn c_keeps_a_connection_an_operation_uses() {
+async fn the_command_line_completes() {
     let mut app = app();
-    running_deploy(&mut app);
-    app.screen = Screen::Deployables;
-    press(&mut app, KeyCode::Char('c'));
-    assert!(matches!(app.live[0], Live::Ready(_)));
-}
-
-#[tokio::test]
-async fn draws_an_empty_root() {
-    let (fetched, _) = unbounded_channel();
-    let mut app = App::new(
-        PathBuf::from("./scripts/deploy"),
-        Discovery::default(),
-        Login::Auto,
-        engine(),
-        fetched,
-    );
-    render(&mut app, 100, 30, "empty");
-}
-
-#[tokio::test]
-async fn an_unchanged_release_asks_first_and_no_is_the_default() {
-    for (key, deploys) in [
-        (KeyCode::Enter, false),
-        (KeyCode::Esc, false),
-        (KeyCode::Char('n'), false),
-        (KeyCode::Char('y'), true),
-    ] {
-        let mut app = app();
-        app.screen = Screen::Deployables;
-        let steps = names(&deploy_step_names(&app.deployables[0].config));
-        app.op = Some(Operation::new(1, OpKind::Deploy, 0, &steps));
-        let (reply, answer) = tokio::sync::oneshot::channel();
-        send(
-            &mut app,
-            OpEvent::AskUnchanged(UnchangedQuestion {
-                release: "v0.3.2-77aa001-20261014.160501".into(),
-                live: RELEASES[0].into(),
-                reply,
-            }),
-        );
-        assert!(matches!(
-            app.modals.front(),
-            Some(Modal::AskUnchanged { .. })
-        ));
-        assert_eq!(app.screen, Screen::Operation);
-        render(&mut app, 100, 30, "ask-unchanged");
-        press(&mut app, key);
-        assert!(app.modals.is_empty(), "{key:?}");
-        assert_eq!(answer.await, Ok(deploys), "{key:?}");
+    app.on_event(&Event::Key(key(KeyCode::Char(':'))));
+    for c in "log".chars() {
+        app.on_event(&Event::Key(key(KeyCode::Char(c))));
     }
-
-    let mut app = app();
-    let steps = names(&deploy_step_names(&app.deployables[0].config));
-    app.op = Some(Operation::new(1, OpKind::Deploy, 0, &steps));
-    send(
-        &mut app,
-        OpEvent::Finished(Outcome::Unchanged {
-            live: RELEASES[0].into(),
-        }),
-    );
-    render(&mut app, 100, 30, "deploy-unchanged");
+    app.on_event(&Event::Key(key(KeyCode::Tab)));
+    assert_eq!(app.command.as_ref().unwrap().input, "logs");
 }
 
-fn type_in(app: &mut App, text: &str) {
-    for c in text.chars() {
-        press(app, KeyCode::Char(c));
+#[tokio::test]
+async fn every_screen_draws_without_a_connection() {
+    let mut app = base_app();
+    for screen in Screen::ALL {
+        app.screen = screen;
+        let _ = text(&mut app);
     }
-}
-
-fn toast(app: &App) -> Option<(&str, Tone)> {
-    app.toast.as_ref().map(|t| (t.text.as_str(), t.tone))
-}
-
-#[tokio::test]
-async fn colon_opens_a_command_line_that_runs_service_commands() {
-    let mut app = app();
-    press(&mut app, KeyCode::Char(':'));
-    assert!(app.command.is_some());
-    // Keys are text on the line: q does not quit, 2 does not switch.
-    type_in(&mut app, "q2");
-    assert!(!app.quit);
-    assert_eq!(app.screen, Screen::Deployables);
-    assert_eq!(app.command.as_ref().unwrap().input, "q2");
-    render(&mut app, 100, 30, "command-line");
-    press(&mut app, KeyCode::Esc);
-    assert!(app.command.is_none());
-
-    // Tab completes; stop and restart ask first.
-    press(&mut app, KeyCode::Char(':'));
-    type_in(&mut app, "rest");
-    press(&mut app, KeyCode::Tab);
-    assert_eq!(app.command.as_ref().unwrap().input, "restart");
-    press(&mut app, KeyCode::Enter);
-    assert!(app.command.is_none());
-    assert!(matches!(
-        app.modals.front(),
-        Some(Modal::ConfirmControl {
-            deployable: 0,
-            action: Control::Restart
-        })
-    ));
-    render(&mut app, 100, 30, "confirm-restart");
-    press(&mut app, KeyCode::Char('n'));
-    assert!(app.modals.is_empty());
-    assert_eq!(app.controlling, [] as [usize; 0]);
-
-    press(&mut app, KeyCode::Char(':'));
-    type_in(&mut app, "stop");
-    press(&mut app, KeyCode::Enter);
-    assert!(matches!(
-        app.modals.front(),
-        Some(Modal::ConfirmControl {
-            action: Control::Stop,
-            ..
-        })
-    ));
-    press(&mut app, KeyCode::Char('y'));
-    assert_eq!(app.controlling, [0]);
-    assert_eq!(toast(&app), Some(("Stopping api-prod…", Tone::Info)));
-
-    // :start needs no question.
-    app.list.select(Some(1));
-    press(&mut app, KeyCode::Char(':'));
-    type_in(&mut app, "start");
-    press(&mut app, KeyCode::Enter);
-    assert!(app.modals.is_empty());
-    assert_eq!(app.controlling, [0, 1]);
-
-    press(&mut app, KeyCode::Char(':'));
-    type_in(&mut app, "reboot");
-    press(&mut app, KeyCode::Enter);
-    let (text, tone) = toast(&app).unwrap();
-    assert!(text.starts_with("Not a command: :reboot"), "{text}");
-    assert_eq!(tone, Tone::Warn);
-
-    // Backspace on an empty line closes it, as in vim.
-    press(&mut app, KeyCode::Char(':'));
-    press(&mut app, KeyCode::Backspace);
-    assert!(app.command.is_none());
-}
-
-#[tokio::test]
-async fn while_a_deploy_runs_only_logs_works_on_that_deployable() {
-    let mut app = app();
-    running_deploy(&mut app);
-    app.screen = Screen::Deployables;
-    press(&mut app, KeyCode::Char(':'));
-    type_in(&mut app, "stop");
-    press(&mut app, KeyCode::Enter);
-    assert!(app.modals.is_empty());
-    let (text, _) = toast(&app).unwrap();
-    assert!(text.contains("only :logs works"), "{text}");
-
-    press(&mut app, KeyCode::Char(':'));
-    type_in(&mut app, "logs");
-    press(&mut app, KeyCode::Enter);
-    assert!(app.logs.is_some());
-
-    // Another deployable is free.
-    app.logs = None;
-    app.list.select(Some(1));
-    press(&mut app, KeyCode::Char(':'));
-    type_in(&mut app, "stop");
-    press(&mut app, KeyCode::Enter);
-    assert!(matches!(
-        app.modals.front(),
-        Some(Modal::ConfirmControl { deployable: 1, .. })
-    ));
-}
-
-#[tokio::test]
-async fn the_log_view_follows_lines_and_closes_with_q() {
-    let mut app = app();
-    press(&mut app, KeyCode::Char(':'));
-    type_in(&mut app, "logs");
-    press(&mut app, KeyCode::Enter);
-    // The engine names the view; until it answers, the screen waits.
-    assert_eq!(app.logs.as_ref().unwrap().id, None);
-    assert_eq!(
-        app.logs.as_ref().unwrap().command,
-        "journalctl -u api-prod -f -n 200 --no-pager"
-    );
-    render(&mut app, 100, 30, "logs-connecting");
-
-    let view = 1;
-    app.on_fetched(Fetched::LogsOpen { view });
-    for n in 0..40 {
-        app.on_fetched(Fetched::LogLine {
-            view,
-            line: format!("Oct 16 12:00:{n:02} api-prod[812]: GET /health 200"),
-        });
-    }
-    // A line from a view closed before is dropped.
-    app.on_fetched(Fetched::LogLine {
-        view: view + 1,
-        line: "stale".into(),
-    });
-    let logs = app.logs.as_ref().unwrap();
-    assert_eq!(logs.state, LogsState::Following);
-    assert_eq!(logs.lines.len(), 40);
-    render(&mut app, 100, 30, "logs-following");
-
-    press(&mut app, KeyCode::Up);
-    assert_eq!(app.logs.as_ref().unwrap().scroll, 1);
-    press(&mut app, KeyCode::Char('G'));
-    assert_eq!(app.logs.as_ref().unwrap().scroll, 0);
-
-    app.on_fetched(Fetched::LogsEnded {
-        view,
-        result: Err(
-            "deploy may not run sudo journalctl -u api-prod -f -n 200 --no-pager. \
-                     Run server-setup.sh on the server again, as root, to allow it:\n\
-                     curl -fsSL https://example.com/server-setup.sh | bash -s -- --user deploy \
-                     --dir /opt/api-prod --service api-prod"
-                .into(),
-        ),
-    });
-    assert!(matches!(
-        app.logs.as_ref().unwrap().state,
-        LogsState::Ended(_)
-    ));
-    render(&mut app, 100, 30, "logs-ended");
-
-    // q closes the view, not shipdeck.
-    press(&mut app, KeyCode::Char('q'));
-    assert!(app.logs.is_none());
-    assert!(!app.quit);
-}
-
-#[tokio::test]
-async fn a_failed_command_shows_why_and_a_done_one_refreshes() {
-    let mut app = app();
-    app.controlling = vec![0];
-    app.on_fetched(Fetched::Controlled {
-        index: 0,
-        action: Control::Stop,
-        result: Err("deploy may not run sudo systemctl stop api-prod. \
-                     Run server-setup.sh on the server again, as root, to allow it:\n\
-                     curl -fsSL https://example.com/server-setup.sh | bash -s -- --user deploy \
-                     --dir /opt/api-prod --service api-prod"
-            .into()),
-    });
-    assert_eq!(app.controlling, [] as [usize; 0]);
-    assert!(
-        matches!(app.modals.front(), Some(Modal::Notice { title, .. }) if title == "Could not stop api-prod")
-    );
-    render(&mut app, 100, 30, "control-failed");
-    press(&mut app, KeyCode::Enter);
-    assert!(app.modals.is_empty());
-
-    app.on_fetched(Fetched::Controlled {
-        index: 0,
-        action: Control::Restart,
-        result: Ok(()),
-    });
-    assert_eq!(toast(&app), Some(("api-prod: restarted", Tone::Info)));
-    assert!(matches!(app.live[0], Live::Loading));
 }

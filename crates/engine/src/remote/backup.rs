@@ -2,14 +2,9 @@
 //! (`pipeline.backup.files`), packing it on the server after setup, and
 //! unpacking it again for a rollback, which then runs setup once more.
 
-use std::collections::{BTreeSet, HashMap};
-use std::path::Path;
-
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, bail};
 
 use super::{Server, ensure_id};
-use crate::config::BackupFiles;
-use crate::config::glob::{Rules, Verdict};
 use crate::deploy::report::{LogKind, Reporter};
 use crate::ssh::sh_quote;
 
@@ -19,68 +14,6 @@ pub struct ReleaseFile {
     /// Relative to the release, `/`-separated.
     pub path: String,
     pub is_dir: bool,
-}
-
-/// What goes into a backup.
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct Picked {
-    /// Parents before what is inside them.
-    pub paths: Vec<String>,
-    /// `include` patterns that matched nothing in the release.
-    pub unmatched: Vec<String>,
-}
-
-/// Picks the paths of a release that go into its backup: `own` (shipdeck's
-/// files) always; `deployed` when `files.deployed` says so; whatever
-/// `files.include` names; minus `files.exclude`. `shared` folders are links
-/// to `shared/`, never part of a release.
-///
-/// # Errors
-/// Returns an error when a `pipeline.backup.files` pattern is invalid.
-pub fn pick(
-    listing: &[ReleaseFile],
-    deployed: &BTreeSet<String>,
-    own: &[String],
-    shared: &[String],
-    files: &BackupFiles,
-) -> Result<Picked> {
-    let rules = Rules::parse(&files.include, &files.exclude)
-        .map_err(|why| anyhow!("pipeline.backup.files: {why}"))?;
-    let mut hits = vec![0; rules.include.len()];
-    let root = rules.judge(Verdict::default(), "", true, &mut hits);
-    let mut sorted: Vec<&ReleaseFile> = listing.iter().collect();
-    sorted.sort_by(|a, b| a.path.cmp(&b.path));
-    let mut folders: HashMap<&str, Verdict> = HashMap::new();
-    let mut paths = Vec::new();
-    for file in sorted {
-        let path = file.path.as_str();
-        if shared
-            .iter()
-            .any(|folder| Path::new(path).starts_with(Path::new(folder.as_str())))
-        {
-            continue;
-        }
-        let parent = match path.rsplit_once('/') {
-            Some((parent, _)) => folders.get(parent).copied().unwrap_or(root),
-            None => root,
-        };
-        let verdict = rules.judge(parent, path, file.is_dir, &mut hits);
-        if file.is_dir {
-            folders.insert(path, verdict);
-        }
-        let wanted = (files.deployed && deployed.contains(path)) || verdict.included();
-        if own.iter().any(|o| o == path) || (wanted && !verdict.excluded()) {
-            paths.push(file.path.clone());
-        }
-    }
-    let unmatched = rules
-        .include
-        .iter()
-        .zip(&hits)
-        .filter(|(pattern, hits)| !pattern.negated && **hits == 0)
-        .map(|(pattern, _)| pattern.text.clone())
-        .collect();
-    Ok(Picked { paths, unmatched })
 }
 
 /// Reads the records the listing script prints: `d<path>` or `f<path>`,

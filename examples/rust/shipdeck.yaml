@@ -1,26 +1,5 @@
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.1/docs/schema/deploy.schema.json
-# A Rust service: compiled here, only the binary and its .env travel.
-name: My API (prod)
-project: ../../../my-api          # your source, relative to this file
-dir: /opt/my-api                  # current/ releases/ backups/ shared/
+# The project file: its deploys by name.
+# Rules: docs/feature/config-v2.md
 
-ssh:
-  host: prod                      # an address, or an alias from ~/.ssh/config
-  user: deploy                    # optional when the alias has a User
-
-service:
-  name: my-api                    # my-api.service
-  start: ./my-api -E=.env         # default: ./<binary>
-
-pipeline:
-  build:
-    run:
-      # Build against the server's glibc so the binary runs there.
-      local: cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31
-  pack:
-    binary: target/x86_64-unknown-linux-gnu/release/my-api
-    files:
-      include:
-        deploy: [.env]            # next to this file; gitignored
-  health:
-    url: http://127.0.0.1:8080/health
+deploys:
+  production: deploy.yaml

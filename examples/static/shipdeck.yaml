@@ -1,14 +1,5 @@
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.1/docs/schema/deploy.schema.json
-# A static site: dist is packed and switched, and nginx serves current/dist.
-name: Static site
-dir: /var/www/static
-ssh: { host: prod, user: deploy }
-static:
-  root: dist
-pipeline:
-  pack:
-    files:
-      include:
-        project: [dist]
-  health:
-    url: https://static.example.com/
+# The project file: its deploys by name.
+# Rules: docs/feature/config-v2.md
+
+deploys:
+  production: deploy.yaml

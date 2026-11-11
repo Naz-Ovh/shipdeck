@@ -33,8 +33,9 @@ pub(crate) struct Choices {
     pub(crate) trust_new_host: bool,
     /// Deploy a release the live one already holds.
     pub(crate) allow_unchanged: bool,
-    /// What a failure after the switch does; overrides `pipeline.failed`.
-    pub(crate) on_failure: OnFailure,
+    /// What a failure after the switch does; `None` leaves it to the deploy
+    /// file's `release.steps.rollback.mode`.
+    pub(crate) on_failure: Option<OnFailure>,
 }
 
 /// A run against the engine: one command, one folder, no questions.
@@ -68,7 +69,7 @@ impl Console {
             self.heading("deploy", project);
             let asked = DeployStart {
                 deployable: project.slug.clone(),
-                on_failure: Some(self.choices.on_failure),
+                on_failure: self.choices.on_failure,
             };
             let started = match self
                 .connection
@@ -561,7 +562,7 @@ fn answer(handle: &Handle, paint: Paint, choices: Choices, id: Id, ask: Ask) {
             let _ = handle.answer(id, &choices.allow_unchanged);
         }
         Ask::Rollback(_) => {
-            let _ = handle.answer(id, &(choices.on_failure == OnFailure::Rollback));
+            let _ = handle.answer(id, &(choices.on_failure != Some(OnFailure::Keep)));
         }
     }
 }

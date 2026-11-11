@@ -1,0 +1,122 @@
+---
+title: Config
+description: The project file, the deploy file, path rules and how shipdeck checks them.
+---
+
+shipdeck reads two kinds of file. A **project file** lists the deploys of a repository.
+A **deploy file** is one whole deploy: the server, the release and every app.
+
+## The project file
+
+`shipdeck.yaml` or `.shipdeck`, in the folder you run shipdeck in. Exactly those two
+names: `shipdeck.yml` is not read, and having both is an error.
+
+```yaml title="shipdeck.yaml"
+deploys:
+  production: scripts/deploy/production.yaml
+  staging: scripts/deploy/staging.yaml
+```
+
+Each value is that deploy's deploy file, a path on your PC. `shipdeck deploy production`
+reads this file, then `production`'s deploy file.
+
+## The deploy file
+
+One file per deploy. It can live anywhere, under any name, and it needs no project
+file when you name it with `--shipdeckfile`:
+
+```sh
+shipdeck --shipdeckfile=scripts/deploy/production.yaml deploy
+```
+
+It has four parts:
+
+| Key | Holds |
+| --- | --- |
+| `name` | the deploy's name; default process names start with it |
+| `server` | `ssh` and `dir`, the server folder |
+| `release` | files, shared folders and the steps for the whole release |
+| `apps` | one entry per app: its source, files and process, or `static: true` |
+
+```yaml title="scripts/deploy/production.yaml"
+name: shop
+server:
+  ssh: { host: prod, user: deploy }
+  dir: /opt/shop
+
+release:
+  files: [package.json, packages]
+  steps:
+    build:
+      local: pnpm run build
+
+apps:
+  api:
+    source: services/api
+    files: [services/api/dist]
+    process:
+      start: node dist/main.js
+      systemd: {}
+```
+
+Every property is listed in [shipdeck man configs](/docs/reference/config), and the
+full shape with every default is in
+[config-v2/reference.yaml](https://github.com/Naz-Ovh/shipdeck/blob/main/docs/feature/config-v2/reference.yaml).
+
+## Paths on your PC
+
+Every path to a file on your PC takes one of three forms:
+
+| Written | Means |
+| --- | --- |
+| `/opt/x` | absolute |
+| `apps/x` | from the project folder: the one you run shipdeck in |
+| `./x` or `../x` | from the folder of the config file that holds it |
+
+That covers `deploys`, `source`, `files`, `binary`, `version_from` and
+`process.systemd.template`. An `exclude` pattern matches the path from the project folder.
+
+Paths in a release are different: `to`, `nginx.root`, `env_file`, `shared`, `start` and
+`pm2.ecosystem` are on the server, inside a release. They never point at your PC.
+
+## Two levels, nothing copied
+
+`release:` runs or applies once for the whole deploy. `apps.<app>:` is that app only.
+Nothing is copied from `release` into an app, so a setting for one app is written under
+that app. Apps run in name order, everywhere.
+
+## Checks
+
+Every value is checked when the file is read, in three passes, so every problem in every
+file is reported at once:
+
+1. **YAML**, keeping each key's line and column. One document per file; a key written
+   twice in the same map is refused.
+2. **The shape**, against the JSON Schema: unknown keys (with "did you mean"), wrong
+   types, a value in the wrong place.
+3. **The values**: required and refused keys per kind of app, one manager per process,
+   reserved properties, names, release paths, and every `{{NAME}}` in its place.
+
+Any problem stops shipdeck before it logs in anywhere. See
+[Config problems](/docs/reference/config-problems).
+
+## YAML notes
+
+- `key:` with nothing after it means "use the default".
+- Quote a value that starts with `{`, `[`, `!` or `*`: YAML would read a map, a list, a
+  tag or an alias.
+- A command is one string or a list. Quote a value that holds `: `, or YAML reads it as
+  a map; shipdeck says so when it happens.
+- Anchors and aliases work within one file.
+- Save config files with LF line endings.
+
+## Editor completion
+
+Every config file can start with a schema line, and `shipdeck init` writes one:
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v<version>/docs/schema/deploy.schema.json
+```
+
+The schema is generated from shipdeck's own types, so it cannot drift from the code.
+`shipdeck --schema` prints it.

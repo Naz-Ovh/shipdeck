@@ -6,7 +6,6 @@ use shipdeck_protocol::message::request::SetupAccess;
 
 use super::{App, Fetch, Modal, Screen, Tone};
 use crate::command::{self, CommandLine};
-use shipdeck_engine::bundle::files::{self, Source};
 use shipdeck_engine::remote::{Control, Kind};
 
 impl App {
@@ -112,12 +111,9 @@ impl App {
                     if self.op_running() {
                         self.notify("An operation is already running", Tone::Warn);
                     } else {
-                        let missing = files::walk_source(&self.deployables[index], Source::Deploy)
-                            .err()
-                            .map(|err| format!("{err:#}"));
                         self.modals.push_back(Modal::ConfirmDeploy {
                             deployable: index,
-                            missing,
+                            missing: None,
                         });
                     }
                 }

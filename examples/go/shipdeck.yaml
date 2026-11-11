@@ -1,37 +1,5 @@
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.1/docs/schema/deploy.schema.json
-# A Go service: a static binary needs nothing from the server.
-name: Worker (prod)
-project: ../../../worker
-dir: /opt/worker
+# The project file: its deploys by name.
+# Rules: docs/feature/config-v2.md
 
-ssh:
-  host: prod
-
-service:
-  name: worker
-  start: ./worker --config config.yaml
-  env_file: .env                  # the service's environment; server commands load it too
-  env:
-    GOMAXPROCS: "2"
-
-pipeline:
-  preflight:
-    run:
-      local: go vet ./...
-  build:
-    # No version file: the version is the latest git tag (v1.2.0 → 1.2.0).
-    run:
-      local: CGO_ENABLED=0 go build -ldflags "-X main.version=$SHIPDECK_VERSION" -o dist/worker ./cmd/worker
-  pack:
-    binary: dist/worker
-    files:
-      include:
-        project: [templates]
-        deploy: [.env, config.yaml]
-  backup:
-    keep: { open: 3, compressed: 10 }
-  health:
-    check:
-      server: ./worker healthcheck  # runs in current/, retried until timeout_secs
-  failed:
-    rollback: auto                  # no question: roll back at once
+deploys:
+  production: deploy.yaml

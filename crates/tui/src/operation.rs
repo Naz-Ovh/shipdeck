@@ -47,7 +47,6 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
 
 fn banner(frame: &mut Frame, area: Rect, app: &App, op: &Operation) {
     let deployable = &app.deployables[op.deployable];
-    let config = &deployable.config;
     let (title, color) = match (&op.kind, &op.finished) {
         (_, None) => (op_title(op), ACCENT),
         (_, Some((Outcome::Succeeded { .. }, _))) => (op_title(op), OK),
@@ -87,10 +86,10 @@ fn banner(frame: &mut Frame, area: Rect, app: &App, op: &Operation) {
     let first = Line::from(
         [
             vec![
-                Span::styled(config.name.clone(), theme::bold(TEXT)),
+                Span::styled(deployable.name().to_string(), theme::bold(TEXT)),
                 Span::styled("  →  ", theme::faint()),
                 Span::styled(
-                    format!("{}:{}", deployable.endpoint.label(), config.service.dir),
+                    format!("{}:{}", deployable.endpoint.label(), deployable.dir()),
                     theme::muted(),
                 ),
             ],

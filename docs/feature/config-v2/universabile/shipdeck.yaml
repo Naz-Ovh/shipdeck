@@ -1,0 +1,4 @@
+# The root file: every deploy of the project. Rules: docs/feature/config-v2.md.
+root: true
+deploys:
+  production: scripts/deploy/production.yaml

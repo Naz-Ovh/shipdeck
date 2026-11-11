@@ -16,3 +16,4 @@ pub mod remote;
 pub mod rpc;
 pub mod setup;
 pub mod ssh;
+pub mod tree;

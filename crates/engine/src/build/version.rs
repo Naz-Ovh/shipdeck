@@ -7,16 +7,16 @@ use anyhow::{Context, Result, anyhow, bail};
 use chrono::Utc;
 use tokio::process::Command;
 
-use crate::config::Deployable;
+use crate::config::Deployment;
 use crate::release::ReleaseName;
 
 /// The release name, and where its version came from (for the log).
 ///
 /// # Errors
 /// Returns an error when the version file cannot be read or parsed.
-pub async fn release_name(deployable: &Deployable) -> Result<(ReleaseName, String)> {
-    let dir = deployable.project_dir();
-    release_name_in(&dir, deployable.version_file().as_deref()).await
+pub async fn release_name(deployment: &Deployment) -> Result<(ReleaseName, String)> {
+    let dir = &deployment.project;
+    release_name_in(dir, deployment.version_file().as_deref()).await
 }
 
 /// Names a release using a project folder and an optional version file.

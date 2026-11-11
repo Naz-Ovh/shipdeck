@@ -1002,6 +1002,14 @@
     "DeployableInfo": {
       "description": "One project in the workspace, as `workspace/open` reports it.",
       "properties": {
+        "apps": {
+          "default": [],
+          "description": "The app names, in the order they run.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "dir": {
           "default": "",
           "description": "`dir`: where the project lives on the server.",
@@ -1009,7 +1017,7 @@
         },
         "folder": {
           "default": "",
-          "description": "The project's folder on this PC, where its `shipdeck.yaml` is.",
+          "description": "The deploy file on this PC.",
           "type": "string"
         },
         "host": {
@@ -2623,7 +2631,7 @@
       "type": "object"
     },
     "WorkspaceOpen": {
-      "description": "`workspace/open`: pick the folder of projects, and how to log in.",
+      "description": "`workspace/open`: pick the folder shipdeck runs in, and how to log in.",
       "properties": {
         "login": {
           "$ref": "#/definitions/Login"
@@ -2634,8 +2642,15 @@
           "type": "boolean"
         },
         "root": {
-          "description": "The folder whose subfolders each hold a `shipdeck.yaml`.",
+          "description": "The folder shipdeck runs in: the project folder.",
           "type": "string"
+        },
+        "shipdeckfile": {
+          "description": "A deploy file named by `--shipdeckfile`; the project file is not read.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

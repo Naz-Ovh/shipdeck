@@ -3,47 +3,72 @@ title: Command line
 description: Every argument and flag of the shipdeck command, its errors, exit codes and what it prints.
 ---
 
-You point shipdeck at a deploy root, it checks every `shipdeck.yaml` under it, and then opens the terminal UI. For scripts and CI, `deploy`, `rollback`, `releases`, `server-info`, `work`, `events` and `setup` do the same work [without the UI](#without-the-ui), and `man` prints [the manual](#the-manual).
+Run `shipdeck` in the folder that holds your project file and it opens the terminal UI. For
+scripts and CI, `deploy`, `rollback`, `releases`, `server-info`, `work`, `events`, `setup`
+and `tree` do the same work [without the UI](#without-the-ui), and `man` prints
+[the manual](#the-manual).
 
 ## Synopsis
 
 ```txt
-shipdeck [OPTIONS] <DEPLOY_ROOT>
-shipdeck init     <DEPLOY_ROOT> [NAME] [--preset <PRESET>] [--manager systemd|pm2] [--host <HOST>] [--user <USER>] [--project <PATH>]
-shipdeck deploy   <DEPLOY_ROOT> <NAME>... [--on-failure rollback|keep] [--allow-unchanged] [--trust-new-host]
-shipdeck rollback <DEPLOY_ROOT> <NAME> --to <RELEASE> [--trust-new-host]
-shipdeck releases <DEPLOY_ROOT> <NAME> [--trust-new-host]
-shipdeck server-info <DEPLOY_ROOT> <NAME> [--trust-new-host]
-shipdeck work    <DEPLOY_ROOT> <NAME> [--cleanup] [--trust-new-host]
-shipdeck events  <DEPLOY_ROOT> <NAME> [--after <N>] [--limit <N>] [--trust-new-host]
-shipdeck setup   <DEPLOY_ROOT> <NAME> [--access full|commands] [--sudo-password <VALUE>] [--trust-new-host]
+shipdeck [--shipdeckfile <PATH>] [LOGIN]
+shipdeck init     [NAME] [--preset <PRESET>] [--manager systemd|pm2] [--host <HOST>] [--user <USER>] [--project <PATH>]
+shipdeck deploy   [DEPLOY]... [--on-failure rollback|keep] [--allow-unchanged]
+shipdeck rollback <DEPLOY> <RELEASE>
+shipdeck releases   [DEPLOY]
+shipdeck server-info [DEPLOY]
+shipdeck work     [DEPLOY] [--cleanup]
+shipdeck events   [DEPLOY] [--after <N>] [--limit <N>]
+shipdeck setup    [DEPLOY] [--access full|commands] [--sudo-password <VALUE>]
+shipdeck tree     [DEPLOY] [--app <APP>] [--depth <N>] [--build] [--json]
 shipdeck man      [index | configs | details <KEY>...]
 shipdeck --schema
 ```
 
-These commands take the same login options as the screen: `--key`, `--key-text`, `--password` and `--no-shell-env`, and on Windows `--gitshell-path`.
+`[LOGIN]` is `--key`, `--key-text`, `--password`, `--no-shell-env`, `--trust-new-host`, and
+on Windows `--gitshell-path`. Every server command takes them.
 
 ```sh
-shipdeck ./scripts/deploy --key ~/.ssh/id_ed25519
-shipdeck ./scripts/deploy                 # asks for the password in the screen
-shipdeck --schema > deploy.schema.json    # the JSON Schema, for offline editors
+shipdeck --key ~/.ssh/id_ed25519                 # the TUI, in this folder
+shipdeck deploy production --key ~/.ssh/id_ed25519
+shipdeck --shipdeckfile=scripts/p.yaml deploy    # one deploy file, no project file
+shipdeck --schema > deploy.schema.json           # the JSON Schema, for offline editors
 ```
 
-## Arguments
+## Choosing what to read
 
-### DEPLOY_ROOT
+Without `--shipdeckfile`, shipdeck reads the project file in the folder you run it in:
 
-The folder whose subfolders each hold a `shipdeck.yaml`. Each direct subfolder with a `shipdeck.yaml` (or `shipdeck.yml`) is one deployable. The search is not recursive. See [Deploy root](/docs/guides/deploy-root).
+- `shipdeck` opens the TUI on every deploy the project file lists.
+- `shipdeck deploy production` reads the project file, then that deploy's file.
+- `shipdeck` with no project file stops and names the file it expected.
+
+With `--shipdeckfile=<path>`, shipdeck reads that deploy file only, and no project file is
+needed. The deploy is then named by its `name`.
+
+Every command except `init` and `man` accepts `--shipdeckfile`.
+
+## `DEPLOY`
+
+A deploy name: a key under `deploys:` in the project file, such as `production`. Without one:
+
+- `deploy` uses the only deploy of the project, and refuses when there are several;
+- `releases`, `server-info`, `work`, `events`, `setup` and `tree` do the same;
+- with `--shipdeckfile`, the one deploy in that file is used.
+
+`rollback` always needs the name, because it takes two arguments.
+
+## Options
+
+### `--shipdeckfile <PATH>`
 
 | | |
 | --- | --- |
-| Value | a path to a folder |
-| Required | yes, unless `--schema` is given |
-| Error | `Error: <path> is not a folder` when the path is missing or a file |
+| Value | a path to a deploy file |
+| Default | none: the project file is read |
+| Error | `cannot read it: <os error>` when the file is missing |
 
-The header of the screen shows the root as you typed it: `root ./scripts/deploy`.
-
-## Options
+It works with every server command and `tree`. The deploy's `name` becomes its handle.
 
 ### `--key <PATH>`
 
@@ -52,365 +77,166 @@ Log in with this private key file, and only this key.
 | | |
 | --- | --- |
 | Value | a path to a private key file |
-| Default | none: the `IdentityFile` of the host's `~/.ssh/config` entry, then a password prompt |
+| Default | none: the `IdentityFile` of the host's `~/.ssh/config` entry, then a password prompt (the TUI only) |
 | Conflicts with | `--key-text`, `--password` |
 | Error | `Error: the key file <path> does not exist` |
 
-shipdeck expands a leading `~` itself, so `--key=~/.ssh/id_ed25519` also works in zsh, where the shell does not expand it after `=`. If the key is encrypted, the screen asks for its passphrase. If the server refuses the key, the deploy stops with `<host> refused the key <path> for user <user>`; there is no fallback to a password.
-
-```sh
-shipdeck ./scripts/deploy --key ~/.ssh/id_deploy
-```
+shipdeck expands a leading `~` itself, so `--key=~/.ssh/id_ed25519` also works in zsh. If the
+key is encrypted, the TUI asks for its passphrase, or `SHIPDECK_KEY_PASSPHRASE` answers it.
 
 ### `--key-text <TEXT>`
 
-Log in with this private key's text, such as a CI secret.
-
-| | |
-| --- | --- |
-| Value | the key file's text, line breaks included |
-| Default | `SHIPDECK_SSH_KEY`, if it is set and not empty |
-| Conflicts with | `--key`, `--password` |
-
-The text shows in `ps` while shipdeck runs; `SHIPDECK_SSH_KEY` does not, so prefer the variable in CI. An encrypted key takes its passphrase from `SHIPDECK_KEY_PASSPHRASE`, or the screen asks for it. If the server refuses the key, the deploy stops with `<host> refused the key text for user <user>`.
-
-```sh
-SHIPDECK_SSH_KEY="$DEPLOY_KEY" shipdeck deploy ./scripts/deploy my-api   # DEPLOY_KEY: a CI secret
-```
+Log in with this private key's text, such as a CI secret. It shows in `ps`; `SHIPDECK_SSH_KEY`
+does not.
 
 ### `--password <PASSWORD>`
 
-Log in with this password.
+Log in with this password. It lands in shell history; `SHIPDECK_PASSWORD` does not.
 
-| | |
-| --- | --- |
-| Value | the password, as text |
-| Default | `SHIPDECK_PASSWORD`, if it is set and not empty |
-| Conflicts with | `--key`, `--key-text` |
-
-The password lands in your shell history; `SHIPDECK_PASSWORD` does not. In zsh with `HIST_IGNORE_SPACE` set, start the command with a space to keep it out:
-
-```sh
- shipdeck ./scripts/deploy --password 's3cret'
-```
-
-If the server refuses it, the deploy stops with `<host> refused the password for user <user>`.
-
-The first login found wins, for every server of the run: `--key`, `--key-text`, `--password`, `SHIPDECK_SSH_KEY`, `SHIPDECK_PASSWORD`. With none of them, shipdeck logs in the way `ssh` does: the key named by `IdentityFile` for the host in `~/.ssh/config` first, then, if there is none or it is refused, a password prompt in the screen. See [SSH and login](/docs/guides/ssh).
-
-| Flags | Header shows |
-| --- | --- |
-| `--key P` | `login key P` |
-| `--key-text T` or `SHIPDECK_SSH_KEY` | `login key text` |
-| `--password X` or `SHIPDECK_PASSWORD` | `login password` |
-| none | `login ~/.ssh/config key, else a password` |
+The order all four are tried in is on [Login](/docs/guides/ssh).
 
 ### `--no-shell-env`
 
-Run server commands without the login shell's startup files, on every server of the run.
+Run server commands without the login shell's startup files, for every server in this run.
+It overrides each deploy file's `server.ssh.shell_env`. See [SSH and login](/docs/guides/ssh).
 
-| | |
-| --- | --- |
-| Default | off: each connection loads what `~/.bashrc`, `~/.zshrc` and the like export (nvm, pyenv, a longer `PATH`) |
-| Per server | `ssh.shell_env: false` in its `shipdeck.yaml` |
+### `--trust-new-host`
 
-Loading the startup files costs a second or two per connection. Turn it off when a startup file expects a person (it starts tmux or asks a question), or when server commands should see the plain SSH environment; then name tools by absolute path or install them system-wide.
+Record a server's key in `~/.ssh/known_hosts` the first time it is seen, instead of asking.
+A changed key for a known host is still refused. See [SSH and login](/docs/guides/ssh).
 
-### `--gitshell-path <PATH>`
+### `--gitshell-path <PATH>` (Windows)
 
-Windows only. The `sh.exe` that runs local commands (`run.local` and the build), instead of Git for Windows' own.
+Run local commands with this `sh.exe` instead of the one Git for Windows has. Also reads
+`SHIPDECK_GITSHELL_PATH`.
 
-| | |
-| --- | --- |
-| Default | `SHIPDECK_GITSHELL_PATH`, if it is set and not empty; else the first `sh.exe` shipdeck finds (see [On Windows](/docs/getting-started/installation#on-windows)) |
+## `init`
 
-```powershell
-shipdeck .\scripts\deploy --gitshell-path "C:\Program Files\Git\usr\bin\sh.exe"
-```
+Writes a project file, a deploy file, an empty `.env` and a `.gitignore` in the current
+folder. It asks for what the flags leave out when there is a terminal; without one, `NAME`,
+`--preset` and `--host` are required.
 
-The flag does not exist on Linux and macOS, so `shipdeck --help` lists it only on Windows.
-
-### `--schema`
-
-Print the JSON Schema of `shipdeck.yaml` to stdout and exit with `0`. It runs before anything else, so a deploy root given with it is ignored. Use it for editor completion when you work offline:
-
-```sh
-shipdeck --schema > deploy.schema.json
-```
-
-The output starts with `"$id": "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v<version>/docs/schema/deploy.schema.json"`, the version you run.
-
-### `-h`, `--help`
-
-Print the help and exit:
-
-```txt
-Build locally, deploy over SSH as a systemd service or PM2 app, roll back any release.
-
-Usage: shipdeck [OPTIONS] [DEPLOY_ROOT]
-       shipdeck <COMMAND>
-
-Commands:
-  init         Create a deployable folder with a shipdeck.yaml from a preset; asks for what the flags leave out
-  engine       Run as the engine: it answers the app on stdin and stdout, one message per line
-  deploy       Build and deploy one or more deployables, one after another, without the TUI
-  rollback     Switch a deployable to a release already on the server, without the TUI
-  releases     List the releases on the server, newest first
-  server-info  Show Linux, CPU, memory, disk, uptime, and installed tools on a server
-  work         Show what an interrupted operation left, and clean it up with --cleanup
-  events       Print the events saved on the server, oldest first
-  setup        Prepare a server once: packages, the project folder, and sudo access
-  man          The manual, for people and coding agents: `man index` (topics), `man configs` (shipdeck.yaml), `man details <KEY>...`
-  help         Print this message or the help of the given subcommand(s)
-
-Arguments:
-  [DEPLOY_ROOT]  Folder whose subfolders each hold a shipdeck.yaml
-
-Options:
-      --key <PATH>           Log in with this private key file
-      --key-text <TEXT>      Log in with this private key's text (it shows in `ps`; SHIPDECK_SSH_KEY does not)
-      --password <PASSWORD>  Log in with this password (it lands in your shell history; SHIPDECK_PASSWORD does not)
-      --no-shell-env         Run server commands without the login shell's startup files (~/.bashrc, ~/.zshrc, ...), on every server
-      --schema               Print the JSON Schema of shipdeck.yaml, for editor completion
-  -h, --help                 Print help
-  -V, --version              Print version
-
-Each folder under DEPLOY_ROOT with a shipdeck.yaml is one deployable.
-Login, first found: --key, --key-text, --password, SHIPDECK_SSH_KEY,
-SHIPDECK_PASSWORD; else the host's ~/.ssh/config key, then the TUI asks
-for the password. SHIPDECK_KEY_PASSPHRASE unlocks an encrypted key.
-deploy, rollback, releases, server-info, work and events run without the TUI
-and ask nothing. setup and init ask for what their flags leave out.
-man is the full manual: `shipdeck man index`, `man configs`, `man details <KEY>...`.
-```
-
-`shipdeck help deploy` (or `shipdeck deploy --help`) shows each command's own flags.
-
-The help shows `[DEPLOY_ROOT]` in brackets because it is optional when `--schema` or a command is given.
-
-### `-V`, `--version`
-
-Print `shipdeck <version>`, such as `shipdeck 0.6.1`, and exit.
-
-## Errors before the screen opens
-
-These are printed to the terminal and shipdeck exits without opening the screen.
-
-| Situation | Output | Exit code |
+| Flag | Value | Default |
 | --- | --- | --- |
-| No deploy root | `error: the following required arguments were not provided:` followed by `<DEPLOY_ROOT>` and the usage line | `2` |
-| `--key` and `--password` together | `error: the argument '--key <PATH>' cannot be used with '--password <PASSWORD>'` | `2` |
-| Root is not a folder | `Error: /nonexistent is not a folder` | `1` |
-| Key file missing | `Error: the key file /nope/key does not exist` | `1` |
-| A `shipdeck.yaml` has problems | the problem report on stderr (below) | `1` |
+| `NAME` | the deploy name and the default process name | asked |
+| `--preset` | `nodejs`, `golang`, `java`, `kotlin`, `rust`, `dart`, `python`, `bun` | asked |
+| `--manager` | `systemd` or `pm2` | asked, or `systemd` |
+| `--host` | an address, or a `~/.ssh/config` alias | asked |
+| `--user` | the SSH user | the alias's `User` |
+| `--project` | your source folder | the current folder |
 
-### The problem report
-
-shipdeck reads and checks every `shipdeck.yaml` before it opens the screen. If any file has a problem, it prints a report to stderr and exits with `1`. For `shipdeck ./scripts/deploy` where `scripts/deploy/my-api-prod/shipdeck.yaml` holds only `name: x`:
-
-```txt
-✘ shipdeck did not start: 1 shipdeck.yaml file has 2 problems
-
-my-api-prod/shipdeck.yaml
-  error: `ssh` is missing
-    ┌─ ./scripts/deploy/my-api-prod/shipdeck.yaml
-    │
-    = help: add `ssh: { host: my-server, user: deploy }`
-
-  error: `service` is missing
-    ┌─ ./scripts/deploy/my-api-prod/shipdeck.yaml
-    │
-    = help: add `dir: /opt/my-api`
-```
-
-Each file starts with a heading of its folder and file name. The path after `┌─` is the deploy root as you typed it plus the file; an absolute root under the current folder is shown relative to it. The report is in colour only when stderr is a terminal and `NO_COLOR` is not set. `NO_COLOR` affects only this report; the screen itself always uses its colours. Every message is listed in [Config problems](/docs/reference/config-problems).
-
-## Exit codes
-
-| Code | Meaning |
-| --- | --- |
-| `0` | Normal quit, or `--schema`, `--help`, `--version`; for a command, the release is live |
-| `1` | Bad deploy root, missing key file, problems in a `shipdeck.yaml`, or a terminal error; for a command, also an unknown name or a failure before the live release changed |
-| `2` | Wrong usage: a missing argument or conflicting flags, or a key `man details` does not know |
-| `3` | A command only: the new release failed and the previous one is live again |
-| `4` | A command only: the new release failed and stays live (`--on-failure keep`) |
-| `5` | A command only: the new release failed and putting the old one back failed too |
-| `6` | `deploy` only: nothing changed since the live release, so nothing was deployed (`--allow-unchanged` deploys anyway) |
-| `130` | A command only: stopped with Ctrl-C twice |
-
-Scripts rely on these numbers: new outcomes get new codes, and none is ever renumbered.
-
-A deploy or rollback that fails inside the screen does not change the exit code: quitting the screen exits with `0` whatever happened. You see the result on the [Operation screen](/docs/reference/screens#operation). The commands report it in the exit code instead.
-
-## Start a deployable
-
-### `init <DEPLOY_ROOT> [NAME]`
-
-Creates `<DEPLOY_ROOT>/<NAME>/` with a `shipdeck.yaml` written from a preset, an empty `.env` and a `.gitignore` that keeps `.env` out of git. It connects to nothing. In a terminal it asks for whatever the flags leave out (Esc stops without writing anything). With no terminal it asks nothing, and `NAME`, `--preset` and `--host` are required.
-
-```sh
-shipdeck init ./scripts/deploy
-shipdeck init ./scripts/deploy my-api --preset nodejs --manager pm2 --host prod
-```
-
-```txt
-? Name: my-api
-? Preset:
-  nodejs  built here; the server installs production dependencies
-  golang  one static binary, nothing to install on the server
-  java    built with Gradle; the server needs Java
-  kotlin  built with Gradle; the server needs Java
-> rust    one binary, nothing to install on the server
-  dart    compiled to one executable, nothing to install on the server
-  python  the source ships; the server builds its virtualenv
-  bun     compiled to one executable, nothing to install on the server
-```
-
-| Flag | When left out |
-| --- | --- |
-| `NAME` | Asked. The folder's name, also `name` and `service.name`. `dir` is `/opt/<NAME>`. |
-| `--preset <PRESET>` | Asked. `nodejs`, `golang`, `java`, `kotlin`, `rust`, `dart`, `python` or `bun`. |
-| `--manager <systemd\|pm2>` | Asked, else `systemd`. |
-| `--host <HOST>` | Asked. An address or an alias from `~/.ssh/config`. |
-| `--user <USER>` | Asked, offering the alias's `User`; else the alias's `User`. |
-| `--project <PATH>` | Asked, else the current folder. Written relative to the new folder. |
-
-What `init` writes passes the same checks as a launch; a problem is printed the [same way](#the-problem-report) and nothing is written. It never replaces an existing `shipdeck.yaml`, and it leaves an existing `.env` or `.gitignore` alone. The presets are a starting point: check the build command and paths against your project.
+The file it writes is checked as a launch would check it, so init never writes a config
+shipdeck would refuse. An existing project file is never replaced.
 
 ## Without the UI
 
-These commands run the same work as the screen, for scripts and CI. They take the deploy root first, then a deployable by its folder name or its `name`. Every `shipdeck.yaml` under the root is checked first, as for the screen. Progress goes to stderr as plain lines, in colour only when stderr is a terminal and `NO_COLOR` is not set. Nothing waits for an answer, except `setup` which may ask for a sudo password on a terminal.
+### `deploy [DEPLOY]...`
 
-### `deploy <DEPLOY_ROOT> <NAME>...`
+Builds and deploys each in turn; the first non-zero exit stops the rest, and the ones not run
+are named. It prints one line per step as it ends and the outcome at the end.
 
-Builds and deploys each deployable in turn. The first that does not succeed stops the rest, and the ones left are listed as `▲ not deployed: ...`.
-
-```sh
-shipdeck deploy ./scripts/deploy my-api --key ~/.ssh/id_deploy
-```
-
-```txt
-━━ My API (prod) · deploy → deploy@203.0.113.10:/opt/my-api
-━━ [1/11] Preflight: checking your PC and the server
-ℹ checking the local project
-› connect deploy@203.0.113.10 (key /home/me/.ssh/id_deploy)
-ℹ opening the SSH connection
-ℹ connected
-ℹ checking the installed agent
-ℹ agent ready
-ℹ checking the server and its tools
-ℹ checking admin (1/4)
-✔ Preflight  ...
-━━ [3/11] Pack: packing the release
-… Pack: hashing [####------] 12.3 MiB of 30.0 MiB (41%) · 17.7 MiB remaining · 2.1 MiB/s · 8s left
-⋮
-✔ My API (prod): v0.3.1-ab12cd3-20261014.153012 is live (1m12s)
-```
-
-Each step prints its number and name when it starts, then its result. While a
-step runs, a progress line shows a bar, amount, percent, and for bytes a rate
-and time left, how much is done and how much remains. It updates at most once a second. On a terminal it is rewritten
-in place below the log lines, so it never repeats. In CI, where stderr is not
-a terminal, each update is its own line. A step that says nothing for 5
-seconds repeats its last activity with the time spent so far, so a CI log
-never looks stuck. The last line says what is live now.
-
-#### `--on-failure <rollback|keep>`
-
-What to do when the new release fails after the switch: at the switch, the restart or the health check. It overrides [`pipeline.failed.rollback`](/docs/guides/health-and-rollback) for this run.
-
-| Value | Effect |
+| Flag | Meaning |
 | --- | --- |
-| `rollback` (default) | Put the release that was live back at once. Exit code `3`. |
-| `keep` | Keep the failed release live, to look at it. Exit code `4`. Roll back later with `shipdeck rollback`. |
+| `--on-failure rollback` | roll back at once after a failure in switch, restart, nginx or health |
+| `--on-failure keep` | never roll back on its own; the failed release stays live |
+| `--allow-unchanged` | deploy even when the release holds what the live one does |
 
-#### `--allow-unchanged`
+`--on-failure` maps onto `release.steps.rollback.mode` and wins over the file, but only when
+it is given: `rollback` is `auto`, `keep` is `off`. Without it, the file decides, so
+`mode: off` keeps the failed release live. The flag cannot choose `ask`, so a headless run
+never waits for an answer; `ask` with nobody to answer rolls back after `ask_secs`.
 
-Deploy even when nothing changed since the live release: the new release's fingerprint (its files, modes, links, service file and `shipdeck.yaml`) equals the live one's. Without it such a deploy stops at Pack, before anything on the server changes, with exit code `6`:
+### `rollback <DEPLOY> <RELEASE>`
 
-```txt
-▲ My API (prod): nothing changed since v0.3.1-ab12cd3-20261014.153012, so nothing was deployed; --allow-unchanged deploys it anyway
-```
+Makes an older release live again. The release id is exactly what `releases` prints. A
+release kept only as its backup is unpacked and its `setup.server` runs again.
 
-With several deployables, an unchanged one stops the rest like any other result but success.
+A release from before config format 2 has no `.shipdeck/settings.json`, so the rollback is
+refused: `this release was made before config format 2; deploy again`.
 
-### `rollback <DEPLOY_ROOT> <NAME> --to <RELEASE>`
+### `releases [DEPLOY]`
 
-Makes a release already on the server live again. A release kept only as its backup is unpacked first and set up again with `pipeline.setup`. `RELEASE` is an id as `shipdeck releases` lists it. A rollback whose health check fails puts back what was live. See [Releases](/docs/guides/releases#rolling-back-by-hand).
-
-```sh
-shipdeck rollback ./scripts/deploy my-api --to v0.3.0-9f8e7d6-20261012.091000
-```
-
-### `releases <DEPLOY_ROOT> <NAME>`
-
-Prints the releases on the server to stdout, newest first, as aligned columns. `STATE` is `live`, `unpacked`, `compressed` (only its backup is in `backups/`) or `not-ours` (a folder shipdeck did not create, which it never switches to).
+Lists what is on the server, newest first, to stdout:
 
 ```txt
-RELEASE                         VERSION  COMMIT   BUILT (UTC)       SIZE      STATE       DEPLOYED BY
-v0.3.1-ab12cd3-20261014.153012  0.3.1    ab12cd3  2026-10-14 15:30  31.0 MiB  live        me@laptop
-v0.3.0-9f8e7d6-20261012.091000  0.3.0    9f8e7d6  2026-10-12 09:10  31.0 MiB  unpacked    me@laptop
+release                              kind        current  backup     size
+v1.4.0-ab12cd3-20261110.120000       open        yes      yes        12.4 MiB
+v1.3.9-def5678-20261108.090000       open                 yes         5.1 MiB
+v1.3.8-0a1b2c3-20261101.170000       compressed  -        yes         2.2 MiB
 ```
 
-### `server-info <DEPLOY_ROOT> <NAME>`
+`kind` is `open` (unpacked, ready to switch to) or `compressed` (only its backup). It reads
+only; nothing on the server changes.
 
-Prints the server's real facts from the connected agent: Linux and kernel, CPU and cores, available and total memory, the disk behind `dir`, uptime, the agent version, and where common tools were found. It changes nothing. When the connection cannot prepare the agent, it fails with a clear message.
+### `server-info [DEPLOY]`
 
-### `work <DEPLOY_ROOT> <NAME> [--cleanup]`
+Prints Linux and kernel, CPU and cores, memory, disk at the deploy folder, uptime, the agent
+version, and the tools shipdeck looked for.
 
-Shows the live release, the service state, the unfinished files an interrupted operation left, a warning when activation never reached a health pass, and the newest saved events. With `--cleanup`, exactly those unfinished paths are removed after the server re-checks them; a live release, another release, a backup or an escaping path is never deleted. The flag is the approval.
+### `work [DEPLOY] [--cleanup]`
 
-### `events <DEPLOY_ROOT> <NAME> [--after N] [--limit N]`
+Shows the live release, the service state, unfinished files, an activation that was never
+confirmed, and the newest saved events. `--cleanup` is the approval to remove the unfinished
+files; it removes only the paths this command just listed.
 
-Prints numbered events from `~/.shipdeck/state.db`, oldest first, with `--after N` for a cursor and `--limit` capped at 1000. Events include build, pack, upload, unpack, setup, backup, switch, restart, health, the final outcome, and rollback.
+### `events [DEPLOY] [--after N] [--limit M]`
 
-### `setup <DEPLOY_ROOT> <NAME> [--access full|commands]`
+Prints the numbered events the server saved, oldest first: `#sequence time operation kind
+detail`. `--after` follows on from the last sequence you saw; one page is at most 1000.
 
-Guided one-time server setup. It asks for the sudo password on stdin, installs missing tools from the Linux's own packages, creates `dir`, and installs a `visudo`-checked sudoers rule. `--access full` grants password-free sudo for every command; `--access commands` (default) grants exactly what shipdeck runs. Root needs no rule. Debian/Ubuntu and Fedora/RHEL are supported; another Linux is named and stopped. `SHIPDECK_SUDO_PASSWORD` keeps the password out of history and `ps`.
+### `setup [DEPLOY] [--access full|commands] [--sudo-password PASSWORD]`
 
-### What the screen would ask
+Prepares a server once: the packages, the deploy folder, and the sudo rule.
+`--access commands` grants password-free sudo for exactly what shipdeck runs (the default
+when nobody can be asked); `--access full` for everything. The sudo password travels on
+stdin and is never saved; `SHIPDECK_SUDO_PASSWORD` keeps it out of history.
 
-| The screen asks | The commands |
+### `tree [DEPLOY]`
+
+Prints every path the next release will hold, from local files only. It never connects to
+the server, and it uses the same code as `deploy`, so the two always agree.
+
+| Flag | Meaning |
 | --- | --- |
-| Deploy this? | Running the command is the yes. |
-| Roll back? | `--on-failure`. |
-| Nothing changed: deploy anyway? | No, unless `--allow-unchanged`. |
-| Trust a server seen for the first time? | No, and the command stops with the key's fingerprint. `--trust-new-host` trusts it and saves it to `~/.ssh/known_hosts`. A changed key is always refused. |
-| A password or a key passphrase? | Never asked; the login fails with a hint. Use `--key` or `SHIPDECK_SSH_KEY` (with `SHIPDECK_KEY_PASSPHRASE` for an encrypted key), or `SHIPDECK_PASSWORD`. |
+| `--app <APP>` | only that app's folder |
+| `--depth <N>` | fold folders deeper than `N` into `name/ (<count> files)` |
+| `--build` | run the `build` steps first, so build output is there |
+| `--json` | one object per path: `path`, `kind`, `from`, `local`, `mode`, `size` |
 
-The first Ctrl-C only warns, since stopping can leave the server between two releases; a second one stops at once with exit code `130`.
+When a pattern matches nothing, it prints the tree it could and the missing patterns, then
+exits with 1.
 
 ## The manual
 
-### `man [index | configs | details <KEY>...]`
+`shipdeck man index`, `shipdeck man configs`, and `shipdeck man details <KEY>...` print the
+manual built into the binary. It needs no file and no network.
 
-The whole manual, built into the binary, for you and for the coding agent helping you. It matches the version you run, needs no network and reads no file.
+## `--schema`
 
-| Command | Prints |
+Prints the JSON Schema of the project file and the deploy file to stdout. The same file is
+published at each release for editor completion. See
+[Config](/docs/reference/config#editor-completion).
+
+## Exit codes
+
+Scripts depend on these: they are added to, never renumbered.
+
+| Code | Meaning |
 | --- | --- |
-| `shipdeck man` or `man index` | every topic as `key: brief`, by section |
-| `shipdeck man configs` | every `shipdeck.yaml` property as a YAML tree, with its type, default and brief |
-| `shipdeck man details <KEY>...` | topics and properties in full |
+| `0` | success: the release is live |
+| `1` | failed before anything live changed; a config or connection problem; or a refused operation, including another operation already running on the project |
+| `2` | the command line was wrong; nothing ran |
+| `3` | the new release failed after the switch and the previous one is live again |
+| `4` | the new release failed after the switch and was kept live, as you chose |
+| `5` | the new release failed and putting the previous one back failed too; inspect the server |
+| `6` | nothing changed since the live release; nothing was deployed |
+| `130` | interrupted with Ctrl-C twice |
 
-A key is a topic key from the index (`quickstart`, `step.health`, `exit-codes`) or a property path from `man configs` (`service.env`, `pipeline.health.url`). Give several, apart or comma-separated:
+## What it prints
 
-```sh
-shipdeck man details agents cli.deploy
-shipdeck man details "agents, cli.deploy, service.start"
-```
+`deploy` and `rollback` write to stderr: one heading per deploy, one line per step as it
+ends, the step's commands and output, and the outcome. `releases` and `tree` write their tree
+or table to stdout, so `shipdeck tree production --json` pipes into `jq`.
 
-Each result is its own block, in the order asked, so an agent can tell them apart:
-
-```txt
-<topic key="step.health" brief="...">
-the page
-see: related keys
-</topic>
-<config key="service.env" type="map of text, default {}" brief="...">
-the details
-see: related keys
-</config>
-For more, check out https://forgedoc.naz.ovh/llms.txt
-```
-
-A key it does not know prints nothing on stdout: stderr names it with the closest keys, and the exit code is `2`.
+A config problem is printed as the block shown in
+[Config problems](/docs/reference/config-problems) and nothing is attempted.

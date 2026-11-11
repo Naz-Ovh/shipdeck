@@ -35,12 +35,14 @@ pub struct Key {
 
 impl Node {
     /// `~`, `null` or nothing at all, as in `key:` with no value.
+    #[must_use]
     pub fn is_null(&self) -> bool {
         matches!(&self.value, Value::Scalar { text, plain: true, tag: None }
             if matches!(text.as_str(), "" | "~" | "null" | "Null" | "NULL"))
     }
 
     /// What the node is, for "found …" labels.
+    #[must_use]
     pub fn kind(&self) -> String {
         match &self.value {
             _ if self.is_null() => "nothing".into(),
@@ -57,6 +59,7 @@ impl Node {
         }
     }
 
+    #[must_use]
     pub fn entries(&self) -> &[(Key, Node)] {
         match &self.value {
             Value::Map(entries) => entries,
@@ -65,6 +68,7 @@ impl Node {
     }
 
     /// The node at `path` below this one.
+    #[must_use]
     pub fn find(&self, path: &[&str]) -> Option<&Node> {
         let Some((first, rest)) = path.split_first() else {
             return Some(self);
@@ -82,6 +86,7 @@ impl Node {
 
     /// Where the value at `path` was written. A map or list points at its
     /// key instead, which reads better than its first child.
+    #[must_use]
     pub fn span_of(&self, path: &[&str]) -> Option<Span> {
         let node = self.find(path)?;
         match node.value {
@@ -91,6 +96,7 @@ impl Node {
     }
 
     /// Where the key at the end of `path` was written.
+    #[must_use]
     pub fn key_span(&self, path: &[&str]) -> Option<Span> {
         let (last, parent) = path.split_last()?;
         let parent = self.find(parent)?;

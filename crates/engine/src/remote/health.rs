@@ -35,6 +35,28 @@ impl Probe {
 }
 
 impl Server {
+    /// Fetches a health URL on the server; any 2xx answer is success.
+    ///
+    /// # Errors
+    /// Returns an error when neither curl nor wget is there, or the URL fails.
+    pub async fn fetch(&self, url: &str) -> Result<()> {
+        let url = sh_quote(url);
+        let script = format!(
+            "if command -v curl >/dev/null 2>&1; then
+  err=$(curl -fsS -o /dev/null --max-time 5 {url} 2>&1) && exit 0 || {{ echo \"$err\" >&2; exit 1; }}
+elif command -v wget >/dev/null 2>&1; then
+  wget -q -O /dev/null -T 5 {url}
+else
+  echo 'the server has neither curl nor wget' >&2; exit 127
+fi"
+        );
+        self.session
+            .exec(&script)
+            .await?
+            .check("fetching the health URL")?;
+        Ok(())
+    }
+
     /// Reads the service's state, restart count and health URL result.
     ///
     /// # Errors
@@ -57,8 +79,8 @@ fi"
             }
         };
         let (script, pm2) = match self.manager {
-            Manager::Static => (http, None),
-            Manager::Systemd => (
+            None | Some(Manager::Oxmgr) => (http, None),
+            Some(Manager::Systemd) => (
                 format!(
                     "echo \"state=$(systemctl is-active {svc} 2>&1 | head -n1)\"
 echo \"restarts=$(systemctl show -p NRestarts --value {svc} 2>/dev/null)\"
@@ -66,7 +88,7 @@ echo \"restarts=$(systemctl show -p NRestarts --value {svc} 2>/dev/null)\"
                 ),
                 None,
             ),
-            Manager::Pm2 => (http, Some(self.pm2_state().await?)),
+            Some(Manager::Pm2) => (http, Some(self.pm2_state().await?)),
         };
         let out = self.session.exec(&script).await?;
         let values = pairs(&out.stdout);
@@ -83,7 +105,7 @@ echo \"restarts=$(systemctl show -p NRestarts --value {svc} 2>/dev/null)\"
             other => HttpCheck::Failed(other.strip_prefix("fail:").unwrap_or(other).to_string()),
         };
         let (state, restarts) = match (self.manager, pm2) {
-            (Manager::Static, _) => ("active".to_string(), None),
+            (None | Some(Manager::Oxmgr), _) => ("active".to_string(), None),
             (_, Some(found)) => found,
             (_, None) => (get("state").to_string(), get("restarts").parse().ok()),
         };

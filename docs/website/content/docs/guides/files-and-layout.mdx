@@ -1,0 +1,124 @@
+---
+title: Files and layout
+description: What each file entry ships, where it lands in a release, and what shipdeck keeps for itself.
+---
+
+A file entry is a path, or a path and where it lands:
+
+```yaml
+files:
+  - package.json                                    # release: current/package.json
+  - packages                                        # the whole folder
+  - { path: ./prod/config.json, to: config/prod.json }
+```
+
+## Where files land
+
+`<id>` is the release name. `current` points at the live release.
+
+| What | Lands at |
+| --- | --- |
+| `release.files`, project path | `releases/<id>/<path from the project folder>` |
+| `apps.<app>.files`, inside `source` | `releases/<id>/apps/<app>/<path inside source>` |
+| Any file with `to:` | `releases/<id>/<to>`, or `releases/<id>/apps/<app>/<to>` in an app |
+| `apps.<app>.binary` | `releases/<id>/apps/<app>/<file name>`, or `<to>`; mode `0755` |
+| Shipdeck's own files | `releases/<id>/.shipdeck/` |
+
+Two words used here:
+
+- **source**: the app's local source folder. Its files keep their path inside it, and the
+  app's `local` commands run in it. Default: the project folder.
+- **app folder**: `apps/<app>` in the release. Every app lands there, even a deploy with
+  one app. There is no setting to move it.
+
+## `to`
+
+A file with no place of its own needs `to`. These are refused without it:
+
+- a `./`, `../` or absolute path in `release.files`;
+- an app file outside the app's `source`.
+
+```yaml
+apps:
+  api:
+    source: services/api
+    files:
+      - services/api/dist                              # → apps/api/dist
+      - { path: services/api/dist/server, to: server }  # → apps/api/server
+      - { path: ./prod/api.conf, to: api.conf }         # → apps/api/api.conf
+```
+
+`to` cannot place a pattern; it takes one file or one folder. A path in the release may
+not start with `/`, hold `..`, or land in `.shipdeck/` or a shared folder.
+
+## `binary`
+
+A binary is a file entry too, and always lands in the app folder:
+
+```yaml
+apps:
+  api:
+    binary: target/release/api                          # → apps/api/api
+    # binary: { path: target/release/api, to: bin/api } # → apps/api/bin/api
+    process:
+      systemd: {}
+```
+
+Mode `0755` in both forms. `to` is optional here, because a binary's file name is a
+place. The default `start` follows it: `./api`, or `./bin/api` with `to`.
+
+`path` must be one file: a folder, or a pattern, is an error that names it.
+
+## Shared folders
+
+A shared folder keeps its data across releases. The link is in the release; the data is
+in `shared/` at the same path:
+
+| Config | Link | Data |
+| --- | --- | --- |
+| `release.shared: [storage]` | `releases/<id>/storage` | `shared/storage` |
+| `apps.website.shared: [cache]` | `releases/<id>/apps/website/cache` | `shared/apps/website/cache` |
+
+Shared folders are never in a release's files and never in a backup.
+
+## Shipdeck's own files
+
+Everything shipdeck writes goes in `.shipdeck/`. The rest of the release is only your
+files, so `shipdeck tree` reads as a list of them.
+
+| File | Written when |
+| --- | --- |
+| `.shipdeck/release.json` | always |
+| `.shipdeck/settings.json` | always; the resolved config, for rollback |
+| `.shipdeck/<process>.service` | a systemd app |
+| `.shipdeck/<process>.pm2.json` | a PM2 app without its own ecosystem file |
+| `.shipdeck/oxfile.toml` | any oxmgr app. Not written yet: such a deploy stops at preflight |
+| `.shipdeck/nginx/<name>-<app>.conf` | any app with `nginx:`. Not written yet, for the same reason |
+
+## Patterns
+
+`exclude` patterns are matched against the path from the project folder:
+
+| Pattern | Matches |
+| --- | --- |
+| `dist` | the folder and everything in it, or a file of that name |
+| `*.js`, `file?.txt` | names inside one folder; `*` and `?` never cross a `/` |
+| `**/*.map` | at any depth, the top included |
+| `src/*.{js,ts}` | one of several; braces nest: `{lib,bin}/**` |
+| `"!pattern"` | not this one |
+
+`.git` is never shipped. A file whose name starts with `.env` gets mode `0600`; other
+files keep their mode. Symbolic links stay links; a link named by an exact path in
+`files` is followed instead, so `dist -> build/out` ships the folder.
+
+## Errors instead of guesses
+
+- **One path, one source.** The same file picked twice lands once. Two different files
+  for one path is an error that names both.
+- Nothing may be packed into `.shipdeck/` or into a shared folder.
+- A pattern that matches nothing is an error. `shipdeck tree` prints the same list, and
+  the tree it could build, then exits with 1.
+
+```sh
+shipdeck tree production --depth 3
+```

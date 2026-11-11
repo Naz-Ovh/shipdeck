@@ -196,7 +196,7 @@ impl App {
         let Some(deployable) = self.deployables.get(index).cloned() else {
             return;
         };
-        if deployable.config.service.is_static() {
+        if deployable.first_process().is_none() {
             self.notify(
                 "Static site: there is no process to start, stop or restart",
                 Tone::Warn,
@@ -204,7 +204,10 @@ impl App {
             return;
         }
         self.controlling.push(index);
-        let name = deployable.config.service.name.clone();
+        let name = deployable.first_process().map_or_else(
+            || deployable.name().to_string(),
+            |app| deployable.process_name(app),
+        );
         self.notify(format!("{} {name}…", doing(action)), Tone::Info);
         let (engine, tx) = (self.engine.clone(), self.fetched.clone());
         tokio::spawn(async move {
@@ -230,7 +233,10 @@ impl App {
         let Some(deployable) = self.deployables.get(index) else {
             return;
         };
-        let name = deployable.config.service.name.clone();
+        let name = deployable.first_process().map_or_else(
+            || deployable.name().to_string(),
+            |app| deployable.process_name(app),
+        );
         match result {
             Ok(()) => {
                 self.notify(format!("{name}: {}", done(action)), Tone::Info);
@@ -248,17 +254,23 @@ impl App {
         let Some(deployable) = self.deployables.get(index).cloned() else {
             return;
         };
-        if deployable.config.service.is_static() {
+        if deployable.first_process().is_none() {
             self.notify(
                 "Static site: no process logs; nginx keeps its own in /var/log/nginx",
                 Tone::Warn,
             );
             return;
         }
+        let manager = deployable
+            .first_process()
+            .and_then(|app| deployable.manager(app));
+        let process = deployable
+            .first_process()
+            .map_or_else(String::new, |app| deployable.process_name(app));
         self.logs = Some(LogsView {
             id: None,
             deployable: index,
-            command: log_command(&deployable.config.service),
+            command: log_command(manager, &process),
             lines: VecDeque::new(),
             scroll: 0,
             state: LogsState::Connecting,

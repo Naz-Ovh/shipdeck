@@ -1,390 +1,192 @@
-# Every shipdeck.yaml property, as a tree in shipdeck.yaml's own shape.
-# `shipdeck man configs` prints it (type and brief); `shipdeck man details
-# <path>` prints one property in full. A test keeps the paths exactly those
-# of the JSON Schema, so a new field must be added here.
-#
-# type:   value kind and default, as shown in `man configs` (blocks have none)
-# brief:  a few words
-# text:   optional, the details beyond the brief
-# see:    optional, related manual topics
-# fields: a block's properties
-
-name:
-  type: text, required
-  brief: display name; also the unit's Description=
-  text: One line, such as `My API (prod)`. Also a handle for headless commands when unique.
-
-project:
-  type: path, default `.`
-  brief: source folder, relative to shipdeck.yaml
-  text: |
-    Local commands run here; pipeline.pack.files.include.project and pack.binary are relative to
-    it; the version and git commit are read here. It must exist at preflight.
-
-ssh:
-  brief: where and as whom to log in (the login method itself is never here)
-  see: [login, hosts]
-  fields:
-    host:
-      type: text, required
-      brief: address or ~/.ssh/config alias
-      text: |
-        An alias brings its HostName, Port, User and IdentityFile; values set here win. Aliases
-        needing ProxyJump/ProxyCommand are refused. SHIPDECK_HOST holds it as written.
-    port:
-      type: number, default alias Port else 22
-      brief: SSH port
-      text: |
-        Set it here, or as Port in the ~/.ssh/config alias; this one wins.
-    user:
-      type: text, default alias User
-      brief: user to log in and deploy as
-      text: |
-        Required when the alias has no User. Letters, digits, `.`, `_`, `-`. Root needs no sudo;
-        any other user needs the rights in `shipdeck man details permissions`.
-    shell_env:
-      type: bool, default true
-      brief: load the login shell's startup files for server commands
-      text: |
-        Once per connection runs `$SHELL -i -l` and keeps its exported variables (PATH from nvm,
-        pyenv, ...) for every server command and preflight's program look-up. false skips it;
-        --no-shell-env skips it for a whole run.
-      see: [shell-env]
-
-service:
-  brief: the process on the server
-  fields:
-    name:
-      type: text, required
-      brief: unit name without .service; PM2 app name by default
-      text: |
-        Letters, digits, `.`, `_`, `@`, `-`. `my-api` -> /etc/systemd/system/my-api.service.
-        `my-api.service` is refused.
-    manager:
-      type: systemd | pm2, default systemd
-      brief: what keeps the app running
-      text: |
-        systemd: a unit installed and restarted with sudo. pm2: PM2 as the SSH user, no sudo.
-      see: [systemd, pm2]
-    pm2:
-      brief: PM2 settings; only with manager pm2 (refused otherwise)
-      see: [pm2]
-      fields:
-        app:
-          type: text, default service.name
-          brief: the app's name in PM2
-          text: Letters, digits, `.`, `_`, `-`; not all digits (PM2 reads a number as an id).
-        ecosystem:
-          type: path in release, default none
-          brief: your own PM2 file instead of the generated one
-          text: |
-            Must end in .config.js, .config.cjs, .json, .yml or .yaml; ship it with pack.files.
-            Excludes service.start and pm2.options. The app named pm2.app is reloaded from it.
-        options:
-          type: map, default {}
-          brief: extra PM2 app properties for the generated file
-          text: |
-            Any property PM2 accepts (instances: max, exec_mode: cluster, max_memory_restart:
-            300M, node_args). name, cwd and env are refused: shipdeck sets them.
-    start:
-      type: command line, default ./<binary>
-      brief: what the service runs, from the release folder
-      text: |
-        First word is the program, the rest arguments (split like systemd: spaces; "..." or
-        '...' keep one argument). The program is a bare name (`node`: found on the server at
-        preflight, written into the unit as the full path), an absolute path (used as is), or a
-        path with `/` (`./my-api`, `.venv/bin/python`: inside the release -> <dir>/current/...).
-        Required without pack.binary (or pm2.ecosystem). One line, no backslashes, quotes closed.
-        With PM2, `node <script> args`: node's own flags go in pm2.options.node_args.
-      see: [systemd]
-    run_as:
-      type: text, default ssh.user
-      brief: user the service runs as (systemd)
-      text: Must be able to read the release. Not with PM2, which runs as the SSH user.
-    env_file:
-      type: path in release, default none
-      brief: KEY=value file for the service and server commands
-      text: |
-        Becomes EnvironmentFile=<dir>/current/<file> and is loaded for server commands, read like
-        systemd: blank and `#`/`;` lines skipped, optional `export `, one pair of quotes removed,
-        nothing expanded. Ship it, e.g. pack.files.include.deploy: [.env] (.env* get mode 0600).
-      see: [config.variables]
-    env:
-      type: map of text, default {}
-      brief: variables for the service and server commands
-      text: |
-        Keys: letters, digits, `_`, not starting with a digit. Values: no quotes, backslashes or
-        newlines (use env_file). Not given to local commands. env_file wins over env.
-    shared:
-      type: list of folders, default []
-      brief: folders kept across releases, in shared/
-      text: |
-        Each is <dir>/shared/<folder>, linked into every release at unpack. Must not overlap
-        each other, be shipped by pack.files, or be in backup.files.include. Never backed up or
-        deleted. The built-in unit may only write here.
-
-static:
-  brief: files on the server, served by nginx; use this instead of service
-  text: |
-    A static site has no process: no unit, no restart, no process logs. The release still moves
-    current, and nginx serves <dir>/current/<static.root> (or apps/<name>/... in a
-    monorepo). Pipeline steps, backups and rollback work as for a process.
-  see: [releases]
-  fields:
-    root:
-      type: path in release, required
-      brief: folder to serve, such as dist
-      text: |
-        Relative to the release; `./dist` and `dist` are the same. No leading `/`, no `..`, and not
-        the release itself. The pack step fails when the folder is not in the release, so list it in
-        pipeline.pack.files.include. A relative path may start with `./`.
-
-pipeline:
-  brief: the deploy steps that take settings
-  see: [steps]
-  fields:
-    preflight:
-      brief: step 1, checks before anything is built
-      see: [step.preflight]
-      fields:
-        requires:
-          type: list of programs, default []
-          brief: programs the server must have, e.g. npm
-          text: Found with `command -v` on the login shell's PATH. The start program is checked anyway.
-        run:
-          brief: commands; server first, then local
-          fields:
-            server:
-              type: commands
-              brief: in dir, with the live release's env_file
-              text: |
-                Runs before run.local, as the SSH user, e.g. `pg_isready -q`. A failure stops the deploy
-                with nothing touched. On a first deploy there is no live env_file yet.
-            local:
-              type: commands
-              brief: in project, e.g. tests
-              text: |
-                Runs after run.server, on your PC, e.g. `npm test`. It may also create files the deploy
-                folder ships, such as .env, since those are checked after it.
-    build:
-      brief: step 2, names the release and builds on your PC
-      see: [step.build]
-      fields:
-        version_from:
-          type: path, default found
-          brief: file whose version names the release
-          text: |
-            Relative to project: Cargo.toml (workspace inheritance followed), package.json,
-            pyproject.toml (project.version or tool.poetry.version), or any file whose first
-            line is the version. Unset: the first of those in project (VERSION last), else the
-            latest git tag, else 0.0.0.
-        run:
-          brief: commands
-          fields:
-            local:
-              type: commands
-              brief: the build, in project; SHIPDECK_VERSION is set
-              text: |
-                Your build commands, such as `cargo build --release` or `[npm ci, npm run build]`. Output
-                streams into the log. Empty: the files ship as they are. A failure stops the deploy.
-    pack:
-      brief: step 3, what goes into the release
-      see: [step.pack, config.files]
-      fields:
-        binary:
-          type: path, default none
-          brief: compiled program, relative to project
-          text: |
-            Lands at the release root under its file name. Checked after the build: ELF for the
-            server's CPU, glibc floor not newer than the server's.
-        files:
-          brief: files and folders to ship, by pattern
-          see: [config.files]
-          fields:
-            include:
-              brief: what to ship; `!pattern` leaves out
-              fields:
-                project:
-                  type: patterns, default []
-                  brief: relative to project, e.g. [dist, package.json]
-                  text: |
-                    Build output and source to ship; each path keeps its place in the release. Every pattern
-                    must match after the build, or Build fails.
-                deploy:
-                  type: patterns, default []
-                  brief: relative to shipdeck.yaml's folder, e.g. [.env]
-                  text: Replaces a project file at the same path.
-            exclude:
-              brief: left out of include; `!pattern` keeps
-              fields:
-                project:
-                  type: patterns, default []
-                  brief: e.g. [`**/*.map`] (quote it in YAML)
-                deploy:
-                  type: patterns, default []
-                  brief: same, for the deploy folder
-    setup:
-      brief: step 6, server commands in the new release, old one still live
-      see: [step.setup]
-      fields:
-        run:
-          brief: commands
-          fields:
-            server:
-              type: commands
-              brief: in releases/<id>, e.g. npm ci --omit=dev, migrations
-              text: |
-                Runs in the new release while the old one still serves, with service.env and the new
-                release's env_file. A failure removes the release. Also re-runs when a backup-only release
-                is rolled back to (SHIPDECK_ACTION=rollback).
-        check:
-          brief: commands that must pass after run
-          fields:
-            server:
-              type: commands
-              brief: in releases/<id>; failure removes the release
-              text: |
-                Runs once after setup.run.server, e.g. `node --check dist/main.js`; a failure is reported
-                as a failed setup check.
-    backup:
-      brief: step 7, the backup and how many releases stay
-      see: [step.backup, releases]
-      fields:
-        files:
-          brief: what of the release goes into backups/<id>.tar.zst
-          text: release.json and the service file always; service.shared never.
-          fields:
-            deployed:
-              type: bool, default true
-              brief: include every shipped file
-              text: |
-                false keeps only release.json, the service file and backup.files.include in the backup.
-            include:
-              type: patterns in release, default []
-              brief: more, e.g. files setup made that it cannot remake
-              text: |
-                Patterns relative to the release on the server, matched after setup. One that matches
-                nothing is a warning. service.shared paths cannot be included.
-            exclude:
-              type: patterns in release, default []
-              brief: left out, shipped or not
-              text: |
-                Same pattern syntax, e.g. [`**/*.log`].
-        keep:
-          brief: retention, applied in done after each deploy
-          fields:
-            open:
-              type: number >= 1, default 5
-              brief: releases kept unpacked, live one included
-              text: |
-                Rolling back to one is instant, with its dependencies in place. Older ones keep only their
-                backup.
-            compressed:
-              type: number, default 15
-              brief: older releases kept only as backups; 0 = none, no backup step
-              text: |
-                Rolling back to one unpacks it and re-runs setup. 0 keeps no backups and skips the backup
-                step.
-    health:
-      brief: step 10, waits until the new release is healthy
-      see: [step.health]
-      fields:
-        url:
-          type: http(s) URL, default none
-          brief: fetched on the server (curl/wget); must answer 2xx
-          text: Use an address the server reaches itself, e.g. http://127.0.0.1:3000/health.
-        check:
-          brief: commands that must pass; retried every 2 s until the timeout
-          fields:
-            server:
-              type: commands
-              brief: in current
-              text: |
-                After the release is live (done) or while checking it (health), with service.env and
-                env_file.
-            local:
-              type: commands
-              brief: in project, after server
-              text: |
-                On your PC, e.g. a curl to the public URL through your proxy.
-        timeout_secs:
-          type: number >= 3, default 20
-          brief: seconds to become healthy, checks included
-          text: |
-            Counted from the start of the health step. The release needs 3 healthy probes in a row
-            (one per second), so 3 is the minimum. Raise it for slow-starting apps.
-    done:
-      brief: step 11, after the release is live; failures only warn
-      see: [step.done]
-      fields:
-        run:
-          brief: commands; server first, then local
-          fields:
-            server:
-              type: commands
-              brief: in current
-              text: |
-                After the release is live (done) or while checking it (health), with service.env and
-                env_file.
-            local:
-              type: commands
-              brief: in project, e.g. a notification
-              text: |
-                Runs after done.run.server. A failure is only a warning; the release stays live.
-    failed:
-      brief: when any step fails
-      see: [step.failed, rollback]
-      fields:
-        rollback:
-          type: ask | auto, default ask
-          brief: on failed switch/restart/health
-          text: |
-            ask: the TUI asks; no answer in 30 s rolls back. auto: roll back at once. Headless
-            --on-failure overrides it.
-        run:
-          brief: commands
-          fields:
-            local:
-              type: commands
-              brief: in project; SHIPDECK_STEP and SHIPDECK_ERROR set
-              text: |
-                Runs on your PC after any failed step, after the rollback if there was one, e.g. a
-                notification. Its own failure is only logged.
-
-dir:
-  type: absolute server path, required
-  brief: folder for current, releases, backups and shared
-  text: |
-    Every deploy needs one. The first deploy creates it: as the user, else `sudo -n mkdir` +
-    chown, else preflight stops. In a monorepo every app shares it.
-
-process_manager:
-  brief: default process manager for monorepo apps
-  fields:
-    name:
-      type: systemd or pm2, default systemd
-      brief: manager inherited by apps without their own section
-    run_as:
-      type: user, optional
-      brief: systemd service user; defaults to the SSH user
-    app:
-      type: text, optional
-      brief: PM2 app name; must be unique across apps
-    ecosystem:
-      type: path, optional
-      brief: custom PM2 ecosystem file inside each app release folder
-    options:
-      type: map, default empty
-      brief: extra settings in generated PM2 process files
+# Every property of the project file and the deploy file, in the same
+# shape. A test keeps this list exactly the JSON Schema's properties.
 
 apps:
-  type: named map, monorepos only
-  brief: inline app settings or paths to app YAML files
-  text: |
-    A monorepo uses name, project, ssh, dir, process_manager, pipeline and apps.
-    Each app accepts project, start, static, env, env_file, shared, process_manager and pipeline.
-    An app file path is relative to shipdeck.yaml and must stay inside that folder.
-    App projects are relative to the repository project folder and must stay inside it.
-    App process_manager replaces the whole global section. App pipeline fields override
-    matching global settings. Global commands run once, then explicit app commands run
-    in app-name order. See `shipdeck man details monorepo` for execution and rollback.
+  type: "map"
+  brief: "The apps of the deploy, by name"
+deploys:
+  type: "map"
+  brief: "Deploy names and the deploy file of each, a path on your PC."
+name:
+  type: "text"
+  brief: "The deploy's name; the default process name starts with it."
+release:
+  brief: "The whole release: files that belong to no app, and the release commands."
+  fields:
+    exclude:
+      type: "list"
+      brief: "Patterns left out of `files`, matched against the path from the project folder."
+    files:
+      type: "list"
+      brief: "Files shipped beside the apps, each at its path from the project folder."
+    shared:
+      type: "list"
+      brief: "Folders kept across releases, each at its path in the release."
+    steps:
+      brief: "The release steps, with the settings each takes."
+      fields:
+        backup:
+          brief: "Step 5: what stays on the server once a release's folder goes."
+          fields:
+            exclude:
+              type: "list"
+              brief: "Uploaded paths to leave out."
+            include:
+              type: "list"
+              brief: "Paths setup made that it cannot make again."
+            keep:
+              brief: "How many old releases stay."
+              fields:
+                compressed:
+                  type: "number"
+                  brief: "Older releases kept only as their backup"
+                open:
+                  type: "number"
+                  brief: "Releases kept unpacked and ready to switch to, counting the live one"
+            local:
+              type: "text or map"
+              brief: "One command, or a list of them run in order, stopping at the first failure."
+            server:
+              type: "text or map"
+              brief: "One command, or a list of them run in order, stopping at the first failure."
+        build:
+          brief: "Step 2: the build, and the file collection."
+          fields:
+            local:
+              type: "text or map"
+              brief: "One command, or a list of them run in order, stopping at the first failure."
+            server:
+              type: "text or map"
+              brief: "One command, or a list of them run in order, stopping at the first failure."
+            version_from:
+              type: "string/null"
+              brief: "The file whose version names the release."
+        done:
+          brief: "Steps that only take commands."
+          fields:
+            local:
+              type: "text or map"
+              brief: "One command, or a list of them run in order, stopping at the first failure."
+            server:
+              type: "text or map"
+              brief: "One command, or a list of them run in order, stopping at the first failure."
+        failed:
+          brief: "Steps that only take commands."
+          fields:
+            local:
+              type: "text or map"
+              brief: "One command, or a list of them run in order, stopping at the first failure."
+            server:
+              type: "text or map"
+              brief: "One command, or a list of them run in order, stopping at the first failure."
+        health:
+          brief: "Step 9: the release must answer."
+          fields:
+            local:
+              type: "text or map"
+              brief: "One command, or a list of them run in order, stopping at the first failure."
+            server:
+              type: "text or map"
+              brief: "One command, or a list of them run in order, stopping at the first failure."
+            timeout_secs:
+              type: "number"
+              brief: "Seconds the release has to become healthy"
+            url:
+              type: "string/null"
+              brief: "The URL fetched on the server"
+        nginx:
+          brief: "Steps that only take commands."
+          fields:
+            local:
+              type: "text or map"
+              brief: "One command, or a list of them run in order, stopping at the first failure."
+            server:
+              type: "text or map"
+              brief: "One command, or a list of them run in order, stopping at the first failure."
+        preflight:
+          brief: "Step 1: checks before anything else."
+          fields:
+            local:
+              type: "text or map"
+              brief: "One command, or a list of them run in order, stopping at the first failure."
+            requires:
+              type: "list"
+              brief: "Programs the server must have."
+            server:
+              type: "text or map"
+              brief: "One command, or a list of them run in order, stopping at the first failure."
+        restart:
+          brief: "Steps that only take commands."
+          fields:
+            local:
+              type: "text or map"
+              brief: "One command, or a list of them run in order, stopping at the first failure."
+            server:
+              type: "text or map"
+              brief: "One command, or a list of them run in order, stopping at the first failure."
+        rollback:
+          brief: "Step 11: when putting an older release back."
+          fields:
+            ask_secs:
+              type: "integer/null"
+              brief: "How long `ask` waits before rolling back"
+            keep_failed:
+              type: "boolean/null"
+              brief: "Keep the failed release folder to inspect it"
+            local:
+              type: "text or map"
+              brief: "One command, or a list of them run in order, stopping at the first failure."
+            mode:
+              type: "text or map"
+              brief: "What an automatic rollback does"
+            server:
+              type: "text or map"
+              brief: "One command, or a list of them run in order, stopping at the first failure."
+        setup:
+          brief: "Steps that only take commands."
+          fields:
+            local:
+              type: "text or map"
+              brief: "One command, or a list of them run in order, stopping at the first failure."
+            server:
+              type: "text or map"
+              brief: "One command, or a list of them run in order, stopping at the first failure."
+        switch:
+          brief: "Steps that only take commands."
+          fields:
+            local:
+              type: "text or map"
+              brief: "One command, or a list of them run in order, stopping at the first failure."
+            server:
+              type: "text or map"
+              brief: "One command, or a list of them run in order, stopping at the first failure."
+        upload:
+          brief: "Steps that only take commands."
+          fields:
+            local:
+              type: "text or map"
+              brief: "One command, or a list of them run in order, stopping at the first failure."
+            server:
+              type: "text or map"
+              brief: "One command, or a list of them run in order, stopping at the first failure."
+server:
+  brief: "Where the deploy runs."
+  fields:
+    dir:
+      type: "text"
+      brief: "The server folder that holds `current`, `releases/`, `backups/` and `shared/`"
+    ssh:
+      brief: "How to log in"
+      fields:
+        host:
+          type: "text"
+          brief: "The server's address, or an alias from `~/.ssh/config`."
+        port:
+          type: "integer/null"
+          brief: "Default: the alias's Port, else 22."
+        shell_env:
+          type: "bool"
+          brief: "Give server commands the environment a login shell has: PATH from nvm and the like"
+        user:
+          type: "string/null"
+          brief: "The user shipdeck logs in and deploys as"

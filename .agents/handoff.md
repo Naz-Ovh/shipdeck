@@ -1,5 +1,72 @@
 # Handoff
 
+## Config format 2 — 2026-11-11
+
+The config, the release layout and the deploy pipeline were rebuilt to the
+design in `docs/feature/config-v2.md`, plus the `binary` steer in
+`.agents/task/config-v2-steer-01-binary.md`. The old format is gone, not kept
+beside the new one: an old file fails with unknown-key problems and there is no
+migration command.
+
+### What the tree holds now
+
+- **Config.** `crates/engine/src/config/` is rebuilt around `ProjectFile` and
+  `DeployFile` (`types.rs`), placeholders (`placeholders.rs`), the three path
+  forms (`paths.rs`), the value rules (`rules.rs`), and one resolved
+  `Deployment` (`resolve.rs`) that everything after loading uses. `load.rs`
+  reads the project file and each deploy file in three passes.
+- **One pipeline.** `deploy/` is preflight, build, upload, backup, activation
+  and recovery, over one `Deployment` with a list of apps. `deploy/mod.rs`,
+  `deploy/stages.rs` and the `deploy/multiple*.rs` files are merged away.
+- **Release plan.** `bundle/plan.rs` computes every path the next release holds;
+  `deploy` and `shipdeck tree` both use it. `bundle/content.rs` hashes it,
+  fingerprints it and packs it.
+- **Layout.** Shipdeck's files live in `.shipdeck/` in each release:
+  `release.json`, `settings.json`, `<process>.service`, `<process>.pm2.json`,
+  `oxfile.toml`, `nginx/<name>-<app>.conf`. `scripts/server-setup.sh` installs
+  units from `current/.shipdeck/$SERVICE.service`.
+- **Commands.** `shipdeck deploy <deploy>`, `rollback`, `releases`,
+  `server-info`, `work`, `events`, `setup`, and the new `tree`. `--shipdeckfile`
+  names one deploy file; without it the project file is read.
+- **Parse only.** `nginx:` and `oxmgr:` are read and checked; a deploy that uses
+  either stops at preflight. `systemd.instances`, `{{INSTANCE}}` and `@` in a
+  process name are refused.
+
+### After the first review
+
+The review is `docs/review/config-v2-rewrite-review.md`. Fixed there:
+
+- placeholders now expand in commands, `process.env` values, the PM2 file
+  and `health.url`, through one `Deployment::expand`;
+- an automatic rollback runs `rollback.server` and `rollback.local` first;
+- `--on-failure` is optional, so `mode: off` is used unless the flag is given;
+- the manager is `Process.manager: Option<KeepUp>`; `RawProcess` keeps the
+  schema and refuses two keys;
+- `binary: { path }` without `to` works;
+- dead code and `let _ =` silencers are gone;
+- one `deploy_completed` event, not two;
+- no placeholder nginx or oxmgr files in the release.
+
+### Checks
+
+`cargo fmt --all -- --check`, `cargo check --workspace --all-targets`,
+`cargo test --workspace` (all pass), strict pedantic and performance Clippy, and
+`just schema` with no diff in `docs/schema` all passed. `shipdeck tree` on a
+copy of `docs/feature/config-v2/universabile/` matches the design's tree.
+
+`just build-doc` was not run. The Podman SSH suite (`tests/monorepo_ssh.py`) was
+rewritten for the new format with every scenario the task lists, but it was not
+run: this machine has no container and no `sshd`.
+
+### Docs
+
+The manual (`apps/cli/manual/`), `README.md`, `docs/code/`,
+`docs/website/content/docs/`, `docs/visual/Plan/spec.html` and
+`docs/project-progress.html` (row `p0c7`) are updated. `guides/deploy-root.mdx`
+is gone; `upgrading.mdx` has the format 2 section and the key map.
+
+The report is `.agents/task/config-v2-rewrite-report.md`.
+
 ## Live progress and named phases — 2026-11-09
 
 Headless deploys now print each step as `[n/steps]` and name the slow

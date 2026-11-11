@@ -1,0 +1,33 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.1/docs/schema/deploy.schema.json
+# Every field: https://github.com/Naz-Ovh/shipdeck/tree/main/docs/feature/config-v2.md
+
+# A Go service: one static binary needs nothing from the server.
+name: worker
+server:
+  ssh: { host: prod }
+  dir: /opt/worker
+
+release:
+  steps:
+    preflight:
+      local: go vet ./...
+    build:
+      local: CGO_ENABLED=0 go build -o dist/worker ./cmd/worker
+    backup:
+      keep: { open: 3, compressed: 10 }
+    rollback:
+      mode: auto
+
+apps:
+  worker:
+    source: .
+    files: [templates, config.yaml, .env]
+    binary: dist/worker
+    process:
+      start: ./worker --config config.yaml
+      env: { GOMAXPROCS: "2" }
+      env_file: .env
+      systemd: {}
+    steps:
+      health:
+        server: ./worker healthcheck

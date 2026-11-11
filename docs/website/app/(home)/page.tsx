@@ -8,26 +8,24 @@ import { shipdeckVersion } from '@/lib/version';
 
 const install = 'curl -LsSf https://shipdeck.naz.ovh/install.sh | sh';
 
-const yaml = `name: My API (prod)
-project: ../../..
-dir: /opt/my-api
-ssh:
-  host: prod
-  user: deploy
-service:
-  name: my-api
-  start: ./my-api
-pipeline:
-  build:
-    run:
-      local: cargo zigbuild --release
-  pack:
+const yaml = `name: my-api
+server:
+  ssh: { host: prod, user: deploy }
+  dir: /opt/my-api
+apps:
+  my-api:
+    source: .
+    files: [.env]
     binary: target/release/my-api
-    files:
-      include:
-        deploy: [.env]
-  health:
-    url: http://127.0.0.1:8080/health`;
+    process:
+      systemd: {}
+    steps:
+      health:
+        url: http://127.0.0.1:8080/health
+release:
+  steps:
+    build:
+      local: cargo zigbuild --release`;
 
 const features = [
   {
@@ -144,7 +142,7 @@ export default function HomePage() {
         <div className="mx-auto w-full max-w-6xl px-6 py-20">
           <div className="max-w-2xl">
             <p className="sd-eyebrow">The pipeline</p>
-            <h2 className="sd-heading mt-3 text-3xl text-sd-ink sm:text-[2.2rem]">Eleven steps, and nothing live changes before the switch.</h2>
+            <h2 className="sd-heading mt-3 text-3xl text-sd-ink sm:text-[2.2rem]">Twelve steps, and nothing live changes before the switch.</h2>
             <p className="mt-4 text-sd-ink-soft leading-relaxed">
               Every deploy runs the same steps in the same order. You add your own commands where a step can run them,
               and the file says plainly which run on your PC and which on the server.
@@ -159,15 +157,15 @@ export default function HomePage() {
       <section className="sd-band">
         <div className="mx-auto grid w-full max-w-6xl grid-cols-1 gap-10 px-6 py-20 lg:grid-cols-2">
           <div className="flex min-w-0 flex-col">
-            <p className="sd-eyebrow">One file per deployable</p>
-            <h2 className="sd-heading mt-3 text-[1.9rem] text-sd-ink">shipdeck.yaml says what runs where.</h2>
+            <p className="sd-eyebrow">One file per deploy</p>
+            <h2 className="sd-heading mt-3 text-[1.9rem] text-sd-ink">One file says what runs where.</h2>
             <p className="mt-4 text-sd-ink-soft leading-relaxed">
-              Each service gets a folder with a shipdeck.yaml. Point shipdeck at the folder that holds them all and
-              every one shows up on the first screen. A JSON Schema gives your editor completion for every field.
+              A deploy is one file: the server, the release and every app. Your project file lists them by name, so
+              every deploy shows up on the first screen. A JSON Schema gives your editor completion for every field.
             </p>
             <div className="mt-6 overflow-hidden rounded-xl border border-sd-line bg-sd-1">
               <div className="flex items-center gap-2 border-b border-sd-line bg-sd-2 px-4 py-2 font-mono text-[0.74rem] text-sd-ink-faint">
-                scripts/deploy/my-api-prod/shipdeck.yaml
+                deploy/production.yaml
               </div>
               <pre className="overflow-x-auto px-4 py-3.5 font-mono text-[0.78rem] leading-[1.7] text-sd-ink-soft">
                 {yaml.split('\n').map((line, i) => {
@@ -289,10 +287,10 @@ export default function HomePage() {
               Quickstart <ArrowRight className="size-4" />
             </Link>
             <Link
-              href="/docs/reference/shipdeck-yaml"
+              href="/docs/reference/config"
               className="inline-flex items-center rounded-xl border border-sd-line bg-sd-1 px-5 py-2.5 text-[0.95rem] font-medium text-sd-ink transition-colors hover:bg-sd-2"
             >
-              shipdeck.yaml reference
+              Config reference
             </Link>
           </div>
         </div>

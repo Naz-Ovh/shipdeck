@@ -1,0 +1,90 @@
+# A standalone deploy: one app, every key it can use, with its default.
+# Paths on your PC: /x is absolute, apps/x is from the project folder
+# (where you run shipdeck, or -C), ./x and ../x are from this file's folder.
+# {{NAME}} placeholders work in every string; the list is in the design page.
+# In a step, `server:` then `local:` run first; then shipdeck does the step.
+# Rules and the server layout: docs/feature/config-v2.md.
+
+name: web                          # deploy name; process names start with it
+
+server:
+  ssh:
+    host: prod                     # address, or an alias from ~/.ssh/config
+    port: 22                       # default: the alias's Port, else 22
+    user: deploy                   # default: the alias's User
+    shell_env: true                # load the login shell's PATH (nvm and friends)
+  dir: /opt/web                    # {{ROOT}}: holds current, releases/, backups/, shared/
+
+# Settings for the whole release. With one app, only these belong here.
+release:
+  steps:
+    preflight:
+      requires: [node, npm]        # programs the server must have
+    build:
+      version_from: package.json   # names the release. Default: first found, else git tag
+    backup:
+      keep: { open: 5, compressed: 15 }   # releases ready to switch to, and backups
+    health:
+      timeout_secs: 20             # time the app has to become healthy
+    rollback:                      # when switch, restart, nginx or health fails, or by hand
+      mode: ask                    # ask | auto | off
+      ask_secs: 30                 # with ask: roll back on its own after this
+      keep_failed: false           # true keeps the failed release to inspect it
+
+apps:
+  web:
+    source: .                      # local source directory. Default: the project folder
+    files:
+      - dist                       # lands at current/apps/web/dist
+      - package.json
+      - package-lock.json
+      - { path: ./production/.env, to: .env }   # outside source: `to` is required
+    exclude: ["**/*.map"]
+    binary: null                   # a compiled program; lands at current/apps/web/<file name>, mode 0755
+    # binary: { path: target/release/web, to: bin/web }   # or with a destination in apps/web
+    shared: [uploads]              # current/apps/web/uploads -> shared/apps/web/uploads
+
+    process:                       # a running program; or `static: true`, never both
+      name: web                    # default: <name>-<app>, here web-web
+      start: node dist/main.js     # runs in /opt/web/current/apps/web. Default: the binary, ./<file name> or ./<to>
+      env: { NODE_ENV: production }
+      env_file: .env               # path in the app folder
+      systemd:                     # the manager: exactly one of systemd, pm2, oxmgr
+        user: deploy               # default: the SSH user
+        options:                   # unit properties, by section; replace built-in ones
+          Service: { Restart: on-failure, MemoryMax: 512M }
+        # template: ./systemd/web.service.template   # or your own whole unit; not with options
+
+    nginx:                         # optional: without it, shipdeck only starts the app
+      domains: [example.com, www.example.com]
+      tls: { provider: letsencrypt, email: ops@example.com }   # or: none
+      proxy_pass: http://127.0.0.1:3000   # required: where the app listens
+      headers: { X-Frame-Options: DENY }
+      locations:
+        /uploads/: { expires: 30d }
+      raw: |
+        client_max_body_size 20m;
+
+    steps:
+      preflight:
+        server: node --version     # in {{ROOT}}
+        local: npm test            # in {{SOURCE}}
+      build:
+        local: [npm ci, npm run build]   # in {{SOURCE}}
+      setup:
+        server:                    # in {{APP_RELEASE}}; the old release still serves
+          - npm ci --omit=dev
+          - npm run migrate
+          - node --check dist/main.js
+      backup:                      # always holds what was uploaded
+        include: []                # more paths setup made that it cannot make again
+        exclude: []                # uploaded paths to leave out
+      health:
+        url: http://127.0.0.1:3000/health   # fetched on the server
+        server: test -f dist/main.js   # in {{APP_CURRENT}}
+        local: curl -fsS https://example.com/   # in {{SOURCE}}
+      done:
+        server: echo "web {{VERSION}}"   # in {{APP_CURRENT}}
+        local: ./notify.sh "web {{VERSION}} is live"   # in {{SOURCE}}
+      failed:
+        local: ./notify.sh "web failed at $SHIPDECK_STEP"    # in {{SOURCE}}

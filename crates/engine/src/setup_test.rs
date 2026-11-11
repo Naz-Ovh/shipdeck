@@ -165,35 +165,35 @@ fn script_accepts_valid_values() {
     }
 }
 
-fn service(yaml: &str) -> crate::config::Service {
-    crate::config::parse(yaml).expect("config").service
+fn process(name: &str, manager: Manager) -> SetupProcess {
+    SetupProcess {
+        name: name.into(),
+        manager: Some(manager),
+        user: "deploy".into(),
+    }
 }
 
 #[test]
 fn guided_script_offers_both_kinds_of_access() {
-    let config = service(
-        "name: api\ndir: /opt/api\nssh:\n  host: example\nservice:\n  name: api\n  start: ./api\npipeline:\n  pack:\n    files:\n      include:\n        project: [.]\n",
-    );
+    let api = process("api", Manager::Systemd);
     let commands = guided_script(
         "/opt/api",
-        std::slice::from_ref(&config),
+        std::slice::from_ref(&api),
         SetupAccess::Commands,
     );
     assert!(commands.contains("SHIPDECK_COMMANDS"));
     assert!(commands.contains("systemctl restart api"));
     assert!(!commands.contains("from shipdeck guided setup"));
     assert!(commands.contains("installed=$missing"));
-    let full = guided_script("/opt/api", &[config], SetupAccess::Full);
+    let full = guided_script("/opt/api", &[api], SetupAccess::Full);
     assert!(full.contains("NOPASSWD: ALL"));
     assert!(!full.contains("SHIPDECK_COMMANDS"));
 }
 
 #[test]
 fn guided_script_starts_pm2_at_boot() {
-    let config = service(
-        "name: web\ndir: /opt/web\nssh:\n  host: example\nservice:\n  name: web\n  manager: pm2\n  start: node main.js\npipeline:\n  pack:\n    files:\n      include:\n        project: [.]\n",
-    );
-    let script = guided_script("/opt/web", &[config], SetupAccess::Commands);
+    let web = process("web", Manager::Pm2);
+    let script = guided_script("/opt/web", &[web], SetupAccess::Commands);
     assert!(script.contains("pm2 startup systemd"));
     assert!(!script.contains("SHIPDECK_COMMANDS"));
 }

@@ -1,207 +1,236 @@
-//! The systemd unit each release carries, rendered from the built-in
-//! template or the deployable's `service.template`.
+//! The systemd unit each release carries in `.shipdeck/`, rendered from the
+//! built-in template or the app's `process.systemd.template`.
+
+use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 use anyhow::{Context, Result, bail};
 
-use super::ProcessSpec;
-use crate::config::{Deployable, Program, Service, release_path};
+use crate::config::placeholders::{self, AppValues, Values};
+use crate::config::{Deployment, Program, SystemdOptions};
 use crate::release::ReleaseName;
 
-const DEFAULT_TEMPLATE: &str = include_str!("default.service");
+/// The built-in unit, before the placeholders and the app's own values.
+const DEFAULT_TEMPLATE: &str = r"# {{PROCESS}}.service for release {{RELEASE_ID}}, written by shipdeck.
+# Every deploy and rollback replaces this file; change process.systemd.template instead.
 
-/// The placeholders a template may use.
-pub const PLACEHOLDERS: [&str; 12] = [
-    "name", "tag", "id", "version", "git", "dir", "service", "user", "exec", "binary", "env",
-    "workdir",
-];
+[Unit]
+Description={{NAME}} {{APP}} ({{VERSION}})
+After=network-online.target
+Wants=network-online.target
 
-/// Renders the unit. `start_path` is where preflight found the start
-/// program on the server, when `service.start` names one like `node`.
+[Service]
+Type=simple
+User={user}
+WorkingDirectory={{APP_CURRENT}}
+ExecStart={exec}
+Environment=SHIPDECK_RELEASE={{RELEASE_FOLDER}}
+{env}
+Restart=always
+RestartSec=2
+KillSignal=SIGTERM
+TimeoutStopSec=30
+LimitNOFILE=65535
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths={{SHARED}}
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
+";
+
+/// The app's unit file in the release.
+#[must_use]
+pub fn unit_file(deployment: &Deployment, app: &str) -> String {
+    format!(".shipdeck/{}.service", deployment.process_name(app))
+}
+
+/// Renders the app's unit, or `None` when it does not use systemd.
 ///
 /// # Errors
-///
-/// Fails when the custom template cannot be read, or a placeholder is
-/// unknown or has no value.
-pub fn render_for(
-    deployable: &Deployable,
+/// Fails when the custom template cannot be read, a placeholder is unknown,
+/// or the app cannot start.
+pub fn render(
+    deployment: &Deployment,
+    app: &str,
     release: &ReleaseName,
     start_path: Option<&str>,
-) -> Result<String> {
-    render_in(deployable, release, start_path, "")
-}
-
-/// Renders a service for a folder within the shared release.
-pub(super) fn render_in(
-    deployable: &Deployable,
-    release: &ReleaseName,
-    start_path: Option<&str>,
-    release_dir: &str,
-) -> Result<String> {
-    let binary_name = deployable.binary_name();
-    let template = deployable.unit_template_path();
-    let spec = ProcessSpec {
-        name: &deployable.config.name,
-        service: &deployable.config.service,
-        binary_name: binary_name.as_deref(),
-        user: deployable.run_as(),
-        template: Some(&template),
-        release_dir,
-    };
-    render_spec(&spec, release, start_path)
-}
-
-/// Renders a service using the supplied process settings.
-pub(super) fn render_spec(
-    spec: &ProcessSpec<'_>,
-    release: &ReleaseName,
-    start_path: Option<&str>,
-) -> Result<String> {
-    let custom = spec.template.filter(|path| path.is_file());
-    let template = if let Some(custom) = custom {
-        std::fs::read_to_string(custom).with_context(|| format!("reading {}", custom.display()))?
-    } else {
-        DEFAULT_TEMPLATE.to_string()
-    };
-    let service = spec.service;
-    let cwd = workdir(service, spec.release_dir);
-    let env_file = service
-        .env_file
-        .as_ref()
-        .map(|file| format!("EnvironmentFile={cwd}/{}", release_path(file)));
-    let env = env_file
-        .into_iter()
-        .chain(
-            service
-                .env
-                .iter()
-                .map(|(key, value)| format!("Environment=\"{key}={value}\"")),
-        )
-        .collect::<Vec<_>>()
-        .join("\n");
-    let values = [
-        Some(spec.name.to_string()),
-        Some(release.tag()),
-        Some(release.id()),
-        Some(release.version.clone()),
-        Some(release.git.clone()),
-        Some(service.dir.clone()),
-        Some(service.name.clone()),
-        Some(spec.user.to_string()),
-        Some(exec_start_service(
-            service,
-            spec.binary_name,
-            start_path,
-            spec.release_dir,
-        )),
-        spec.binary_name.map(str::to_string),
-        Some(env),
-        Some(cwd),
-    ];
-    let vars: Vec<(&str, Option<String>)> = PLACEHOLDERS.iter().copied().zip(values).collect();
-    render(&template, &vars).with_context(|| {
-        if let Some(custom) = custom {
-            format!("rendering {}", custom.display())
-        } else {
-            "rendering the built-in unit".to_string()
+) -> Result<Option<String>> {
+    let systemd = deployment
+        .systemd(app)
+        .context("app has no systemd settings")?;
+    let id = release.id();
+    let values = values(deployment, app, &id, &release.version);
+    let text = match deployment.unit_template(app).filter(|path| path.is_file()) {
+        Some(path) => {
+            let template = std::fs::read_to_string(&path)
+                .with_context(|| format!("reading {}", path.display()))?;
+            placeholders::expand(&template, &values)
+                .map_err(anyhow::Error::msg)
+                .with_context(|| format!("rendering {}", path.display()))?
         }
-    })
+        None => built_in(deployment, app, start_path, &values)?,
+    };
+    let text = match &systemd.options {
+        Some(options) => apply_options(&text, options),
+        None => text,
+    };
+    Ok(Some(text))
 }
 
-/// The `ExecStart=` command: `service.start` (or the binary) with its
-/// program made absolute.
-#[must_use]
-pub fn exec_start(deployable: &Deployable, start_path: Option<&str>) -> String {
-    exec_start_in(deployable, start_path, "")
+/// The placeholders' values for one app of one release.
+fn values<'a>(
+    deployment: &'a Deployment,
+    app: &'a str,
+    id: &'a str,
+    version: &'a str,
+) -> Values<'a> {
+    Values {
+        root: deployment.dir(),
+        name: deployment.name(),
+        host: &deployment.endpoint.name,
+        project: deployment.project.to_str().unwrap_or("."),
+        config: deployment.config_dir.to_str().unwrap_or("."),
+        release: Some(id),
+        version: Some(version),
+        app: Some(AppValues {
+            name: app,
+            source: deployment.source(app).display().to_string(),
+            process: deployment
+                .process(app)
+                .map(|_| deployment.process_name(app)),
+        }),
+    }
 }
 
-/// The start command for a folder within the shared release.
-fn exec_start_in(deployable: &Deployable, start_path: Option<&str>, release_dir: &str) -> String {
-    exec_start_service(
-        &deployable.config.service,
-        deployable.binary_name().as_deref(),
-        start_path,
-        release_dir,
-    )
-}
-
-/// Builds the start command from process settings.
-fn exec_start_service(
-    service: &Service,
-    binary: Option<&str>,
+/// The built-in unit with its values filled in.
+fn built_in(
+    deployment: &Deployment,
+    app: &str,
     start_path: Option<&str>,
-    release_dir: &str,
-) -> String {
-    let (program, rest) = service.command(binary);
-    [
-        program_path_for(service, program, start_path, release_dir),
-        rest,
-    ]
-    .into_iter()
-    .filter(|part| !part.is_empty())
-    .collect::<Vec<_>>()
-    .join(" ")
+    values: &Values<'_>,
+) -> Result<String> {
+    let current = format!("{}/current/apps/{app}", deployment.dir());
+    let exec = exec_start(deployment, app, start_path, &current)?;
+    let release_folder = format!(
+        "{}/releases/{}",
+        deployment.dir(),
+        values.release.unwrap_or("")
+    );
+    let mut env = String::new();
+    if let Some(file) = deployment.env_file(app) {
+        let _ = writeln!(env, "EnvironmentFile={current}/{file}");
+    }
+    for (key, value) in deployment.app_env(app) {
+        let value = placeholders::expand(&value, values).map_err(anyhow::Error::msg)?;
+        let _ = writeln!(env, "Environment=\"{key}={value}\"");
+    }
+    let template = DEFAULT_TEMPLATE
+        .replace("{user}", &deployment.run_user(app))
+        .replace("{exec}", &exec)
+        .replace("{env}", env.trim_end())
+        .replace("{RELEASE_FOLDER}", &release_folder);
+    placeholders::expand(&template, values).map_err(|why| anyhow::anyhow!("{why}"))
 }
 
-/// Where the start program is on the server.
-#[must_use]
-pub fn program_path(deployable: &Deployable, program: Program, start_path: Option<&str>) -> String {
-    program_path_for(&deployable.config.service, program, start_path, "")
-}
-
-/// Where an app's start program is within the shared release.
-pub(super) fn program_path_for(
-    service: &Service,
-    program: Program,
+/// `ExecStart=`: the program, with a program inside the release made
+/// absolute through `current`.
+fn exec_start(
+    deployment: &Deployment,
+    app: &str,
     start_path: Option<&str>,
-    release_dir: &str,
-) -> String {
-    match program {
+    current: &str,
+) -> Result<String> {
+    let Some((program, rest)) = deployment.start(app) else {
+        bail!("app {app} has no process.start and no binary");
+    };
+    let program = match program {
         Program::Absolute(path) => path,
-        Program::InRelease(path) => format!("{}/{path}", workdir(service, release_dir)),
+        Program::InRelease(path) => format!("{current}/{path}"),
         // systemd finds a bare name on its own fixed PATH, which may not be
         // where preflight found it; the found path is the one to use.
         Program::Tool(name) => start_path.map_or(name, str::to_string),
-    }
-}
-
-/// The live working folder for a service.
-pub(super) fn workdir(service: &Service, release_dir: &str) -> String {
-    if release_dir.is_empty() {
-        format!("{}/current", service.dir)
+    };
+    Ok(if rest.is_empty() {
+        program
     } else {
-        format!("{}/current/{release_dir}", service.dir)
-    }
+        format!("{program} {rest}")
+    })
 }
 
-/// Replaces every `{{name}}`; an unknown placeholder, or one this deployable
-/// has no value for, is an error rather than silent text.
-///
-/// # Errors
-///
-/// Fails when a `{{` is never closed, or a placeholder is unknown or has
-/// no value.
-pub fn render(template: &str, vars: &[(&str, Option<String>)]) -> Result<String> {
-    let mut out = String::with_capacity(template.len());
-    let mut rest = template;
-    while let Some(start) = rest.find("{{") {
-        out.push_str(&rest[..start]);
-        let after = &rest[start + 2..];
-        let Some(end) = after.find("}}") else {
-            bail!("a `{{{{` is never closed");
-        };
-        let key = after[..end].trim();
-        match vars.iter().find(|(name, _)| *name == key) {
-            Some((_, Some(value))) => out.push_str(value),
-            Some((_, None)) => bail!(
-                "{{{{{key}}}}} has no value: this deployable has no pipeline.pack.binary; use {{{{exec}}}}"
-            ),
-            None => bail!(
-                "unknown placeholder {{{{{key}}}}}; known: {}",
-                PLACEHOLDERS.join(", ")
-            ),
+/// Puts the app's own properties into the unit: a property replaces the
+/// built-in line of the same name, or is added; a list writes one line per
+/// item.
+fn apply_options(text: &str, options: &SystemdOptions) -> String {
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    for (section, entries) in [
+        ("Unit", &options.unit),
+        ("Service", &options.service),
+        ("Install", &options.install),
+    ] {
+        if entries.is_empty() {
+            continue;
         }
-        rest = &after[end + 2..];
+        let Some(start) = lines
+            .iter()
+            .position(|line| line.trim() == format!("[{section}]"))
+        else {
+            if !lines.last().is_some_and(|line| line.trim().is_empty()) {
+                lines.push(String::new());
+            }
+            lines.push(format!("[{section}]"));
+            lines.extend(option_lines(entries));
+            continue;
+        };
+        let end = lines[start + 1..]
+            .iter()
+            .position(|line| line.trim_start().starts_with('['))
+            .map_or(lines.len(), |offset| start + 1 + offset);
+        let mut kept: Vec<String> = lines[start + 1..end]
+            .iter()
+            .filter(|line| {
+                let key = line.split('=').next().unwrap_or_default().trim();
+                !entries.keys().any(|own| own == key)
+            })
+            .cloned()
+            .collect();
+        kept.extend(option_lines(entries));
+        lines.splice(start + 1..end, kept);
     }
-    out.push_str(rest);
-    Ok(out)
+    let mut text = lines.join("\n");
+    text.push('\n');
+    text
+}
+
+/// One line per value, or per item of a list.
+fn option_lines(entries: &BTreeMap<String, serde_json::Value>) -> Vec<String> {
+    let mut lines = Vec::new();
+    for (key, value) in entries {
+        match value {
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    lines.push(format!("{key}={}", scalar(item)));
+                }
+            }
+            other => lines.push(format!("{key}={}", scalar(other))),
+        }
+    }
+    lines
+}
+
+fn scalar(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::Null => String::new(),
+        other => other.to_string(),
+    }
 }

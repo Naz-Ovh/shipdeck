@@ -1,115 +1,96 @@
-//! The PM2 app file each release carries when shipdeck writes it:
-//! `<service>.pm2.json`, from `service.start` and `service.pm2.options`.
+//! The PM2 app file each release carries in `.shipdeck/`, from
+//! `process.start` and `process.pm2.options`.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde_json::{Map, Value, json};
 
-use super::ProcessSpec;
-use super::unit::{program_path_for, workdir};
-use crate::config::{Deployable, Service, is_node, split_args};
+use crate::config::{Deployment, Program, file_name};
+use crate::release::ReleaseName;
 
-/// How PM2 starts the program in `service.start`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Launch {
-    pub script: String,
-    pub args: Vec<String>,
+/// The app's PM2 file in the release.
+#[must_use]
+pub fn pm2_file(deployment: &Deployment, app: &str) -> String {
+    format!(".shipdeck/{}.pm2.json", deployment.process_name(app))
+}
+
+/// How PM2 starts the app.
+struct Launch {
+    script: String,
+    args: Vec<String>,
     /// `none` for a program PM2 runs as it is.
-    pub interpreter: String,
+    interpreter: String,
 }
 
 /// `node <script> [args]` runs the script with node as PM2's interpreter,
-/// so cluster mode works; node's own flags go in `pm2.options.node_args`
-/// (the rules see to it). Any other program runs as it is.
-#[must_use]
-pub fn launch(deployable: &Deployable, start_path: Option<&str>) -> Launch {
-    launch_in(deployable, start_path, "")
-}
-
-/// Resolves the command inside an app's release folder.
-fn launch_in(deployable: &Deployable, start_path: Option<&str>, release_dir: &str) -> Launch {
-    launch_service(
-        &deployable.config.service,
-        deployable.binary_name().as_deref(),
-        start_path,
-        release_dir,
-    )
-}
-
-/// Resolves a PM2 command from process settings.
-fn launch_service(
-    service: &Service,
-    binary: Option<&str>,
-    start_path: Option<&str>,
-    release_dir: &str,
-) -> Launch {
-    let (program, rest) = service.command(binary);
-    let is_node = is_node(&program);
-    let path = program_path_for(service, program, start_path, release_dir);
-    // The rules refuse an unclosed quote before this runs.
-    let mut words = split_args(&rest).unwrap_or_default();
-    if is_node && !words.is_empty() {
-        let script = words.remove(0);
-        return Launch {
-            script,
-            args: words,
+/// so cluster mode works; any other program runs as it is.
+fn launch(deployment: &Deployment, app: &str) -> Result<Launch> {
+    let (program, words) = deployment
+        .start_words(app)
+        .with_context(|| format!("app {app} has an unclosed quote in process.start"))?;
+    let current = format!("{}/current/apps/{app}", deployment.dir());
+    let path = match program {
+        Program::Absolute(path) => path,
+        Program::InRelease(path) => format!("{current}/{path}"),
+        Program::Tool(name) => name,
+    };
+    if file_name(&path) == "node"
+        && let Some((script, args)) = words.split_first()
+    {
+        return Ok(Launch {
+            script: script.clone(),
+            args: args.to_vec(),
             interpreter: path,
-        };
+        });
     }
-    Launch {
+    Ok(Launch {
         script: path,
         args: words,
         interpreter: "none".into(),
-    }
+    })
 }
 
-/// The app file. The environment is not in it: shipdeck exports
-/// `service.env` and `service.env_file` before it calls PM2, which reads
-/// them with `--update-env`.
+/// Renders the app's PM2 file. The environment is not in it: shipdeck
+/// exports `process.env` and `process.env_file` before it calls PM2.
 ///
 /// # Errors
-///
-/// Fails when the app file cannot be serialized to JSON.
-pub fn render(deployable: &Deployable, start_path: Option<&str>) -> Result<String> {
-    render_in(deployable, start_path, "")
-}
-
-/// Renders a PM2 file for a folder within the shared release.
-pub(super) fn render_in(
-    deployable: &Deployable,
-    start_path: Option<&str>,
-    release_dir: &str,
-) -> Result<String> {
-    let service = &deployable.config.service;
-    render_service(
-        service,
-        deployable.binary_name().as_deref(),
-        start_path,
-        release_dir,
-    )
-}
-
-/// Renders PM2 settings from a process specification.
-pub(super) fn render_spec(spec: &ProcessSpec<'_>, start_path: Option<&str>) -> Result<String> {
-    render_service(spec.service, spec.binary_name, start_path, spec.release_dir)
-}
-
-/// Creates the PM2 file for the given service and working folder.
-fn render_service(
-    service: &Service,
-    binary: Option<&str>,
-    start_path: Option<&str>,
-    release_dir: &str,
-) -> Result<String> {
-    let launch = launch_service(service, binary, start_path, release_dir);
-    let mut app = Map::new();
-    app.insert("name".into(), json!(service.pm2_app()));
-    app.insert("cwd".into(), json!(workdir(service, release_dir)));
-    app.insert("script".into(), json!(launch.script));
-    app.insert("args".into(), json!(launch.args));
-    app.insert("interpreter".into(), json!(launch.interpreter));
-    for (key, value) in &service.pm2.options {
-        app.insert(key.clone(), value.clone());
+/// Fails when the app cannot start or the file cannot be serialized.
+pub fn render(deployment: &Deployment, app: &str, release: &ReleaseName) -> Result<String> {
+    let launch = launch(deployment, app)?;
+    let id = release.id();
+    let fill = |text: &str| deployment.expand(text, Some(&id), Some(&release.version), Some(app));
+    let mut process = Map::new();
+    process.insert("name".into(), json!(deployment.process_name(app)));
+    process.insert(
+        "cwd".into(),
+        json!(format!("{}/current/apps/{app}", deployment.dir())),
+    );
+    process.insert("script".into(), json!(fill(&launch.script)?));
+    process.insert("args".into(), json!(launch.args));
+    process.insert("interpreter".into(), json!(fill(&launch.interpreter)?));
+    if let Some(pm2) = deployment.pm2(app) {
+        for (key, setting) in &pm2.options {
+            process.insert(key.clone(), fill_options(setting, &fill)?);
+        }
     }
-    let file = json!({ "apps": [Value::Object(app)] });
-    Ok(serde_json::to_string_pretty(&file)? + "\n")
+    let json_file = json!({ "apps": [Value::Object(process)] });
+    Ok(serde_json::to_string_pretty(&json_file)? + "\n")
+}
+
+/// A PM2 option with every string inside it expanded.
+fn fill_options(value: &Value, fill: &impl Fn(&str) -> Result<String>) -> Result<Value> {
+    Ok(match value {
+        Value::String(text) => Value::String(fill(text)?),
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|item| fill_options(item, fill))
+                .collect::<Result<Vec<_>>>()?,
+        ),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(key, item)| Ok((key.clone(), fill_options(item, fill)?)))
+                .collect::<Result<Map<_, _>>>()?,
+        ),
+        other => other.clone(),
+    })
 }

@@ -1,12 +1,11 @@
 ---
 title: Quickstart
-description: Install Shipdeck, write one config, deploy, and inspect or roll back a release.
+description: Install Shipdeck, write a project file and a deploy file, deploy, and inspect or roll back a release.
 ---
 
-Shipdeck builds locally, stages a checked release over SSH, then switches the
-live folder and restarts your service. This page uses a Rust service called
-`my-api`. You need its source, a Linux server with systemd, and an existing SSH
-user. Reading takes under five minutes; setup and build time vary.
+Shipdeck builds locally, stages a checked release over SSH, then switches the live folder
+and restarts your processes. This page uses a Rust service called `my-api`. You need its
+source, a Linux server with systemd, and an existing SSH user.
 
 ## 1. Install and connect
 
@@ -24,105 +23,118 @@ Host prod
   IdentityFile ~/.ssh/id_ed25519
 ```
 
-Shipdeck reads this alias. It uses the named key; it does not use ssh-agent or
-automatically try unnamed default keys. Review the server fingerprint when first
-connecting. CLI commands need explicit trust for a new key.
+Shipdeck reads this alias. It uses the named key; it does not use ssh-agent or try unnamed
+default keys. Review the server fingerprint when first connecting. CLI commands need
+`--trust-new-host` for a new key.
 
-## 2. Create the deployment
+## 2. Prepare the server
+
+Once per server, either run the setup script as root (see
+[Server access](/docs/guides/server-access)) or, from your PC:
+
+```sh
+shipdeck setup production
+```
+
+## 3. Create the deployment
 
 From your app repository root:
 
 ```sh
-shipdeck init ./scripts/deploy my-api --preset rust --manager systemd --host prod
+shipdeck init my-api --preset rust --manager systemd --host prod
 ```
 
-This creates a deploy config, an empty `.env`, and a rule to keep that secret
-file out of git. Edit `scripts/deploy/my-api/shipdeck.yaml`:
+This writes four files in the current folder: `shipdeck.yaml` (the project file),
+`deploy.yaml` (the deploy file), an empty `.env`, and a `.gitignore` that keeps the `.env`
+out of git. Edit `deploy.yaml`:
 
 ```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.7.1/docs/schema/deploy.schema.json
-name: My API
-project: ../../..
-dir: /opt/my-api
+name: my-api
+server:
+  ssh: { host: prod, user: deploy }
+  dir: /opt/my-api
 
-ssh:
-  host: prod
-  user: deploy
-
-service:
-  name: my-api
-  start: ./my-api
-  env_file: .env
-
-pipeline:
-  build:
-    run:
-      local: cargo build --release
-  pack:
+apps:
+  my-api:
+    source: .
+    files: [.env]
     binary: target/release/my-api
-    files:
-      include:
-        deploy: [.env]
-  health:
-    url: http://127.0.0.1:8080/health
+    process:
+      systemd: {}
+    steps:
+      health:
+        url: http://127.0.0.1:8080/health
+
+release:
+  steps:
+    build:
+      local: cargo build --release
 ```
 
-Replace the binary name, start command, and health URL with your app's values.
-Fill in the deployment's `.env`; do not commit secrets.
+Replace the binary name and health URL with your app's values. Fill in the `.env`; do not
+commit secrets.
 
-This build command assumes your computer builds a binary compatible with the
-server's Linux, CPU, and libc. On macOS, Windows, or a different CPU, use a
-Linux cross-build and change `pack.binary` to its output. Shipdeck checks
-compatibility after building; it does not cross-compile for you.
+This build command assumes your computer builds a binary compatible with the server's Linux,
+CPU, and libc. On macOS, Windows, or a different CPU, use a Linux cross-build and change
+`binary` to its output. Shipdeck checks compatibility after building; it does not
+cross-compile for you.
 
 For Node.js, Go, Python, or another stack, choose a matching preset or
-[example](/docs/guides/examples). Use `service.manager: pm2` for PM2.
-Several apps can share one release through the [monorepo config](/docs/monorepos).
+[example](/docs/guides/examples). Use `process.pm2` for PM2. Several apps can share one
+release through the [deploy file](/docs/monorepos).
 
-## 3. Deploy and check
+## 4. Check what will ship
 
 ```sh
-shipdeck ./scripts/deploy
+shipdeck tree production
 ```
 
-Select **My API**, press Enter, and confirm. Shipdeck validates the config,
-builds locally, transfers and checks files, runs setup, saves a backup,
-switches `current`, restarts, and checks health. The old release remains live
+It prints every path the next release will hold, using the same code as a deploy, and needs
+no connection.
+
+## 5. Deploy and check
+
+```sh
+shipdeck
+```
+
+The TUI lists the deploys of your project file. Select **my-api**, press Enter, and confirm.
+Shipdeck validates the config, builds locally, transfers and checks files, runs setup, saves
+a backup, switches `current`, restarts, and checks health. The old release remains live
 during preparation; your custom commands can still have outside effects.
 
 For scripts and CI:
 
 ```sh
-shipdeck deploy ./scripts/deploy my-api --on-failure rollback
+shipdeck deploy production --on-failure rollback
 ```
 
-The command asks no questions. Supply login details and review any new host
-fingerprint before using `--trust-new-host`. Exit `0` means success;
-`6` means nothing changed. See [exit codes](/docs/reference/cli#exit-codes)
-for other results.
+The command asks no questions. Supply login details and review any new host fingerprint
+before using `--trust-new-host`. Exit `0` means success; `6` means nothing changed. See
+[exit codes](/docs/reference/cli#exit-codes) for other results.
 
-## 4. Inspect or roll back
+## 6. Inspect or roll back
 
-In the UI, `r` opens releases. `D` inspects files.
-Select an older release and press Enter to roll back; you need at least two
-releases first. `:logs` follows logs; `:restart`, `:stop`, and `:start`
-control services. `q` quits.
+In the UI, `r` opens releases. `D` inspects files. Select an older release and press Enter to
+roll back; you need at least two releases first. `:logs` follows logs; `:restart`, `:stop`,
+and `:start` control the processes. `q` quits.
 
-The first connection prepares a root-owned server agent under `/opt/shipdeck/agent`; it runs over SSH and exits on disconnect.
-After an interrupted operation, reconnect and inspect before retrying:
+The first connection prepares a root-owned server agent under `/opt/shipdeck/agent`; it runs
+over SSH and exits on disconnect. After an interrupted operation, reconnect and inspect
+before retrying:
 
 ```sh
-shipdeck work ./scripts/deploy my-api
-shipdeck events ./scripts/deploy my-api --after 0
+shipdeck work production
+shipdeck events production --after 0
 ```
 
-Unfinished files stay for inspection. Add `--cleanup` to `work` only when you
-intend to remove them. A dropped connection during activation leaves an
-uncertain result; inspect the live release and services.
+Unfinished files stay for inspection. Add `--cleanup` to `work` only when you intend to
+remove them. A dropped connection during activation leaves an uncertain result; inspect the
+live release and processes.
 
-Rollback restores files and saved service settings. A compressed backup runs
-setup again. It does not reverse database migrations or custom side effects.
+Rollback restores files and the restored release's own setup state. A release kept only as a
+backup has its setup run again. It does not reverse database migrations or custom side
+effects.
 
 For focused help: `shipdeck man index`, then
-`shipdeck man details cli.deploy service.start`.
-dir: /opt/my-api
+`shipdeck man details cli.deploy process.start`.

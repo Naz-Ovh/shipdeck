@@ -1,0 +1,40 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.1/docs/schema/deploy.schema.json
+# Every field: https://github.com/Naz-Ovh/shipdeck/tree/main/docs/feature/config-v2.md
+
+# One release with two apps: an API process and a static web site.
+name: product
+server:
+  ssh: { host: prod, user: deploy }
+  dir: /opt/product
+
+release:
+  steps:
+    backup:
+      keep: { open: 3, compressed: 15 }
+    health:
+      timeout_secs: 20
+
+apps:
+  api:
+    source: api
+    files: [api/server.js, api/.env]
+    process:
+      start: node server.js
+      env: { PORT: "3000" }
+      env_file: .env
+      systemd: {}
+    shared: [uploads]
+    steps:
+      health:
+        url: http://127.0.0.1:3000/
+
+  web:
+    source: web
+    files: [web/server.js]
+    process:
+      start: node server.js
+      env: { PORT: "3001" }
+      pm2: {}
+    steps:
+      health:
+        url: http://127.0.0.1:3001/

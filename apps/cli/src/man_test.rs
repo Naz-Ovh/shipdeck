@@ -88,28 +88,23 @@ fn configs_print_one_line_per_property_as_a_tree() {
     let text = configs();
     let lines: Vec<&str> = text.lines().filter(|l| !l.starts_with('#')).collect();
     assert_eq!(lines.len(), CONFIGS.len());
+    assert!(lines.contains(&"  ssh:  # How to log in"), "{lines:?}");
     assert!(
-        lines.contains(
-            &"ssh:  # where and as whom to log in (the login method itself is never here)"
-        )
-    );
-    assert!(
-        lines
-            .iter()
-            .any(|l| l.starts_with("  shell_env: bool, default true  # "))
+        lines.iter().any(|l| l.starts_with("    shell_env: bool")),
+        "{lines:?}"
     );
 }
 
 #[test]
 fn details_take_keys_apart_or_comma_separated_in_order() {
-    let text = details(&args(&["steps,", "service.env", "agents,step.health"])).unwrap();
+    let text = details(&args(&["steps,", "server.dir", "agents,step.health"])).unwrap();
     let opened: Vec<&str> = text
         .lines()
         .filter(|l| l.starts_with("<topic ") || l.starts_with("<config "))
         .collect();
     assert_eq!(opened.len(), 4);
     assert!(opened[0].starts_with("<topic key=\"steps\""));
-    assert!(opened[1].starts_with("<config key=\"service.env\" type=\"map of text, default {}\""));
+    assert!(opened[1].starts_with("<config key=\"server.dir\" type=\"text\""));
     assert!(opened[2].starts_with("<topic key=\"agents\""));
     assert!(opened[3].starts_with("<topic key=\"step.health\""));
     assert_eq!(text.matches("</topic>").count(), 3);
@@ -124,20 +119,20 @@ fn a_quoted_list_with_spaces_works_too() {
 
 #[test]
 fn a_block_lists_what_is_inside_it() {
-    let text = details(&args(&["pipeline.health"])).unwrap();
-    assert!(text.contains("fields:\n  url: "), "{text}");
-    assert!(text.contains("\n  check:  # "));
-    assert!(text.contains("\n    server: commands  # "));
+    let text = details(&args(&["release.steps.health"])).unwrap();
+    assert!(text.contains("timeout_secs: number"), "{text}");
+    assert!(text.contains("local: text or map  # "), "{text}");
+    assert!(text.contains("server: text or map  # "), "{text}");
     assert!(!text.contains("done"), "only the block's own fields");
 }
 
 #[test]
 fn an_unknown_key_prints_nothing_and_suggests() {
-    let err = details(&args(&["agents", "env", "stepz"])).unwrap_err();
+    let err = details(&args(&["agents", "host", "stepz"])).unwrap_err();
     assert!(
         err.lines().any(
-            |l| l.starts_with("error: `env` is no topic or property; did you mean")
-                && l.contains("service.env")
+            |l| l.starts_with("error: `host` is no topic or property; did you mean")
+                && l.contains("server.ssh")
         ),
         "{err}"
     );
@@ -148,13 +143,13 @@ fn an_unknown_key_prints_nothing_and_suggests() {
 #[test]
 fn suggestions_find_typos_and_parts() {
     assert!(suggest("quickstrat").contains(&"quickstart"));
-    assert!(suggest("timeout_secs").contains(&"pipeline.health.timeout_secs"));
+    assert!(suggest("timeout_secs").contains(&"release.steps.health.timeout_secs"));
     assert_eq!(suggest("zzzzzzzz"), [] as [&str; 0]);
 }
 
 #[test]
 fn details_end_with_the_online_docs_once() {
-    let text = details(&args(&["agents", "service.env"])).unwrap();
+    let text = details(&args(&["agents", "server.dir"])).unwrap();
     assert!(text.ends_with("</config>\n\nFor more, check out https://forgedoc.naz.ovh/llms.txt\n"));
     assert_eq!(text.matches("forgedoc.naz.ovh").count(), 1);
 }

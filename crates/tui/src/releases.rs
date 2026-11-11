@@ -23,10 +23,9 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
         return;
     };
     let deployable = &deployables[view.deployable];
-    let config = &deployable.config;
-    let block = theme::panel(format!("Releases · {}", config.name), true).title(
+    let block = theme::panel(format!("Releases · {}", deployable.name()), true).title(
         Line::from(Span::styled(
-            format!(" {}:{} ", deployable.endpoint.label(), config.service.dir),
+            format!(" {}:{} ", deployable.endpoint.label(), deployable.dir()),
             theme::muted(),
         ))
         .right_aligned(),
@@ -109,13 +108,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     }
 
     let selected = view.table.selected().and_then(|i| listing.entries.get(i));
-    detail(
-        frame,
-        detail_area,
-        listing,
-        selected,
-        config.pipeline.backup.keep,
-    );
+    detail(frame, detail_area, listing, selected, deployable.keep());
 }
 
 fn row(entry: &ReleaseEntry) -> Row<'static> {

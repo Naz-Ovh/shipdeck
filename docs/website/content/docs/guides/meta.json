@@ -1,9 +1,8 @@
 {
   "title": "Guides",
   "pages": [
-    "deploy-root",
     "pipeline",
-    "packing-files",
+    "files-and-layout",
     "environment",
     "ssh",
     "server-access",

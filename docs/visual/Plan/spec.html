@@ -322,11 +322,11 @@
         <dt>keepup</dt><dd>An optional program that would run on the server all the time. Later.</dd>
         <dt>systemd</dt><dd>The part of Linux that runs services, jobs and timers.</dd>
         <dt>journal</dt><dd>Where systemd keeps the logs.</dd>
-        <dt>project</dt><dd>Your own code that shipdeck deploys, with its own <code>shipdeck.yaml</code>. For example, <code>my-api</code>.</dd>
+        <dt>project</dt><dd>Your own code that shipdeck deploys. A deploy file names its apps. For example, <code>my-api</code>.</dd>
         <dt>ready-made app</dt><dd>A well-known app that you host yourself, from the catalog, like n8n. It comes in phase 6.</dd>
         <dt>release</dt><dd>One deploy, kept in its own folder on the server.</dd>
       </dl>
-      <p>A monorepo deploy names several apps in one deploy. They share one verified release, restart together, and roll back using saved app settings. Its config and command order are in the <a href="../../feature/monorepo-deploy.md">monorepo deploy plan</a>.</p>
+      <p>One deploy can name several apps in one file. They share one verified release, restart together, and roll back using the settings saved with that release. The rules are in the <a href="../../feature/config-v2.md">config format 2 design</a>.</p>
     </div>
   </div>
 
@@ -501,7 +501,7 @@
         <div class="meta"><span>your PC</span><span class="dash">later: a home server, always on</span></div>
         <h4>Does</h4>
         <ul class="does">
-          <li>Reads every <code>shipdeck.yaml</code> and finds every mistake, with the line and a hint.</li>
+          <li>Reads the project file and every deploy file it lists, and finds every mistake, with the line and a hint.</li>
           <li>Builds, packs, finds the files that changed, and uploads them.</li>
           <li>Keeps a project up with systemd or PM2, or serves a static site with no process.</li>
           <li>Holds the SSH connections, logins and host keys: one connection per server.</li>
@@ -530,7 +530,7 @@
           <li>Prepares and verifies releases while connected, then activates them as the final deployment phase. Interrupted files stay until the user approves cleanup.</li>
           <li>Uses separate SSH channels for control messages and binary uploads. Writes are bounded so a dead receiver cannot hang a deploy.</li>
           <li>Writes every event into <code>state.db</code>, each with a number, for <code>shipdeck events</code> and reconnect inspection.</li>
-          <li>Runs your <code>shipdeck.yaml</code> server commands with <code>sh</code>.</li>
+          <li>Runs the <code>server</code> commands of your deploy file with <code>sh</code>.</li>
         </ul>
         <h4>Never</h4>
         <ul class="never">
@@ -749,10 +749,10 @@
         <p class="when"><span style="color:var(--blue);font-weight:700">→</span> the app sends. <span style="color:var(--green);font-weight:700">←</span> the engine sends. Here a deploy fails its health check, and the answer is “roll back”.</p>
 <pre class="code"><span class="to">→</span> {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol":1,"client":"shipdeck-desktop 0.7.0"}}
 <span class="from">←</span> {"jsonrpc":"2.0","id":1,"result":{"protocol":1,"shipdeck":"0.7.0"}}
-<span class="to">→</span> {"jsonrpc":"2.0","id":2,"method":"workspace/open","params":{"root":"./scripts/deploy","login":{"kind":"auto"}}}
-<span class="from">←</span> {"jsonrpc":"2.0","id":2,"result":{"deployables":[{"slug":"my-api","name":"My API (prod)","host":"203.0.113.10","user":"deploy","port":22,"dir":"/opt/my-api"}],"problems":[]}}
-<span class="to">→</span> {"jsonrpc":"2.0","id":3,"method":"deploy/start","params":{"deployable":"my-api"}}
-<span class="from">←</span> {"jsonrpc":"2.0","id":3,"result":{"op":1,"steps":["Preflight","Build","Pack","Upload","Unpack","Setup","Backup","Switch","Restart","Health","Done"]}}
+<span class="to">→</span> {"jsonrpc":"2.0","id":2,"method":"workspace/open","params":{"root":".","login":{"kind":"auto"}}}
+<span class="from">←</span> {"jsonrpc":"2.0","id":2,"result":{"deployables":[{"slug":"production","name":"my-api","host":"203.0.113.10","user":"deploy","port":22,"dir":"/opt/my-api","apps":["api","admin"]}],"problems":[]}}
+<span class="to">→</span> {"jsonrpc":"2.0","id":3,"method":"deploy/start","params":{"deployable":"production"}}
+<span class="from">←</span> {"jsonrpc":"2.0","id":3,"result":{"op":1,"steps":["Preflight","Build","Upload","Setup","Backup","Switch","Restart","Nginx","Health","Done","Rollback","Failed"]}}
 <span class="from">←</span> {"jsonrpc":"2.0","method":"op/step","params":{"op":1,"step":0,"state":"running"}}
 <span class="from">←</span> {"jsonrpc":"2.0","method":"op/log","params":{"op":1,"kind":"command","text":"cargo test"}}
 <span class="from">←</span> {"jsonrpc":"2.0","id":1,"method":"ask/rollback","params":{"op":1,"release":"v0.3.1-ab12cd3-20261014.153012","previous":"v0.3.0-9f8e7d6-20261012.091000","step":"Health","error":"…","seconds":30}}
@@ -1027,8 +1027,8 @@ scripts/server-setup.sh        <span class="c">a public URL pinned to each relea
       <article class="frame" id="safety" data-zoom data-n="#29" data-t="Safety rules">
         <div class="fhead"><h3>Safety rules</h3></div>
         <ul class="plain">
-          <li>Every value that reaches a remote shell is checked or quoted first. The only exception: the server commands people write in <code>shipdeck.yaml</code>, which run as the deploy user.</li>
-          <li>The agent never runs shell text that an app sends, except those same <code>shipdeck.yaml</code> commands.</li>
+          <li>Every value that reaches a remote shell is checked or quoted first. The only exception: the <code>server</code> commands people write in a deploy file, which run as the deploy user.</li>
+          <li>The agent never runs shell text that an app sends, except those same deploy-file commands.</li>
           <li>Nothing opens a port. SSH keys and <code>known_hosts</code> stay the only way in.</li>
           <li>The agent's messages are a contract like the engine's: only added, and the version is checked when the engine connects.</li>
           <li>Servers without the agent keep the sudo lines they have today. That contract does not change.</li>

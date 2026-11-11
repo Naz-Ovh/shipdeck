@@ -1,5 +1,4 @@
-//! Running commands on this machine (the build and every local command in
-//! the pipeline) and streaming their output.
+//! Running commands on this machine and streaming their output.
 
 mod binary;
 #[cfg(windows)]
@@ -13,39 +12,53 @@ pub use gitshell::set_gitshell_path;
 use gitshell::sh;
 pub use version::{deployer, read_version, release_name, release_name_in};
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use anyhow::{Context, Result, bail};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
+use crate::config::Command;
 use crate::deploy::report::{LogKind, Reporter, Unit};
 
-/// Runs one shell line with `sh -c` in `dir`; on Windows, the sh of Git for
-/// Windows. Cargo's progress bar becomes the step's progress; every other
-/// line goes to the log.
+/// Runs one command in `dir` with the runner it names. `sh` uses the sh of
+/// this machine; on Windows, the one Git for Windows has. Cargo's progress
+/// bar becomes the step's progress; every other line goes to the log.
 ///
 /// # Errors
-/// Returns an error when the shell cannot start or the command exits non-zero.
+/// Returns an error when the runner cannot start or the command exits non-zero.
 ///
 /// # Panics
 /// Panics when the child's stdout or stderr is missing; both are piped.
-pub async fn run_local(
-    command: &str,
+pub async fn run_command(
+    command: &Command,
+    code: &str,
     dir: &Path,
-    env: &[(&str, String)],
+    env: &[(String, String)],
     report: &Reporter,
     step: usize,
 ) -> Result<()> {
-    let shown = command.trim();
+    let runner = match command {
+        Command::Sh(_) => "sh",
+        Command::Runner { runner, .. } => runner.key(),
+    };
+    let shown = code.trim();
     report.log(LogKind::Command, format!("{shown}  (in {})", dir.display()));
-    #[cfg(unix)]
-    let mut shell = sh();
-    #[cfg(windows)]
-    let mut shell = sh().await?;
-    let mut child = shell
-        .arg("-c")
-        .arg(command)
+    let mut process = if runner == "sh" {
+        #[cfg(unix)]
+        let process = sh();
+        #[cfg(windows)]
+        let process = sh().await?;
+        process
+    } else {
+        tokio::process::Command::new(runner)
+    };
+    let mut child = process
+        .arg(match command {
+            Command::Sh(_) => "-c",
+            Command::Runner { runner, .. } => runner.flag(),
+        })
+        .arg(code)
         .current_dir(dir)
         .envs(env.iter().map(|(key, value)| (key, value)))
         // Cargo draws its progress bar only for a terminal unless told otherwise.
@@ -78,10 +91,30 @@ pub async fn run_local(
     Ok(())
 }
 
-/// The shell for local commands: `sh` from PATH.
+/// The shell for `sh` commands: `sh` from PATH.
 #[cfg(unix)]
 fn sh() -> tokio::process::Command {
     tokio::process::Command::new("sh")
+}
+
+/// Where `name` is on this machine, looking through `PATH`.
+#[must_use]
+pub fn find_program(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    let extensions: &[&str] = if cfg!(windows) {
+        &["", ".exe", ".cmd", ".bat"]
+    } else {
+        &[""]
+    };
+    for folder in std::env::split_paths(&path) {
+        for extension in extensions {
+            let candidate = folder.join(format!("{name}{extension}"));
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
 }
 
 /// Reads a stream, splitting on `\n` and on the `\r` cargo uses to redraw
@@ -142,7 +175,3 @@ fn cargo_progress(line: &str) -> Option<(u64, u64, String)> {
         crates.to_string(),
     ))
 }
-
-#[cfg(test)]
-#[path = "build_test.rs"]
-mod tests;

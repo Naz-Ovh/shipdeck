@@ -1,21 +1,5 @@
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.1/docs/schema/deploy.schema.json
-name: product
-ssh: {host: prod, user: deploy}
-dir: /opt/product
-process_manager: {name: systemd}
-pipeline:
-  pack:
-    files:
-      include: {project: [server.js]}
-  backup: {keep: {open: 3, compressed: 15}}
-  health: {timeout_secs: 20}
-apps:
-  api: configs/api.yaml
-  web:
-    project: web
-    start: node server.js
-    process_manager: {name: pm2}
-    env: {PORT: '3001'}
-    shared: [uploads]
-    pipeline:
-      health: {url: 'http://127.0.0.1:3001'}
+# The project file: its deploys by name.
+# Rules: docs/feature/config-v2.md
+
+deploys:
+  production: deploy.yaml

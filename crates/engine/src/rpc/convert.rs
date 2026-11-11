@@ -11,8 +11,7 @@ use shipdeck_protocol::message::common as wire;
 use shipdeck_protocol::message::request::{ReleasesListResult, StatusGetResult};
 use shipdeck_protocol::wire::{ErrorObject, code};
 
-use crate::config::{Deployable, FileProblems, Rollback};
-use crate::deploy::Step;
+use crate::config::{Deployment, FileProblems, RollbackMode};
 use crate::deploy::report;
 use crate::release;
 use crate::remote::{self, Control, Listing, ReleaseContents, Status};
@@ -70,37 +69,37 @@ pub fn login(login: wire::Login) -> Login {
     }
 }
 
-pub fn deployable_info(deployable: &Deployable) -> wire::DeployableInfo {
+pub fn deployable_info(deployment: &Deployment) -> wire::DeployableInfo {
     wire::DeployableInfo {
-        slug: deployable.slug.clone(),
-        name: deployable.config.name.clone(),
-        host: deployable.endpoint.name.clone(),
-        user: Some(deployable.endpoint.user.clone()),
-        port: deployable.endpoint.port,
-        dir: deployable.config.service.dir.clone(),
-        folder: deployable.folder.display().to_string(),
-    }
-}
-
-/// The shared deployment shown by CLI and TUI.
-pub fn monorepo_info(d: &crate::config::MonorepoDeployment) -> wire::DeployableInfo {
-    wire::DeployableInfo {
-        slug: d.slug.clone(),
-        name: d.config.name.clone(),
-        host: d.endpoint.name.clone(),
-        user: Some(d.endpoint.user.clone()),
-        port: d.endpoint.port,
-        dir: d.config.dir.clone(),
-        folder: d.folder.display().to_string(),
+        slug: deployment.slug.clone(),
+        name: deployment.name().to_string(),
+        host: deployment.endpoint.name.clone(),
+        user: Some(deployment.endpoint.user.clone()),
+        port: deployment.endpoint.port,
+        dir: deployment.dir().to_string(),
+        folder: deployment.file.display().to_string(),
+        apps: deployment
+            .app_names()
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
     }
 }
 
 /// What a failure after the switch does: the app's choice wins over
-/// `pipeline.failed.rollback`.
-pub fn on_failure(choice: wire::OnFailure) -> Rollback {
+/// `rollback.mode`.
+pub fn on_failure(choice: wire::OnFailure) -> RollbackMode {
     match choice {
-        wire::OnFailure::Rollback => Rollback::Auto,
-        wire::OnFailure::Keep => Rollback::Ask,
+        wire::OnFailure::Rollback => RollbackMode::Auto,
+        wire::OnFailure::Keep => RollbackMode::Off,
+    }
+}
+
+/// Applies a deploy's `on_failure` choice, if it made one. Without one the
+/// deploy file's `release.steps.rollback.mode` stands.
+pub fn apply_on_failure(deployment: &mut Deployment, choice: Option<wire::OnFailure>) {
+    if let Some(choice) = choice {
+        deployment.deploy.release.steps.rollback.mode = Some(on_failure(choice));
     }
 }
 
@@ -276,11 +275,6 @@ pub fn outcome(outcome: &report::Outcome) -> wire::Outcome {
         },
         report::Outcome::Unchanged { live } => wire::Outcome::Unchanged { live: live.clone() },
     }
-}
-
-/// The steps a run goes through, by the names a screen shows.
-pub fn steps(steps: &[Step]) -> Vec<String> {
-    steps.iter().map(|step| step.name().to_string()).collect()
 }
 
 /// A place in a list, such as a step's or a line's: a plan is never long

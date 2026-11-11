@@ -148,7 +148,7 @@ fn size_of(path: &Path, depth: u32) -> Result<u64> {
 }
 
 fn manifest_of(release: &Path) -> Result<Option<String>> {
-    let path: PathBuf = release.join("release.json");
+    let path: PathBuf = release.join(".shipdeck/release.json");
     match std::fs::symlink_metadata(&path) {
         Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
             if metadata.len() > MAX_MANIFEST {

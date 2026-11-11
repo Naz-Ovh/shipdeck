@@ -7,7 +7,7 @@ Start with the [overview](../../README.md). This page covers the repository.
 | Path | Responsibility |
 | --- | --- |
 | `apps/cli/` | CLI, engine child process, console output, built-in manual. |
-| `crates/engine/` | Config, local builds, bundles, SSH, deploy and rollback flows. |
+| `crates/engine/` | Config, release plan, local builds, SSH, one deploy pipeline, `tree`. |
 | `crates/agent/` | Linux server helper: files, services, locks, backups, events. |
 | `crates/protocol/` | Typed messages shared by engine, clients, and agent. |
 | `crates/tui/` | Terminal screens, dialogs, and input. |
@@ -50,13 +50,13 @@ just install-agent
 shipdeck-agent --version
 ```
 
-Then connect using the SSH host, user, and key in your deployment config:
+Then connect using the SSH host, user, and key in your deploy file:
 
 ```sh
-SHIPDECK_AGENT_BINARY="$(command -v shipdeck-agent)" shipdeck server-info ./scripts/deploy my-api
+SHIPDECK_AGENT_BINARY="$(command -v shipdeck-agent)" shipdeck server-info production
 ```
 
-Replace the deployment root and name with your own. Shipdeck uploads the agent,
+Replace the deploy name with your own. Shipdeck uploads the agent,
 checks its checksum and version, and starts it over SSH. You do not need to log
 in and install it by hand. The binary must match the server's Linux CPU and libc.
 Its version must have your Shipdeck's major version. For another server target,

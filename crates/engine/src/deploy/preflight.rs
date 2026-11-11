@@ -1,142 +1,475 @@
-//! Preflight: what the server and the local machine need before a deploy starts.
+//! Preflight: what your PC and the server need before anything runs.
 
-use std::path::Path;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use anyhow::{Result, anyhow, bail};
 
-use super::count;
+use super::commands;
 use super::report::{LogKind, Reporter, Unit};
+use super::run::{Ended, Run};
+use super::steps::{Step, all_scopes};
 use crate::build;
-use crate::bundle;
-use crate::bundle::files::{self, Kind, Source};
-use crate::config::monorepo::ResolvedApp;
-use crate::config::{Deployable, Manager, Program};
+use crate::config::{Deployment, Manager, Program};
 use crate::human;
-use crate::release::ReleaseName;
-use crate::remote::{Facts, PM2_NEWEST_MAJOR, Server, parse_version};
+use crate::remote::{Facts, PM2_NEWEST_MAJOR, ReleaseEntry, Server, parse_version};
 use crate::ssh::{Pool, ShellEnv};
-
-/// A checked connection for an app in a shared release.
-pub struct AppServer<'a> {
-    pub app: &'a ResolvedApp,
-    pub server: Server,
-    pub facts: Facts,
-}
-
-/// Checks all process managers and required tools before a shared deploy.
-///
-/// # Errors
-/// Returns an error when any app cannot run or the server is not ready.
-pub async fn preflight_apps<'a>(
-    apps: &'a [ResolvedApp],
-    endpoint: &crate::ssh::Endpoint,
-    pool: &Pool,
-    report: &Reporter,
-    step: usize,
-) -> Result<Vec<AppServer<'a>>> {
-    if apps.is_empty() {
-        bail!("the monorepo has no apps");
-    }
-    report.log(LogKind::Command, format!("connect {}", endpoint.label()));
-    let session = connect(pool, endpoint, report, step).await?;
-    report.log(LogKind::Info, "checking the server and its tools");
-    let legacy_lock = session.agent().is_none();
-    let mut tools = std::collections::BTreeSet::new();
-    tools.extend(SERVER_TOOLS.iter().map(|(name, _)| (*name).to_string()));
-    for app in apps {
-        tools.extend(app.pipeline.preflight.requires.iter().cloned());
-        if !app.service.is_static() {
-            if app.service.manager == Manager::Pm2 {
-                tools.insert("pm2".to_string());
-            }
-            if app.service.pm2.ecosystem.is_none()
-                && let (Program::Tool(name) | Program::Absolute(name), _) =
-                    app.service.command(None)
-            {
-                tools.insert(name);
-            }
-        }
-    }
-    if legacy_lock {
-        tools.insert("flock".to_string());
-    }
-    let http = apps.iter().any(|app| app.pipeline.health.url.is_some());
-    if http {
-        tools.insert("curl".to_string());
-        tools.insert("wget".to_string());
-    }
-    let tools: Vec<_> = tools.into_iter().collect();
-    let mut servers = Vec::with_capacity(apps.len());
-    let total = u64::try_from(apps.len()).unwrap_or(u64::MAX);
-    for (index, app) in apps.iter().enumerate() {
-        let checked = u64::try_from(index).unwrap_or(u64::MAX);
-        report.log(
-            LogKind::Info,
-            format!("checking {} ({}/{total})", app.name, index + 1),
-        );
-        report.progress(
-            step,
-            checked,
-            total,
-            Unit::Items,
-            format!("checking {}", app.name),
-        );
-        let server = Server::for_app(std::sync::Arc::clone(&session), &app.service, &app.name)?;
-        let facts = server.facts(&tools).await?;
-        if !facts.dir_exists {
-            server.create_app_dir(report).await?;
-        } else if !facts.dir_writable {
-            bail!("{} cannot write to {}", endpoint.user, app.service.dir);
-        }
-        if !facts.sudo_missing.is_empty() {
-            bail!(
-                "app {}: sudo does not allow {}",
-                app.name,
-                facts.sudo_missing.join(", ")
-            );
-        }
-        if http && facts.tool_path("curl").is_none() && facts.tool_path("wget").is_none() {
-            bail!("HTTP health checks require curl or wget on the server");
-        }
-        let missing: Vec<_> = facts
-            .tools
-            .iter()
-            .filter(|(name, path)| {
-                path.is_none() && !(http && matches!(name.as_str(), "curl" | "wget"))
-            })
-            .map(|(name, _)| name.as_str())
-            .collect();
-        if !missing.is_empty() {
-            bail!("app {}: server is missing {}", app.name, missing.join(", "));
-        }
-        if facts.free_bytes.is_some_and(|free| free < MIN_FREE) {
-            bail!("less than 100 MiB is free on the server");
-        }
-        if app.service.manager == Manager::Pm2 {
-            let version = facts.pm2_version.as_deref().unwrap_or_default();
-            parse_version(version).map_err(|why| anyhow!(why))?;
-        }
-        servers.push(AppServer { app, server, facts });
-    }
-    report.progress(step, total, total, Unit::Items, "server checked");
-    Ok(servers)
-}
 
 /// Below this much free space on the server, preflight stops.
 pub(super) const MIN_FREE: u64 = 100 * 1024 * 1024;
-/// What shipdeck itself runs on the server, with the package each comes
-/// in: the bundle is unpacked with `tar -I zstd` and checked with
-/// `sha256sum`.
+/// What shipdeck itself runs on the server, with the package each comes in.
 pub(super) const SERVER_TOOLS: [(&str, &str); 3] =
     [("tar", "tar"), ("zstd", "zstd"), ("sha256sum", "coreutils")];
 
-/// Opens the connection, naming the agent and SSH phases as they run.
-/// Says whether server commands get the login shell's environment.
+impl Run<'_> {
+    /// Preflight: checks, then your commands.
+    pub(super) async fn step_preflight(&mut self, pool: &Pool) -> Result<(Server, Facts), Ended> {
+        self.start(Step::Preflight, "checking your PC and the server");
+        let found = Box::pin(self.preflight(pool)).await;
+        match found {
+            Ok((server, facts, summary)) => {
+                self.finish(Step::Preflight, summary);
+                Ok((server, facts))
+            }
+            Err(err) => Err(self.stop(Step::Preflight, &err)),
+        }
+    }
+
+    async fn preflight(&mut self, pool: &Pool) -> Result<(Server, Facts, String)> {
+        self.gates()?;
+        self.check_local()?;
+        let endpoint = &self.deployment.endpoint;
+        let address = if endpoint.is_alias() {
+            format!(" -> {}", endpoint.address())
+        } else {
+            String::new()
+        };
+        self.report.log(
+            LogKind::Command,
+            format!(
+                "connect {}{address} ({})",
+                endpoint.label(),
+                pool.login().describe()
+            ),
+        );
+        let session = pool
+            .get_with(
+                endpoint,
+                |what| self.report.log(LogKind::Info, what),
+                |done, total| {
+                    self.report.progress(
+                        self.at(Step::Preflight),
+                        done,
+                        total,
+                        Unit::Bytes,
+                        "uploading the agent",
+                    );
+                },
+            )
+            .await?;
+        log_shell_env(self.report, &session.shell_env);
+        self.session = Some(Arc::clone(&session));
+        let base = self.base_server(Arc::clone(&session))?;
+        self.project_lock = Some(crate::agent::ProjectGuard::acquire(&base).await?);
+        self.check_lock()?;
+
+        let tools = self.tools();
+        let mut facts = base.facts(&tools).await?;
+        self.check_sudo(&tools, &mut facts).await?;
+        let endpoint = &self.deployment.endpoint;
+        let dir = self.deployment.dir();
+        if !facts.dir_exists {
+            self.report.log(
+                LogKind::Info,
+                format!("first deploy of {}: creating {dir}", self.deployment.name()),
+            );
+            base.create_app_dir(self.report).await?;
+        } else if !facts.dir_writable {
+            bail!("{} cannot write to {dir}", endpoint.user);
+        }
+        if facts.free_bytes.is_some_and(|free| free < MIN_FREE) {
+            bail!("only {} free on the server", human::bytes(MIN_FREE));
+        }
+        self.check_tools(&facts)?;
+        self.check_pm2(&facts)?;
+        self.start_paths(&facts);
+        self.previous.clone_from(&facts.current);
+
+        let summary = format!(
+            "{} · {} · {} free",
+            facts.arch,
+            facts
+                .glibc
+                .as_ref()
+                .map_or_else(|| "no glibc".into(), |v| format!("glibc {v}")),
+            facts
+                .free_bytes
+                .map_or_else(|| "unknown".into(), human::bytes)
+        );
+        self.report.log(
+            LogKind::Info,
+            format!(
+                "live: {} · service {}",
+                facts.current.as_deref().unwrap_or("nothing deployed yet"),
+                if facts.active.is_empty() {
+                    "unknown"
+                } else {
+                    &facts.active
+                }
+            ),
+        );
+        let exec = self.exec(Step::Preflight);
+        Box::pin(exec.step(Step::Preflight, None)).await?;
+        Ok((base, facts, summary))
+    }
+
+    /// Refuses a deploy that uses a manager shipdeck does not manage yet.
+    fn gates(&self) -> Result<()> {
+        for app in self.deployment.deploy.apps.values() {
+            if app.nginx.is_some() {
+                bail!("nginx management is not built yet");
+            }
+        }
+        if self
+            .deployment
+            .process_apps()
+            .any(|(_, manager)| manager == Manager::Oxmgr)
+        {
+            bail!("oxmgr is not built yet");
+        }
+        Ok(())
+    }
+
+    /// What can be checked on this machine before connecting.
+    fn check_local(&self) -> Result<()> {
+        if !self.deployment.project.is_dir() {
+            bail!(
+                "the project folder {} does not exist",
+                self.deployment.project.display()
+            );
+        }
+        for name in self.deployment.deploy.apps.keys() {
+            let source = self.deployment.source(name);
+            if !source.is_dir() {
+                bail!(
+                    "app {name}: the source folder {} does not exist",
+                    source.display()
+                );
+            }
+        }
+        for name in self.deployment.process_apps().map(|(name, _)| name) {
+            if let Some(template) = self.deployment.unit_template(name)
+                && !template.is_file()
+            {
+                bail!(
+                    "app {name}: the unit template {} does not exist",
+                    template.display()
+                );
+            }
+        }
+        for (step, scope) in all_scopes(self.deployment) {
+            for runner in commands::runners(scope.local) {
+                if runner.key() == "sh" && !cfg!(windows) && build::find_program("sh").is_none() {
+                    return Err(commands::missing_local(runner, step, scope.app));
+                }
+                if runner.key() != "sh" && build::find_program(runner.key()).is_none() {
+                    return Err(commands::missing_local(runner, step, scope.app));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Every program the server must have.
+    fn tools(&self) -> Vec<String> {
+        let mut tools: BTreeSet<String> = SERVER_TOOLS
+            .iter()
+            .map(|(tool, _)| (*tool).into())
+            .collect();
+        tools.extend(self.deployment.steps().preflight.requires.iter().cloned());
+        for (_, scope) in all_scopes(self.deployment) {
+            for runner in commands::runners(scope.server) {
+                tools.insert(runner.key().to_string());
+            }
+        }
+        for name in self.deployment.deploy.apps.keys() {
+            match self.deployment.manager(name) {
+                Some(Manager::Pm2) => {
+                    tools.insert("pm2".into());
+                    if self.deployment.pm2_ecosystem(name).is_none()
+                        && let Some((Program::Tool(tool), _)) = self.deployment.start(name)
+                    {
+                        tools.insert(tool);
+                    }
+                }
+                Some(Manager::Systemd) => {
+                    if let Some((Program::Tool(tool), _)) = self.deployment.start(name) {
+                        tools.insert(tool);
+                    }
+                }
+                _ => {}
+            }
+            if self
+                .deployment
+                .app(name)
+                .is_some_and(|app| app.steps.health.url.is_some())
+            {
+                tools.insert("curl".into());
+                tools.insert("wget".into());
+            }
+        }
+        if self
+            .session
+            .as_ref()
+            .is_some_and(|session| session.agent().is_none())
+        {
+            tools.insert("flock".into());
+        }
+        tools.into_iter().collect()
+    }
+
+    /// Checks every process app's sudo rights and merges them into the facts.
+    async fn check_sudo(&self, _tools: &[String], facts: &mut Facts) -> Result<()> {
+        let mut missing: BTreeSet<String> = facts.sudo_missing.iter().cloned().collect();
+        for name in self.deployment.process_apps().map(|(name, _)| name) {
+            let Some(session) = &self.session else {
+                break;
+            };
+            let server = Server::for_app(self.deployment, name, Arc::clone(session))?;
+            let found = server.facts(&[]).await?;
+            missing.extend(found.sudo_missing);
+        }
+        facts.sudo_missing = missing.into_iter().collect();
+        if !facts.sudo_missing.is_empty() {
+            for command in &facts.sudo_missing {
+                self.report.log(
+                    LogKind::Warn,
+                    format!(
+                        "{} may not run: sudo {command}",
+                        self.deployment.endpoint.user
+                    ),
+                );
+            }
+            bail!(
+                "{} may not run {} of the commands shipdeck needs as root (sudo, without a password)",
+                self.deployment.endpoint.user,
+                facts.sudo_missing.len()
+            );
+        }
+        Ok(())
+    }
+
+    /// Every program is there, and a missing runner names its step and app.
+    fn check_tools(&self, facts: &Facts) -> Result<()> {
+        let mut ours = Vec::new();
+        let mut missing = Vec::new();
+        for (tool, path) in &facts.tools {
+            let package = SERVER_TOOLS
+                .iter()
+                .find(|(name, _)| name == tool)
+                .map(|(_, package)| *package);
+            match (path, package) {
+                (Some(path), _) => self.report.log(LogKind::Success, format!("{tool}: {path}")),
+                (None, Some(package)) => ours.push((tool.as_str(), package)),
+                (None, None) => missing.push(tool.as_str()),
+            }
+        }
+        if !ours.is_empty() {
+            let tools: Vec<&str> = ours.iter().map(|(tool, _)| *tool).collect();
+            let packages = ours
+                .iter()
+                .map(|(_, package)| *package)
+                .collect::<Vec<_>>()
+                .join(" ");
+            bail!(
+                "the server has no {}, which shipdeck unpacks and checks releases with; install {} \
+                 (apt install {packages}, or dnf install {packages})",
+                tools.join(" or "),
+                if ours.len() == 1 { "it" } else { "them" }
+            );
+        }
+        if !missing.is_empty() {
+            let http = self
+                .deployment
+                .deploy
+                .apps
+                .values()
+                .any(|app| app.steps.health.url.is_some());
+            let missing: Vec<&str> = missing
+                .into_iter()
+                .filter(|tool| !(http && matches!(*tool, "curl" | "wget")))
+                .collect();
+            if !missing.is_empty() {
+                bail!(
+                    "{} cannot find {} on the server; install {} or list it in preflight.requires",
+                    self.deployment.endpoint.user,
+                    missing.join(", "),
+                    if missing.len() == 1 { "it" } else { "them" }
+                );
+            }
+        }
+        if self
+            .deployment
+            .deploy
+            .apps
+            .values()
+            .any(|app| app.steps.health.url.is_some())
+            && facts.tool_path("curl").is_none()
+            && facts.tool_path("wget").is_none()
+        {
+            bail!("HTTP health checks require curl or wget on the server");
+        }
+        if self
+            .deployment
+            .process_apps()
+            .any(|(_, manager)| manager == Manager::Systemd)
+        {
+            for name in self.deployment.process_apps().map(|(name, _)| name) {
+                if let Some((Program::Tool(tool), _)) = self.deployment.start(name)
+                    && let Some(path) = facts.tool_path(&tool)
+                    && (path.starts_with("/home/") || path.starts_with("/root/"))
+                {
+                    bail!(
+                        "{tool} is at {path}, but the built-in unit hides home folders from the \
+                         service (ProtectHome=true). Install {tool} system-wide, or add a \
+                         process.systemd.template without ProtectHome"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn check_pm2(&self, facts: &Facts) -> Result<()> {
+        let Some(version) = &facts.pm2_version else {
+            return Ok(());
+        };
+        let (version, major) = parse_version(version).map_err(|why| anyhow!(why))?;
+        if major > PM2_NEWEST_MAJOR {
+            self.report.log(
+                LogKind::Warn,
+                format!(
+                    "pm2 {version} is newer than this shipdeck is tested with \
+                     ({PM2_NEWEST_MAJOR}.x); deploying anyway"
+                ),
+            );
+        } else {
+            self.report.log(LogKind::Success, format!("pm2 {version}"));
+        }
+        for name in self.deployment.deploy.apps.keys() {
+            if self.deployment.manager(name) == Some(Manager::Pm2) {
+                let process = self.deployment.process_name(name);
+                if matches!(
+                    facts.systemd.as_str(),
+                    "active" | "activating" | "reloading"
+                ) {
+                    bail!(
+                        "the systemd service {process} is still running and would clash with PM2; \
+                         stop it first: sudo systemctl disable --now {process}"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Where preflight found each start program, for the unit and PM2 file.
+    fn start_paths(&mut self, facts: &Facts) {
+        let mut paths = BTreeMap::new();
+        for name in self.deployment.deploy.apps.keys() {
+            if let Some((Program::Tool(tool), _)) = self.deployment.start(name)
+                && let Some(path) = facts.tool_path(&tool)
+            {
+                paths.insert(name.clone(), path.to_string());
+            }
+        }
+        self.start_paths = paths;
+    }
+
+    /// The deployment folder's handle.
+    fn base_server(&self, session: Arc<crate::ssh::Session>) -> Result<Server> {
+        match self.deployment.first_process() {
+            Some(name) => Server::for_app(self.deployment, name, session),
+            None => Ok(Server::new(session, self.deployment.dir().to_string())),
+        }
+    }
+
+    /// Connects for a rollback and reads the target release.
+    pub(super) async fn rollback_preflight(
+        &mut self,
+        pool: &Pool,
+        target: &str,
+    ) -> Result<(), Ended> {
+        self.start(Step::Preflight, "checking the server");
+        let checked = Box::pin(self.rollback_check(pool, target)).await;
+        match checked {
+            Ok(()) => {
+                self.finish(Step::Preflight, format!("release {target}"));
+                Ok(())
+            }
+            Err(err) => Err(self.stop(Step::Preflight, &err)),
+        }
+    }
+
+    async fn rollback_check(&mut self, pool: &Pool, target: &str) -> Result<()> {
+        let endpoint = &self.deployment.endpoint;
+        self.report
+            .log(LogKind::Command, format!("connect {}", endpoint.label()));
+        let session = pool.get(endpoint).await?;
+        self.session = Some(Arc::clone(&session));
+        let base = self.base_server(Arc::clone(&session))?;
+        self.project_lock = Some(crate::agent::ProjectGuard::acquire(&base).await?);
+        let listing = base.list().await?;
+        let Some(entry) = listing.entries.iter().find(|entry| entry.id == target) else {
+            bail!("{target} is no longer on the server");
+        };
+        if entry.current {
+            bail!("{target} is already the current release");
+        }
+        let settings = base
+            .settings(target, entry_source(entry))
+            .await
+            .map_err(|err| {
+                anyhow!("{err:#}\nthis release was made before config format 2; deploy again")
+            })?;
+        let restored = Deployment::from_settings(
+            &settings,
+            &self.deployment.project,
+            &self.deployment.config_dir,
+            self.deployment.file.clone(),
+            self.deployment.slug.clone(),
+        )
+        .map_err(|problem| anyhow!("{problem}"))?;
+        if restored.deploy.apps.values().any(|app| app.nginx.is_some()) {
+            bail!("nginx management is not built yet");
+        }
+        if restored
+            .process_apps()
+            .any(|(_, manager)| manager == Manager::Oxmgr)
+        {
+            bail!("oxmgr is not built yet");
+        }
+        self.previous = listing.current;
+        self.release = Some(target.to_string());
+        self.version = crate::release::ReleaseName::parse(target).map(|name| name.version);
+        self.from_backup = entry.kind == crate::remote::Kind::Compressed;
+        Ok(())
+    }
+}
+
+/// Whether a release is read from its folder or its backup.
+fn entry_source(entry: &ReleaseEntry) -> crate::remote::Source {
+    match entry.kind {
+        crate::remote::Kind::Open => crate::remote::Source::Folder,
+        crate::remote::Kind::Compressed => crate::remote::Source::Backup,
+    }
+}
+
 fn log_shell_env(report: &Reporter, shell_env: &ShellEnv) {
     match shell_env {
         ShellEnv::Loaded => report.log(
             LogKind::Info,
-            "server commands get the login shell's environment (ssh.shell_env)",
+            "server commands get the login shell's environment (server.ssh.shell_env)",
         ),
         ShellEnv::Off => report.log(
             LogKind::Info,
@@ -146,311 +479,5 @@ fn log_shell_env(report: &Reporter, shell_env: &ShellEnv) {
             LogKind::Warn,
             format!("{why}; server commands run without them"),
         ),
-    }
-}
-
-async fn connect(
-    pool: &Pool,
-    endpoint: &crate::ssh::Endpoint,
-    report: &Reporter,
-    step: usize,
-) -> Result<std::sync::Arc<crate::ssh::Session>> {
-    pool.get_with(
-        endpoint,
-        |what| report.log(LogKind::Info, what),
-        |done, total| report.progress(step, done, total, Unit::Bytes, "uploading the agent"),
-    )
-    .await
-}
-
-pub(super) async fn preflight(
-    deployable: &Deployable,
-    pool: &Pool,
-    report: &Reporter,
-    step: usize,
-) -> Result<(Server, Facts, String)> {
-    let config = &deployable.config;
-    report.log(LogKind::Info, "checking the local project");
-    check_local(deployable)?;
-    let endpoint = &deployable.endpoint;
-    let address = if endpoint.is_alias() {
-        format!(" → {}", endpoint.address())
-    } else {
-        String::new()
-    };
-    report.log(
-        LogKind::Command,
-        format!(
-            "connect {}{address} ({})",
-            endpoint.label(),
-            pool.login().describe()
-        ),
-    );
-    let session = connect(pool, endpoint, report, step).await?;
-    log_shell_env(report, &session.shell_env);
-    let legacy_lock = session.agent().is_none();
-    let server = Server::new(session, &config.service);
-    let mut tools = deployable.required_tools();
-    if legacy_lock && !tools.iter().any(|tool| tool == "flock") {
-        tools.push("flock".into());
-    }
-    for (tool, _) in SERVER_TOOLS {
-        if !tools.iter().any(|t| t == tool) {
-            tools.push(tool.into());
-        }
-    }
-    report.log(LogKind::Info, "checking the server and its tools");
-    let facts = server.facts(&tools).await?;
-    report.progress(step, 1, 2, Unit::Items, "server checked");
-
-    let glibc = facts
-        .glibc
-        .as_ref()
-        .map_or_else(|| "no glibc".into(), |v| format!("glibc {v}"));
-    let free = facts
-        .free_bytes
-        .map_or_else(|| "unknown".into(), human::bytes);
-    report.log(
-        LogKind::Info,
-        format!("server: {} · {glibc} · {free} free", facts.arch),
-    );
-    report.log(
-        LogKind::Info,
-        format!(
-            "live: {} · service {}",
-            facts.current.as_deref().unwrap_or("nothing deployed yet"),
-            if facts.active.is_empty() {
-                "unknown"
-            } else {
-                &facts.active
-            }
-        ),
-    );
-
-    let dir = &config.service.dir;
-    let user = &endpoint.user;
-    if !facts.dir_exists {
-        // An app's first deploy makes its folder.
-        report.log(
-            LogKind::Info,
-            format!("first deploy of {}: creating {dir}", config.service.name),
-        );
-        server.create_app_dir(report).await?;
-    } else if !facts.dir_writable {
-        bail!("{user} cannot write to {dir}");
-    }
-    if !facts.sudo_missing.is_empty() {
-        for command in &facts.sudo_missing {
-            report.log(LogKind::Warn, format!("{user} may not run: sudo {command}"));
-        }
-        bail!(
-            "{user} may not run {} of the commands shipdeck needs as root (sudo, without a password)",
-            facts.sudo_missing.len()
-        );
-    }
-    check_tools(deployable, &facts, report)?;
-    if config.service.manager == Manager::Pm2 {
-        check_pm2(deployable, &facts, report)?;
-    }
-    if let Some(free) = facts.free_bytes
-        && free < MIN_FREE
-    {
-        bail!("only {} free on the server", human::bytes(free));
-    }
-    let summary = format!("{} · {glibc} · {free} free", facts.arch);
-    Ok((server, facts, summary))
-}
-
-/// Every program the deploy needs is on the server, and the one the
-/// service starts is somewhere the service can reach.
-pub(super) fn check_tools(deployable: &Deployable, facts: &Facts, report: &Reporter) -> Result<()> {
-    let mut ours = Vec::new();
-    let mut missing = Vec::new();
-    for (tool, path) in &facts.tools {
-        let package = SERVER_TOOLS
-            .iter()
-            .find(|(name, _)| name == tool)
-            .map(|(_, package)| *package);
-        match (path, package) {
-            (Some(path), _) => report.log(LogKind::Success, format!("{tool}: {path}")),
-            (None, Some(package)) => ours.push((tool.as_str(), package)),
-            (None, None) => missing.push(tool.as_str()),
-        }
-    }
-    if !ours.is_empty() {
-        let tools: Vec<&str> = ours.iter().map(|(tool, _)| *tool).collect();
-        let packages = ours
-            .iter()
-            .map(|(_, package)| *package)
-            .collect::<Vec<_>>()
-            .join(" ");
-        bail!(
-            "the server has no {}, which shipdeck unpacks and checks releases with; install {} \
-             (apt install {packages}, or dnf install {packages})",
-            tools.join(" or "),
-            if ours.len() == 1 { "it" } else { "them" }
-        );
-    }
-    if !missing.is_empty() {
-        let path = if deployable.endpoint.shell_env {
-            "the PATH the login shell's startup files set"
-        } else {
-            "the PATH without the login shell's startup files (ssh.shell_env is false)"
-        };
-        bail!(
-            "{} cannot find {} on the server in {path}; install {}, or fix service.start and pipeline.preflight.requires",
-            deployable.endpoint.user,
-            missing.join(", "),
-            if missing.len() == 1 { "it" } else { "them" }
-        );
-    }
-    if !deployable.config.service.is_static()
-        && let (Program::Tool(tool), _) = deployable.start()
-        && let Some(path) = facts.tool_path(&tool)
-        && deployable.config.service.manager == Manager::Systemd
-        && !deployable.unit_template_path().is_file()
-        && (path.starts_with("/home/") || path.starts_with("/root/"))
-    {
-        bail!(
-            "{tool} is at {path}, but the built-in unit hides home folders from the service \
-             (ProtectHome=true). Install {tool} system-wide (e.g. /usr/bin or /usr/local/bin), \
-             or add a service.template without ProtectHome"
-        );
-    }
-    Ok(())
-}
-
-/// PM2 is there, with a warning when it is newer than shipdeck is tested
-/// with, and no systemd unit of the same name still runs the app.
-pub(super) fn check_pm2(deployable: &Deployable, facts: &Facts, report: &Reporter) -> Result<()> {
-    let output = facts.pm2_version.as_deref().unwrap_or_default();
-    let (version, major) = parse_version(output).map_err(|why| anyhow!(why))?;
-    if major > PM2_NEWEST_MAJOR {
-        report.log(
-            LogKind::Warn,
-            format!(
-                "pm2 {version} is newer than this shipdeck is tested with \
-                 ({PM2_NEWEST_MAJOR}.x); deploying anyway"
-            ),
-        );
-    } else {
-        report.log(LogKind::Success, format!("pm2 {version}"));
-    }
-    let name = &deployable.config.service.name;
-    if matches!(
-        facts.systemd.as_str(),
-        "active" | "activating" | "reloading"
-    ) {
-        bail!(
-            "the systemd service {name} is still running and would clash with PM2; \
-             stop it first: sudo systemctl disable --now {name}"
-        );
-    }
-    Ok(())
-}
-
-/// Where preflight found the start program, when it is looked up by name.
-pub(super) fn start_path(deployable: &Deployable, facts: &Facts) -> Option<String> {
-    match deployable.start() {
-        (Program::Tool(tool), _) => facts.tool_path(&tool).map(str::to_string),
-        _ => None,
-    }
-}
-
-/// What can be checked on this machine before connecting: the project
-/// folder and the service file.
-pub(super) fn check_local(deployable: &Deployable) -> Result<()> {
-    let project = deployable.project_dir();
-    if !project.is_dir() {
-        bail!(
-            "the project folder {} does not exist (project: {})",
-            project.display(),
-            deployable.config.project
-        );
-    }
-    let template = deployable.unit_template_path();
-    if deployable.config.service.is_static() && template.is_file() {
-        bail!(
-            "{} is a systemd unit, but this is a static site; remove it",
-            template.display()
-        );
-    }
-    if deployable.config.service.manager == Manager::Pm2 && template.is_file() {
-        bail!(
-            "{} is a systemd unit, but service.manager is pm2; remove it, or use systemd",
-            template.display()
-        );
-    }
-    let sample = ReleaseName::new("0.0.0", "check", false, chrono::Utc::now());
-    bundle::service_file(deployable, &sample, None)?;
-    Ok(())
-}
-
-/// Checks what the build produced: the binary can run on the server, and
-/// every project pattern in `pipeline.pack.files` finds something.
-pub(super) fn check_build(
-    deployable: &Deployable,
-    facts: &Facts,
-    report: &Reporter,
-) -> Result<String> {
-    let mut summary = Vec::new();
-    if let Some(binary) = deployable.binary_path() {
-        summary.push(check_binary(&binary, facts, report)?);
-    }
-    let items = files::walk_source(deployable, Source::Project)?;
-    if !items.is_empty() {
-        let count_files = items
-            .values()
-            .filter(|i| matches!(i.kind, Kind::File { .. }))
-            .count();
-        report.log(
-            LogKind::Success,
-            format!(
-                "project files: {} from {}",
-                count(count_files, "file"),
-                deployable
-                    .config
-                    .pipeline
-                    .pack
-                    .files
-                    .include
-                    .project
-                    .join(", ")
-            ),
-        );
-        summary.push(count(count_files, "file"));
-    }
-    Ok(summary.join(" · "))
-}
-
-/// Checks the built binary can run on the server; returns a short summary.
-pub(super) fn check_binary(binary: &Path, facts: &Facts, report: &Reporter) -> Result<String> {
-    let info = build::inspect(binary)?;
-    if info.arch != facts.arch {
-        bail!(
-            "the binary is built for {}, but the server is {}",
-            info.arch,
-            facts.arch
-        );
-    }
-    let size = human::bytes(info.size);
-    let Some(needed) = info.glibc else {
-        report.log(LogKind::Info, format!("binary: {size}, no glibc needed"));
-        return Ok(format!("{size} · static"));
-    };
-    report.log(
-        LogKind::Info,
-        format!("binary: {size}, needs glibc {needed} or newer"),
-    );
-    match &facts.glibc {
-        None => bail!(
-            "the binary needs glibc {needed}, but the server has no glibc; build a static musl binary instead"
-        ),
-        Some(have) if *have < needed => bail!(
-            "the binary needs glibc {needed}, but the server has {have}. \
-             Build against the server's glibc, e.g. cargo zigbuild --target {}-unknown-linux-gnu.{have}",
-            info.arch
-        ),
-        Some(_) => Ok(format!("{size} · glibc ≥ {needed}")),
     }
 }

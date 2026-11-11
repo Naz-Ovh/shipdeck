@@ -1,0 +1,31 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.1/docs/schema/deploy.schema.json
+# Every field: https://github.com/Naz-Ovh/shipdeck/tree/main/docs/feature/config-v2.md
+
+# A Python app: the source ships as it is; the server builds its virtualenv.
+name: reports
+server:
+  ssh: { host: prod, user: deploy }
+  dir: /opt/reports
+
+release:
+  steps:
+    preflight:
+      requires: [python3]
+      local: python3 -m pytest -q
+
+apps:
+  reports:
+    source: .
+    files: [.]
+    exclude: [tests, "**/__pycache__", .venv, "**/*.pyc"]
+    process:
+      start: .venv/bin/python -m app
+      env_file: .env
+      systemd: {}
+    steps:
+      setup:
+        server:
+          - python3 -m venv .venv
+          - .venv/bin/pip install -q -r requirements.txt
+      health:
+        server: .venv/bin/python -c "import app"

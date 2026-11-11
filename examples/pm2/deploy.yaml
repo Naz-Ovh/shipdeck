@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.1/docs/schema/deploy.schema.json
+# Every field: https://github.com/Naz-Ovh/shipdeck/tree/main/docs/feature/config-v2.md
+
+# A Node.js app kept running by PM2 in cluster mode, as the SSH user.
+name: my-api
+server:
+  ssh: { host: prod, shell_env: true }
+  dir: /opt/my-api
+
+apps:
+  my-api:
+    source: .
+    files: [dist, package.json, package-lock.json, .env]
+    process:
+      start: node dist/main.js --port 3000
+      env: { NODE_ENV: production }
+      env_file: .env
+      pm2:
+        options: { instances: max, exec_mode: cluster, max_memory_restart: 300M }
+    steps:
+      setup:
+        server: npm ci --omit=dev
+      health:
+        url: http://127.0.0.1:3000/health

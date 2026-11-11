@@ -1,47 +1,5 @@
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.1/docs/schema/deploy.schema.json
-# A Node.js app: built here, production dependencies installed on the server
-# before the release goes live.
-name: Web (prod)
-project: ../../../web
-dir: /opt/web
+# The project file: its deploys by name.
+# Rules: docs/feature/config-v2.md
 
-ssh:
-  host: prod
-
-service:
-  name: web
-  start: node dist/main.js        # node is looked up on the server
-  env_file: .env
-  env: { NODE_ENV: production }
-  shared: [uploads]               # kept in shared/ across releases
-
-pipeline:
-  preflight:
-    requires: [npm]               # the server must have it
-    run:
-      local: npm test
-  build:
-    run:
-      local: [npm ci, npm run build]
-  pack:
-    files:
-      include:
-        project: [dist, package.json, package-lock.json]
-        deploy: [.env]
-      exclude:
-        project: ["**/*.map"]
-  setup:                          # in releases/<id>; the old release still serves
-    run:
-      server: [npm ci --omit=dev, npm run migrate]
-    check:
-      server: node --check dist/main.js
-  backup:                         # the shipped files, kept for rollback; setup remakes node_modules
-    keep: { open: 3, compressed: 20 }
-  health:
-    url: http://127.0.0.1:3000/health
-  done:
-    run:
-      local: ./notify.sh "web $SHIPDECK_VERSION is live"
-  failed:
-    run:
-      local: ./notify.sh "web failed at $SHIPDECK_STEP"
+deploys:
+  production: deploy.yaml

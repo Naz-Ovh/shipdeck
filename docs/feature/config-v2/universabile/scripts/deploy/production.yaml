@@ -1,0 +1,100 @@
+# universabile production. Domains are placeholders.
+# Rules and the server layout: docs/feature/config-v2.md.
+
+name: universabile
+
+server:
+  ssh: { host: mia_namecheap }
+  dir: /opt/universabile
+
+release:
+  # The pnpm workspace: the server installs from it.
+  files:
+    - package.json
+    - pnpm-lock.yaml
+    - pnpm-workspace.yaml
+    - apps/*/package.json
+    - packages
+  exclude: ["**/node_modules", "**/.turbo", "**/*.test.ts", "**/.env*"]
+
+  steps:
+    preflight:
+      requires: [node, pnpm]
+      server: node -e 'if (Number(process.versions.node.split(".")[0]) < 22) throw new Error("Node.js 22 or newer is required")'
+      local:
+        - pnpm install --frozen-lockfile
+        - test -r "{{CONFIG}}/production/.env"
+    build:
+      version_from: package.json
+      # One turbo run builds every app after the packages it needs.
+      local: node --env-file="{{CONFIG}}/production/.env" --run deploy:build
+    setup:
+      server: pnpm --filter server... install --prod --frozen-lockfile
+    backup:
+      keep: { open: 3, compressed: 10 }
+    health:
+      timeout_secs: 60
+    rollback:
+      mode: auto
+
+apps:
+  server:
+    source: apps/server
+    files:
+      - apps/server/dist
+      - { path: ./production/.env, to: .env }
+    process:
+      start: node dist/server/index.js
+      env_file: .env
+      pm2:
+        options: { node_args: [--enable-source-maps] }
+    nginx:
+      domains: [api.example.com]
+      tls: { provider: letsencrypt, email: ops@example.com }
+      proxy_pass: http://127.0.0.1:8085
+    steps:
+      setup:
+        server: node --check dist/server/index.js
+      health:
+        url: http://127.0.0.1:8085/docs/json
+
+  website:
+    source: apps/website
+    files: [apps/website/.next/standalone]
+    exclude: [apps/website/.next/standalone/apps/website/.next/cache]
+    shared: [cache]
+    process:
+      start: node .next/standalone/apps/website/server.js
+      env: { NODE_ENV: production, APP_ENV: production, HOSTNAME: 127.0.0.1, PORT: "5222" }
+      pm2: {}
+    nginx:
+      domains: [example.com, www.example.com]
+      tls: { provider: letsencrypt, email: ops@example.com }
+      proxy_pass: http://127.0.0.1:5222
+    steps:
+      setup:
+        server:
+          - ln -sfn "{{APP_RELEASE}}/cache" .next/standalone/apps/website/.next/cache
+          - node --check .next/standalone/apps/website/server.js
+      health:
+        url: http://127.0.0.1:5222/
+
+  admin:
+    source: apps/admin
+    files: [apps/admin/dist]
+    static: true
+    nginx:
+      root: dist
+      index: index.html
+      domains: [admin.example.com]
+      tls: { provider: letsencrypt, email: ops@example.com }
+
+  vendor:
+    source: apps/vendor
+    files: [apps/vendor/dist]
+    static: true
+    nginx:
+      root: dist
+      index: index.html
+      domains: [vendor.example.com]
+      tls: { provider: letsencrypt, email: ops@example.com }

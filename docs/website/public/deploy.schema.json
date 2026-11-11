@@ -2,134 +2,157 @@
   "$id": "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.1/docs/schema/deploy.schema.json",
   "$schema": "http://json-schema.org/draft-07/schema#",
   "definitions": {
-    "AppConfig": {
+    "App": {
       "additionalProperties": false,
-      "description": "Settings for one app in a shared release.",
+      "description": "One app: a process to run, or a static site to serve.",
       "properties": {
-        "env": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "default": {},
-          "description": "Environment variables for the app.",
-          "type": "object"
-        },
-        "env_file": {
-          "default": null,
-          "description": "Environment file inside the app's release folder.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "pipeline": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/Pipeline"
-            }
-          ],
-          "default": {},
-          "description": "Pipeline settings that replace the corresponding global settings."
-        },
-        "process_manager": {
+        "binary": {
           "anyOf": [
             {
-              "$ref": "#/definitions/ProcessManager"
+              "$ref": "#/definitions/FileEntry"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "description": "Replaces the global process manager when present."
+          "description": "A compiled program: a path, or a path and its place in the app folder. It lands with mode 0755 and is the default `process.start`."
         },
-        "project": {
-          "default": ".",
-          "description": "App source folder, relative to the repository root.",
-          "type": "string"
-        },
-        "shared": {
+        "exclude": {
           "default": [],
-          "description": "App folders kept across releases.",
+          "description": "Patterns left out of `files`, matched against the path from the project folder.",
           "items": {
             "type": "string"
           },
           "type": "array"
         },
-        "start": {
+        "files": {
+          "default": [],
+          "description": "Files shipped for this app.",
+          "items": {
+            "$ref": "#/definitions/FileEntry"
+          },
+          "type": "array"
+        },
+        "nginx": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Nginx"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
-          "description": "Command that starts the app, or omit it when a binary is packed.",
+          "description": "nginx settings for this app. Without them shipdeck does not touch nginx."
+        },
+        "process": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Process"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A running program. Use this or `static: true`, not both."
+        },
+        "shared": {
+          "default": [],
+          "description": "Folders kept across releases, in this app's folder.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "source": {
+          "default": null,
+          "description": "The app's source folder on your PC. Its files keep their path inside it, and its local commands run there. Default: the project folder.",
           "type": [
             "string",
             "null"
           ]
         },
         "static": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/StaticApp"
-            },
-            {
-              "type": "null"
-            }
-          ],
           "default": null,
-          "description": "Static files for this app, served by nginx. Use this instead of `start` and `process_manager`."
+          "description": "Serve the files instead of running a process. Must be `true`.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "steps": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AppSteps"
+            }
+          ],
+          "default": {
+            "backup": {
+              "exclude": [],
+              "include": [],
+              "local": [],
+              "server": []
+            },
+            "build": {
+              "local": [],
+              "server": []
+            },
+            "done": {
+              "local": [],
+              "server": []
+            },
+            "failed": {
+              "local": [],
+              "server": []
+            },
+            "health": {
+              "local": [],
+              "server": [],
+              "url": null
+            },
+            "nginx": {
+              "local": [],
+              "server": []
+            },
+            "preflight": {
+              "local": [],
+              "server": []
+            },
+            "restart": {
+              "local": [],
+              "server": []
+            },
+            "rollback": {
+              "local": [],
+              "server": []
+            },
+            "setup": {
+              "local": [],
+              "server": []
+            },
+            "switch": {
+              "local": [],
+              "server": []
+            },
+            "upload": {
+              "local": [],
+              "server": []
+            }
+          },
+          "description": "This app's commands and settings of every step."
         }
       },
       "type": "object"
     },
-    "AppDefinition": {
-      "anyOf": [
-        {
-          "description": "Path relative to the main shipdeck.yaml.",
-          "type": "string"
-        },
-        {
-          "allOf": [
-            {
-              "$ref": "#/definitions/AppConfig"
-            }
-          ],
-          "description": "The app's settings in the main file."
-        }
-      ],
-      "description": "An inline app or the path to its config file."
-    },
-    "Backup": {
+    "AppBackupStep": {
       "additionalProperties": false,
+      "description": "An app's backup step: no `keep`, which belongs to the release.",
       "properties": {
-        "files": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/BackupFiles"
-            }
-          ],
-          "description": "What of the release goes into the backup."
-        },
-        "keep": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/Keep"
-            }
-          ],
-          "description": "How many releases stay on the server."
-        }
-      },
-      "type": "object"
-    },
-    "BackupFiles": {
-      "additionalProperties": false,
-      "description": "Paths in the release, in the syntax of `pipeline.pack.files`. The release's own `release.json` and service file are always in; `service.shared` folders never are.",
-      "properties": {
-        "deployed": {
-          "default": true,
-          "description": "The files shipdeck shipped: the binary and what `pipeline.pack.files` picked. Default: true.",
-          "type": "boolean"
-        },
         "exclude": {
           "default": [],
-          "description": "What to leave out, shipped or not. A folder leaves out everything in it; `\"!pattern\"` keeps what it matches.",
+          "description": "Uploaded paths to leave out.",
           "items": {
             "type": "string"
           },
@@ -137,29 +160,58 @@
         },
         "include": {
           "default": [],
-          "description": "More from the release, such as a file setup made that it cannot make again. A folder brings everything in it; `\"!pattern\"` leaves out what it matches.",
+          "description": "Paths setup made that it cannot make again.",
           "items": {
             "type": "string"
           },
           "type": "array"
+        },
+        "local": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CommandList"
+            }
+          ],
+          "default": [],
+          "description": "On your PC."
+        },
+        "server": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CommandList"
+            }
+          ],
+          "default": [],
+          "description": "On the server."
         }
       },
       "type": "object"
     },
-    "Build": {
+    "AppHealthStep": {
       "additionalProperties": false,
+      "description": "An app's health step: `url` belongs to the app, `timeout_secs` to the release.",
       "properties": {
-        "run": {
+        "local": {
           "allOf": [
             {
-              "$ref": "#/definitions/LocalOnly"
+              "$ref": "#/definitions/CommandList"
             }
           ],
-          "description": "Builds the project on your PC, in `project`."
+          "default": [],
+          "description": "On your PC."
         },
-        "version_from": {
+        "server": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CommandList"
+            }
+          ],
+          "default": [],
+          "description": "On the server."
+        },
+        "url": {
           "default": null,
-          "description": "The file whose version names the release, relative to `project`: Cargo.toml, package.json, pyproject.toml, or any file whose first line is the version. Default: the first of those in `project`, else the latest git tag.",
+          "description": "The URL fetched on the server. It must answer 2xx.",
           "type": [
             "string",
             "null"
@@ -168,89 +220,329 @@
       },
       "type": "object"
     },
-    "Commands": {
+    "AppSteps": {
+      "additionalProperties": false,
+      "description": "The app steps: the same commands, without the release's settings.",
+      "properties": {
+        "backup": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AppBackupStep"
+            }
+          ],
+          "default": {
+            "exclude": [],
+            "include": [],
+            "local": [],
+            "server": []
+          },
+          "description": "Step 5. `include` is not allowed for a static app."
+        },
+        "build": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Step"
+            }
+          ],
+          "default": {
+            "local": [],
+            "server": []
+          },
+          "description": "Step 2."
+        },
+        "done": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Step"
+            }
+          ],
+          "default": {
+            "local": [],
+            "server": []
+          },
+          "description": "Step 10."
+        },
+        "failed": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Step"
+            }
+          ],
+          "default": {
+            "local": [],
+            "server": []
+          },
+          "description": "Step 12."
+        },
+        "health": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AppHealthStep"
+            }
+          ],
+          "default": {
+            "local": [],
+            "server": [],
+            "url": null
+          },
+          "description": "Step 9."
+        },
+        "nginx": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Step"
+            }
+          ],
+          "default": {
+            "local": [],
+            "server": []
+          },
+          "description": "Step 8."
+        },
+        "preflight": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Step"
+            }
+          ],
+          "default": {
+            "local": [],
+            "server": []
+          },
+          "description": "Step 1."
+        },
+        "restart": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Step"
+            }
+          ],
+          "default": {
+            "local": [],
+            "server": []
+          },
+          "description": "Step 7."
+        },
+        "rollback": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Step"
+            }
+          ],
+          "default": {
+            "local": [],
+            "server": []
+          },
+          "description": "Step 11."
+        },
+        "setup": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Step"
+            }
+          ],
+          "default": {
+            "local": [],
+            "server": []
+          },
+          "description": "Step 4. Not allowed for a static app."
+        },
+        "switch": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Step"
+            }
+          ],
+          "default": {
+            "local": [],
+            "server": []
+          },
+          "description": "Step 6."
+        },
+        "upload": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Step"
+            }
+          ],
+          "default": {
+            "local": [],
+            "server": []
+          },
+          "description": "Step 3."
+        }
+      },
+      "type": "object"
+    },
+    "BackupStep": {
+      "additionalProperties": false,
+      "description": "Step 5: what stays on the server once a release's folder goes.",
+      "properties": {
+        "exclude": {
+          "default": [],
+          "description": "Uploaded paths to leave out.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "include": {
+          "default": [],
+          "description": "Paths setup made that it cannot make again.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "keep": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Keep"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How many old releases stay."
+        },
+        "local": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CommandList"
+            }
+          ],
+          "default": [],
+          "description": "On your PC."
+        },
+        "server": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CommandList"
+            }
+          ],
+          "default": [],
+          "description": "On the server."
+        }
+      },
+      "type": "object"
+    },
+    "BuildStep": {
+      "additionalProperties": false,
+      "description": "Step 2: the build, and the file collection.",
+      "properties": {
+        "local": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CommandList"
+            }
+          ],
+          "default": [],
+          "description": "On your PC."
+        },
+        "server": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CommandList"
+            }
+          ],
+          "default": [],
+          "description": "On the server."
+        },
+        "version_from": {
+          "default": null,
+          "description": "The file whose version names the release.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "CommandList": {
+      "anyOf": [
+        {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "object"
+            }
+          ],
+          "description": "A command: a line run with `sh`, or one runner and the code it runs.",
+          "title": "Command"
+        },
+        {
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object"
+              }
+            ],
+            "description": "A command: a line run with `sh`, or one runner and the code it runs.",
+            "title": "Command"
+          },
+          "type": "array"
+        }
+      ],
+      "description": "One command, or a list of them run in order, stopping at the first failure."
+    },
+    "FileEntry": {
       "anyOf": [
         {
           "type": "string"
         },
         {
-          "items": {
-            "type": "string"
+          "additionalProperties": false,
+          "description": "A path and, when it needs one, its place in the release.",
+          "properties": {
+            "path": {
+              "description": "The path on your PC.",
+              "type": "string"
+            },
+            "to": {
+              "default": null,
+              "description": "Where it lands, relative to the release or app folder. Optional for a binary, whose file name is its place.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           },
-          "type": "array"
+          "required": [
+            "path"
+          ],
+          "type": "object"
         }
       ],
-      "description": "One shell command, or a list run in order that stops at the first failure."
+      "description": "A path on your PC, or a map with `path` and `to`."
     },
-    "Done": {
+    "HealthStep": {
       "additionalProperties": false,
+      "description": "Step 9: the release must answer.",
       "properties": {
-        "run": {
+        "local": {
           "allOf": [
             {
-              "$ref": "#/definitions/LocalAndServer"
+              "$ref": "#/definitions/CommandList"
             }
           ],
-          "description": "`server` runs first, in `current`; then `local`, in `project`."
-        }
-      },
-      "type": "object"
-    },
-    "Failed": {
-      "additionalProperties": false,
-      "properties": {
-        "rollback": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/Rollback"
-            }
-          ],
-          "description": "What happens when the switch, the restart or the health check fails: put back the release that was live before. Default: ask."
+          "default": [],
+          "description": "On your PC."
         },
-        "run": {
+        "server": {
           "allOf": [
             {
-              "$ref": "#/definitions/LocalOnly"
+              "$ref": "#/definitions/CommandList"
             }
           ],
-          "description": "Runs on your PC, in `project`. The server may be out of reach when a step fails, so there is no `server` here."
-        }
-      },
-      "type": "object"
-    },
-    "Files": {
-      "additionalProperties": false,
-      "description": "Paths or globs, fast-glob and Tailwind style: `*` and `?` inside one folder, `**/` for any number of folders, `[a-z]`, `{js,ts}`. A pattern starting with `!` turns it around. `.git` is never shipped.",
-      "properties": {
-        "exclude": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/Sources"
-            }
-          ],
-          "description": "What to leave out of `include`. A folder leaves out everything in it; `\"!pattern\"` keeps what it matches."
-        },
-        "include": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/Sources"
-            }
-          ],
-          "description": "What to ship. A folder brings everything in it; `\"!pattern\"` leaves out what it matches."
-        }
-      },
-      "type": "object"
-    },
-    "Health": {
-      "additionalProperties": false,
-      "properties": {
-        "check": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/LocalAndServer"
-            }
-          ],
-          "description": "Commands that must pass: `server` in `current`, then `local` in `project`. Retried until `timeout_secs`."
+          "default": [],
+          "description": "On the server."
         },
         "timeout_secs": {
           "default": 20,
@@ -261,7 +553,7 @@
         },
         "url": {
           "default": null,
-          "description": "Fetched on the server with curl or wget; it must answer 2xx. Such as `http://127.0.0.1:3000/health`.",
+          "description": "The URL fetched on the server. It must answer 2xx.",
           "type": [
             "string",
             "null"
@@ -276,7 +568,7 @@
       "properties": {
         "compressed": {
           "default": 15,
-          "description": "Older releases kept only as their backup in `backups/`. 0 keeps none, and then no backup is made. Default: 15.",
+          "description": "Older releases kept only as their backup. 0 keeps none. Default: 15.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
@@ -291,165 +583,102 @@
       },
       "type": "object"
     },
-    "LocalAndServer": {
+    "Nginx": {
       "additionalProperties": false,
+      "description": "nginx settings for one app. Parsed and checked; not built yet.",
       "properties": {
-        "local": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/Commands"
-            }
-          ],
-          "description": "On your PC, in `project`."
+        "domains": {
+          "default": [],
+          "description": "The domains this app answers on.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
-        "server": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/Commands"
-            }
-          ],
-          "description": "On the server."
-        }
-      },
-      "type": "object"
-    },
-    "LocalOnly": {
-      "additionalProperties": false,
-      "properties": {
-        "local": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/Commands"
-            }
-          ],
-          "description": "On your PC, in `project`."
-        }
-      },
-      "type": "object"
-    },
-    "Manager": {
-      "description": "What keeps the app running on the server.",
-      "oneOf": [
-        {
-          "const": "systemd",
-          "description": "A systemd unit, installed and restarted with sudo.",
-          "type": "string"
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "Response headers to add.",
+          "type": "object"
         },
-        {
-          "const": "pm2",
-          "description": "PM2, run as the SSH user: no sudo. Reloaded with `pm2 startOrReload`, then saved with `pm2 save`.",
-          "type": "string"
-        }
-      ]
-    },
-    "Pack": {
-      "additionalProperties": false,
-      "properties": {
-        "binary": {
+        "index": {
           "default": null,
-          "description": "A compiled program, relative to `project`. It lands at the release root and is checked against the server's CPU and glibc.",
+          "description": "The file nginx serves for a folder, for a static app.",
           "type": [
             "string",
             "null"
           ]
         },
-        "files": {
-          "allOf": [
+        "locations": {
+          "additionalProperties": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "default": {},
+          "description": "Extra `location` blocks, by path.",
+          "type": "object"
+        },
+        "proxy_pass": {
+          "default": null,
+          "description": "Where the app listens, for a process app.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "raw": {
+          "default": null,
+          "description": "Raw nginx directives, added to the server block as they are.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "root": {
+          "default": null,
+          "description": "The folder nginx serves, in the app folder, for a static app.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tls": {
+          "anyOf": [
             {
-              "$ref": "#/definitions/Files"
+              "$ref": "#/definitions/Tls"
+            },
+            {
+              "type": "null"
             }
           ],
-          "description": "Files and folders to put in the release, each at its own path."
+          "default": null,
+          "description": "A certificate for those domains, or `none` for plain HTTP."
         }
       },
       "type": "object"
     },
-    "Pipeline": {
+    "Oxmgr": {
       "additionalProperties": false,
-      "description": "The steps of a deploy that take settings.",
+      "description": "An oxmgr app. Parsed and checked; not built yet.",
       "properties": {
-        "backup": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/Backup"
-            }
-          ],
-          "description": "Step 7: shipdeck packs the set-up release into `backups/<id>.tar.zst`, which stays when the release folder goes. A rollback to it unpacks it and runs setup again, so what setup makes, such as `node_modules`, can stay out. A failure removes the new release."
-        },
-        "build": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/Build"
-            }
-          ],
-          "description": "Step 2. Runs `run.local` in `project`. A failure stops the deploy."
-        },
-        "done": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/Done"
-            }
-          ],
-          "description": "Step 11: the new release is live. shipdeck tidies old releases (see `backup.keep`), then runs `run.server` in `current`, then `run.local`. A failure is only a warning. A manual rollback runs it too, with `SHIPDECK_ACTION=rollback`."
-        },
-        "failed": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/Failed"
-            }
-          ],
-          "description": "Runs when any step fails, after a rollback if there was one. `SHIPDECK_STEP` names the step that failed."
-        },
-        "health": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/Health"
-            }
-          ],
-          "description": "Step 10, after shipdeck switches `current` and restarts the service. Waits until the service is active, `url` answers and every check passes; when it does not, see `failed.rollback`."
-        },
-        "pack": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/Pack"
-            }
-          ],
-          "description": "Step 3. What goes into the release: the binary and the files."
-        },
-        "preflight": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/Preflight"
-            }
-          ],
-          "description": "Step 1. shipdeck checks your PC and the server, then runs `run.server` in `dir`, then `run.local` in `project`. A failure stops the deploy before anything is built."
-        },
-        "setup": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/Setup"
-            }
-          ],
-          "description": "Step 6, after shipdeck uploads and unpacks the release. Runs in `releases/<id>` on the server while the old release is still live: `run.server`, then `check.server`. A failure removes the new release."
+        "options": {
+          "additionalProperties": true,
+          "default": {},
+          "description": "oxfile app properties.",
+          "type": "object"
         }
       },
       "type": "object"
     },
     "Pm2": {
       "additionalProperties": false,
-      "description": "How PM2 runs the app. Either shipdeck writes the app file from `service.start`, `service.env` and `options`, or `ecosystem` names your own.",
+      "description": "A PM2 app: the file shipdeck writes, or your own ecosystem file.",
       "properties": {
-        "app": {
-          "default": null,
-          "description": "The app's name in PM2, as `pm2 list` shows it. Default: `service.name`.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "ecosystem": {
           "default": null,
-          "description": "Your own PM2 file in the release, such as `ecosystem.config.js`. shipdeck reloads the app `app` from it; `service.start` and `options` are not used. Ship it with `pipeline.pack.files`.",
+          "description": "Your own PM2 file, in the app folder. It replaces `options`.",
           "type": [
             "string",
             "null"
@@ -458,222 +687,476 @@
         "options": {
           "additionalProperties": true,
           "default": {},
-          "description": "More PM2 app settings for the file shipdeck writes, such as `instances: max`, `exec_mode: cluster` or `max_memory_restart: 300M`. shipdeck sets `name`, `cwd` and the environment itself.",
+          "description": "PM2 app properties, such as `instances` or `max_memory_restart`.",
           "type": "object"
         }
       },
       "type": "object"
     },
-    "Preflight": {
+    "PreflightStep": {
       "additionalProperties": false,
+      "description": "Step 1: checks before anything else.",
       "properties": {
+        "local": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CommandList"
+            }
+          ],
+          "default": [],
+          "description": "On your PC."
+        },
         "requires": {
           "default": [],
-          "description": "Programs the server must have, such as `node` or `npm`. Preflight stops if one is missing.",
+          "description": "Programs the server must have.",
           "items": {
             "type": "string"
           },
           "type": "array"
         },
-        "run": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/LocalAndServer"
-            }
-          ],
-          "description": "`server` runs first, in `dir`; then `local`, in `project`."
-        }
-      },
-      "type": "object"
-    },
-    "ProcessManager": {
-      "additionalProperties": false,
-      "description": "The process manager and its own settings.",
-      "properties": {
-        "app": {
-          "default": null,
-          "description": "An optional app name for PM2.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "ecosystem": {
-          "default": null,
-          "description": "A PM2 ecosystem file inside the app's release folder.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "name": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/Manager"
-            }
-          ],
-          "default": "systemd",
-          "description": "`systemd` by default, or `pm2`."
-        },
-        "options": {
-          "additionalProperties": true,
-          "default": {},
-          "description": "Additional PM2 app options.",
-          "type": "object"
-        },
-        "run_as": {
-          "default": null,
-          "description": "The user that runs the app. Default: the SSH user.",
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "type": "object"
-    },
-    "Rollback": {
-      "oneOf": [
-        {
-          "const": "ask",
-          "description": "Ask before rolling back to the release that was live. With no answer within 30 seconds, roll back.",
-          "type": "string"
-        },
-        {
-          "const": "auto",
-          "description": "Roll back at once.",
-          "type": "string"
-        }
-      ]
-    },
-    "ServerOnly": {
-      "additionalProperties": false,
-      "properties": {
         "server": {
           "allOf": [
             {
-              "$ref": "#/definitions/Commands"
+              "$ref": "#/definitions/CommandList"
             }
           ],
+          "default": [],
           "description": "On the server."
         }
       },
       "type": "object"
     },
-    "Service": {
+    "Process": {
       "additionalProperties": false,
-      "description": "The service shipdeck runs, and where its releases live.",
+      "description": "A running program and the manager that keeps it up.",
       "properties": {
         "env": {
           "additionalProperties": {
             "type": "string"
           },
           "default": {},
-          "description": "Environment variables for the service and for server commands.",
+          "description": "Environment variables for the app and its server commands.",
           "type": "object"
         },
         "env_file": {
           "default": null,
-          "description": "A `KEY=value` file in the release, such as `.env`. The service gets it as its environment, and server commands load it too.",
+          "description": "A `KEY=value` file in the app folder, such as `.env`.",
           "type": [
             "string",
             "null"
           ]
-        },
-        "manager": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/Manager"
-            }
-          ],
-          "default": "systemd",
-          "description": "What keeps the app running: `systemd`, a unit shipdeck installs with sudo, or `pm2`, run as the SSH user without sudo. Default: systemd."
         },
         "name": {
-          "description": "The unit's name without `.service`: `my-api` becomes my-api.service. With PM2, also the app's name unless `pm2.app` is set.",
-          "type": "string"
-        },
-        "pm2": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/Pm2"
-            }
-          ],
-          "description": "How PM2 runs the app, with `manager: pm2`."
-        },
-        "run_as": {
           "default": null,
-          "description": "The user the service runs as. Default: the SSH user. PM2 always runs the app as the SSH user.",
+          "description": "The process name. Default: `<name>-<app>`.",
           "type": [
             "string",
             "null"
           ]
         },
-        "shared": {
-          "default": [],
-          "description": "Folders kept across releases, such as `uploads`. Each lives in `shared/` and is linked into every release.",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
+        "oxmgr": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Oxmgr"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "An oxmgr app. Use exactly one of `systemd`, `pm2` or `oxmgr`."
+        },
+        "pm2": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Pm2"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A PM2 app. Use exactly one of `systemd`, `pm2` or `oxmgr`."
         },
         "start": {
           "default": null,
-          "description": "The command the service runs, from the release folder: `./my-api -E=.env` or `node dist/main.js`. A bare program name such as `node` is looked up on the server. Default: `./<binary>` from `pipeline.pack.binary`.",
+          "description": "The command that runs the app, in the app folder. Default: `./<binary>`.",
           "type": [
             "string",
             "null"
           ]
+        },
+        "systemd": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Systemd"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A systemd unit. Use exactly one of `systemd`, `pm2` or `oxmgr`."
+        }
+      },
+      "type": "object"
+    },
+    "Release": {
+      "additionalProperties": false,
+      "description": "The whole release: files that belong to no app, and the release commands.",
+      "properties": {
+        "exclude": {
+          "default": [],
+          "description": "Patterns left out of `files`, matched against the path from the project folder.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "files": {
+          "default": [],
+          "description": "Files shipped beside the apps, each at its path from the project folder.",
+          "items": {
+            "$ref": "#/definitions/FileEntry"
+          },
+          "type": "array"
+        },
+        "shared": {
+          "default": [],
+          "description": "Folders kept across releases, each at its path in the release.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "steps": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ReleaseSteps"
+            }
+          ],
+          "default": {
+            "backup": {
+              "exclude": [],
+              "include": [],
+              "keep": null,
+              "local": [],
+              "server": []
+            },
+            "build": {
+              "local": [],
+              "server": [],
+              "version_from": null
+            },
+            "done": {
+              "local": [],
+              "server": []
+            },
+            "failed": {
+              "local": [],
+              "server": []
+            },
+            "health": {
+              "local": [],
+              "server": [],
+              "timeout_secs": 20,
+              "url": null
+            },
+            "nginx": {
+              "local": [],
+              "server": []
+            },
+            "preflight": {
+              "local": [],
+              "requires": [],
+              "server": []
+            },
+            "restart": {
+              "local": [],
+              "server": []
+            },
+            "rollback": {
+              "ask_secs": null,
+              "keep_failed": null,
+              "local": [],
+              "mode": null,
+              "server": []
+            },
+            "setup": {
+              "local": [],
+              "server": []
+            },
+            "switch": {
+              "local": [],
+              "server": []
+            },
+            "upload": {
+              "local": [],
+              "server": []
+            }
+          },
+          "description": "The release commands and settings of every step."
+        }
+      },
+      "type": "object"
+    },
+    "ReleaseSteps": {
+      "additionalProperties": false,
+      "description": "The release steps, with the settings each takes.",
+      "properties": {
+        "backup": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/BackupStep"
+            }
+          ],
+          "default": {
+            "exclude": [],
+            "include": [],
+            "keep": null,
+            "local": [],
+            "server": []
+          },
+          "description": "Step 5."
+        },
+        "build": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/BuildStep"
+            }
+          ],
+          "default": {
+            "local": [],
+            "server": [],
+            "version_from": null
+          },
+          "description": "Step 2."
+        },
+        "done": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Step"
+            }
+          ],
+          "default": {
+            "local": [],
+            "server": []
+          },
+          "description": "Step 10."
+        },
+        "failed": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Step"
+            }
+          ],
+          "default": {
+            "local": [],
+            "server": []
+          },
+          "description": "Step 12."
+        },
+        "health": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/HealthStep"
+            }
+          ],
+          "default": {
+            "local": [],
+            "server": [],
+            "timeout_secs": 20,
+            "url": null
+          },
+          "description": "Step 9."
+        },
+        "nginx": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Step"
+            }
+          ],
+          "default": {
+            "local": [],
+            "server": []
+          },
+          "description": "Step 8."
+        },
+        "preflight": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PreflightStep"
+            }
+          ],
+          "default": {
+            "local": [],
+            "requires": [],
+            "server": []
+          },
+          "description": "Step 1."
+        },
+        "restart": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Step"
+            }
+          ],
+          "default": {
+            "local": [],
+            "server": []
+          },
+          "description": "Step 7."
+        },
+        "rollback": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/RollbackStep"
+            }
+          ],
+          "default": {
+            "ask_secs": null,
+            "keep_failed": null,
+            "local": [],
+            "mode": null,
+            "server": []
+          },
+          "description": "Step 11."
+        },
+        "setup": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Step"
+            }
+          ],
+          "default": {
+            "local": [],
+            "server": []
+          },
+          "description": "Step 4."
+        },
+        "switch": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Step"
+            }
+          ],
+          "default": {
+            "local": [],
+            "server": []
+          },
+          "description": "Step 6."
+        },
+        "upload": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Step"
+            }
+          ],
+          "default": {
+            "local": [],
+            "server": []
+          },
+          "description": "Step 3."
+        }
+      },
+      "type": "object"
+    },
+    "RollbackMode": {
+      "description": "What an automatic rollback does.",
+      "oneOf": [
+        {
+          "const": "ask",
+          "description": "Ask whether to roll back; with no answer in time, roll back.",
+          "type": "string"
+        },
+        {
+          "const": "auto",
+          "description": "Roll back at once.",
+          "type": "string"
+        },
+        {
+          "const": "off",
+          "description": "Never roll back on its own.",
+          "type": "string"
+        }
+      ]
+    },
+    "RollbackStep": {
+      "additionalProperties": false,
+      "description": "Step 11: when putting an older release back.",
+      "properties": {
+        "ask_secs": {
+          "default": null,
+          "description": "How long `ask` waits before rolling back. Default: 30.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "keep_failed": {
+          "default": null,
+          "description": "Keep the failed release folder to inspect it. Default: false.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "local": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CommandList"
+            }
+          ],
+          "default": [],
+          "description": "On your PC."
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RollbackMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What an automatic rollback does. Default: ask."
+        },
+        "server": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CommandList"
+            }
+          ],
+          "default": [],
+          "description": "On the server."
+        }
+      },
+      "type": "object"
+    },
+    "Server": {
+      "additionalProperties": false,
+      "description": "Where the deploy runs.",
+      "properties": {
+        "dir": {
+          "description": "The server folder that holds `current`, `releases/`, `backups/` and `shared/`. Absolute, such as `/opt/shop`.",
+          "type": "string"
+        },
+        "ssh": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SshTarget"
+            }
+          ],
+          "description": "How to log in."
         }
       },
       "required": [
-        "name"
+        "ssh",
+        "dir"
       ],
-      "type": "object"
-    },
-    "Setup": {
-      "additionalProperties": false,
-      "properties": {
-        "check": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/ServerOnly"
-            }
-          ],
-          "description": "Commands that must pass after `run`, such as `node --check dist/main.js`."
-        },
-        "run": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/ServerOnly"
-            }
-          ],
-          "description": "Commands in the new release on the server, such as `npm ci --omit=dev` or migrations."
-        }
-      },
-      "type": "object"
-    },
-    "Sources": {
-      "additionalProperties": false,
-      "description": "Each path keeps its place inside the release.",
-      "properties": {
-        "deploy": {
-          "default": [],
-          "description": "Relative to this shipdeck.yaml's folder, for files that belong to this deployment, such as `.env`. A file here replaces a project file at the same path.",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "project": {
-          "default": [],
-          "description": "Relative to `project`, such as `dist` or `\"src/**/*.{js,json}\"`. `.` is the whole project.",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
       "type": "object"
     },
     "SshTarget": {
@@ -697,7 +1180,7 @@
         },
         "shell_env": {
           "default": true,
-          "description": "Give server commands the environment a terminal has: shipdeck starts the login shell once per connection, so `~/.bashrc`, `~/.zshrc` or `config.fish` set up PATH (nvm and the like). Default: true.",
+          "description": "Give server commands the environment a login shell has: PATH from nvm and the like. Default: true.",
           "type": "boolean"
         },
         "user": {
@@ -714,166 +1197,258 @@
       ],
       "type": "object"
     },
-    "StaticApp": {
+    "Step": {
       "additionalProperties": false,
-      "description": "Static files for one app in a shared release.",
+      "description": "Steps that only take commands.",
       "properties": {
-        "root": {
-          "description": "Folder inside the app's release folder to serve, such as `dist`.",
-          "type": "string"
+        "local": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CommandList"
+            }
+          ],
+          "default": [],
+          "description": "On your PC."
+        },
+        "server": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CommandList"
+            }
+          ],
+          "default": [],
+          "description": "On the server."
         }
       },
-      "required": [
-        "root"
-      ],
       "type": "object"
     },
-    "StaticSite": {
+    "Systemd": {
       "additionalProperties": false,
-      "description": "A static site: files in a release, served by a web server.",
+      "description": "A systemd unit: the built-in one with your own properties, or your own file.",
       "properties": {
-        "root": {
-          "description": "Folder inside the release to serve, such as `dist`. Relative, and not the release root.",
-          "type": "string"
+        "instances": {
+          "default": null,
+          "description": "Planned, not supported yet. An error when set.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "options": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SystemdOptions"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Unit properties by section, in systemd's own spelling. A property replaces the built-in unit's line of that name, or is added."
+        },
+        "template": {
+          "default": null,
+          "description": "A whole unit file on your PC. It replaces `options`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "user": {
+          "default": null,
+          "description": "The user the unit runs as. Default: the SSH user.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
-      "required": [
-        "root"
-      ],
       "type": "object"
+    },
+    "SystemdOptions": {
+      "additionalProperties": false,
+      "description": "The systemd unit sections `options` writes into.",
+      "properties": {
+        "Install": {
+          "additionalProperties": true,
+          "default": {},
+          "description": "`[Install]` properties.",
+          "type": "object"
+        },
+        "Service": {
+          "additionalProperties": true,
+          "default": {},
+          "description": "`[Service]` properties.",
+          "type": "object"
+        },
+        "Unit": {
+          "additionalProperties": true,
+          "default": {},
+          "description": "`[Unit]` properties.",
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "Tls": {
+      "anyOf": [
+        {
+          "const": "none",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "email": {
+              "description": "Where Let's Encrypt sends its notices.",
+              "type": "string"
+            },
+            "provider": {
+              "description": "Only `letsencrypt` is known.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "provider",
+            "email"
+          ],
+          "type": "object"
+        }
+      ],
+      "description": "`none` for plain HTTP, or a map with `provider` and `email`."
     }
   },
+  "description": "The project file (shipdeck.yaml or .shipdeck) and the deploy file.",
   "oneOf": [
     {
+      "$id": "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.1/docs/schema/deploy.schema.json",
+      "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
-      "description": "`shipdeck.yaml` as written: a service, a static site, or neither (an error).",
+      "description": "The project file: its deploys, by name, and the deploy file of each.",
       "properties": {
-        "dir": {
-          "description": "The server folder that holds `current`, `releases/`, `backups/` and `shared/`. Absolute, such as `/opt/my-api`.",
-          "type": "string"
-        },
-        "name": {
-          "description": "The name shipdeck shows, such as `My API (prod)`.",
-          "type": "string"
-        },
-        "pipeline": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/Pipeline"
-            }
-          ],
-          "description": "The steps of a deploy that take settings."
-        },
-        "project": {
-          "default": ".",
-          "description": "Your source folder, relative to this shipdeck.yaml.",
-          "type": "string"
-        },
-        "service": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/Service"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "A process on the server: a systemd unit or a PM2 app."
-        },
-        "ssh": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/SshTarget"
-            }
-          ],
-          "description": "How to log in to the server."
-        },
-        "static": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/StaticSite"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Static files on the server, served by nginx. Use this instead of `service`."
+        "deploys": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Deploy names and the deploy file of each, a path on your PC.",
+          "type": "object"
         }
       },
       "required": [
-        "name",
-        "dir",
-        "ssh"
+        "deploys"
       ],
-      "title": "shipdeck.yaml",
+      "title": "project file",
       "type": "object"
     },
     {
+      "$id": "https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.9.1/docs/schema/deploy.schema.json",
+      "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
-      "description": "The shared settings and app definitions of one monorepo deploy.",
+      "description": "One whole deploy: the server, the release and every app.",
       "properties": {
         "apps": {
           "additionalProperties": {
-            "$ref": "#/definitions/AppDefinition"
+            "$ref": "#/definitions/App"
           },
-          "description": "Named apps, inline or in a separate file.",
+          "description": "The apps of the deploy, by name. They run in name order.",
           "type": "object"
         },
-        "dir": {
-          "description": "The server folder that holds the single release and its backups.",
-          "type": "string"
-        },
         "name": {
-          "description": "The deploy's name.",
+          "description": "The deploy's name; the default process name starts with it.",
           "type": "string"
         },
-        "pipeline": {
+        "release": {
           "allOf": [
             {
-              "$ref": "#/definitions/Pipeline"
-            }
-          ],
-          "default": {},
-          "description": "Global pipeline settings inherited by apps."
-        },
-        "process_manager": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/ProcessManager"
+              "$ref": "#/definitions/Release"
             }
           ],
           "default": {
-            "app": null,
-            "ecosystem": null,
-            "name": "systemd",
-            "options": {},
-            "run_as": null
+            "exclude": [],
+            "files": [],
+            "shared": [],
+            "steps": {
+              "backup": {
+                "exclude": [],
+                "include": [],
+                "keep": null,
+                "local": [],
+                "server": []
+              },
+              "build": {
+                "local": [],
+                "server": [],
+                "version_from": null
+              },
+              "done": {
+                "local": [],
+                "server": []
+              },
+              "failed": {
+                "local": [],
+                "server": []
+              },
+              "health": {
+                "local": [],
+                "server": [],
+                "timeout_secs": 20,
+                "url": null
+              },
+              "nginx": {
+                "local": [],
+                "server": []
+              },
+              "preflight": {
+                "local": [],
+                "requires": [],
+                "server": []
+              },
+              "restart": {
+                "local": [],
+                "server": []
+              },
+              "rollback": {
+                "ask_secs": null,
+                "keep_failed": null,
+                "local": [],
+                "mode": null,
+                "server": []
+              },
+              "setup": {
+                "local": [],
+                "server": []
+              },
+              "switch": {
+                "local": [],
+                "server": []
+              },
+              "upload": {
+                "local": [],
+                "server": []
+              }
+            }
           },
-          "description": "The default process manager for apps."
+          "description": "Settings for the whole release; each app adds its own."
         },
-        "project": {
-          "default": ".",
-          "description": "The repository root, relative to shipdeck.yaml.",
-          "type": "string"
-        },
-        "ssh": {
+        "server": {
           "allOf": [
             {
-              "$ref": "#/definitions/SshTarget"
+              "$ref": "#/definitions/Server"
             }
           ],
-          "description": "The server where every app runs."
+          "description": "The server it runs on."
         }
       },
       "required": [
         "name",
-        "ssh",
-        "dir",
+        "server",
         "apps"
       ],
-      "title": "MonorepoConfig",
+      "title": "deploy file",
       "type": "object"
     }
   ],
-  "title": "shipdeck.yaml"
+  "title": "shipdeck"
 }

@@ -1,325 +1,217 @@
 ---
 title: Troubleshooting
-description: What each common shipdeck message means and what to do about it, from launch to rollback.
+description: What the common messages mean, and what to do about them.
 ---
 
-The messages below are copied from shipdeck 0.3.0. Text in angle brackets, such as `<dir>`, stands for the value shipdeck fills in. During a deploy, the full error is always in the Log panel as a line marked `✘`; the step and the banner show only its first line.
+Every message below is what shipdeck prints. The fix follows the message.
 
-## Before the screen opens
-
-These stop shipdeck before the terminal UI starts. It prints the message and exits with code 1 (or 2 for a flag mistake).
+## Starting up
 
 <Accordions>
-  <Accordion title="✘ shipdeck did not start: 1 shipdeck.yaml file has 2 problems">
-    At least one `shipdeck.yaml` under the deploy root has a mistake. shipdeck reads every file before it starts, and refuses to start at all if any file has a problem, even when the other deployables are fine. Each problem shows the file, line and column, a caret under the spot, and a `= help:` hint:
-
-    ```txt
-    ✘ shipdeck did not start: 1 shipdeck.yaml file has 1 problem
-
-    api/shipdeck.yaml
-      error: build cannot run commands on the server
-        ┌─ deploy/api/shipdeck.yaml:7:7
-        │
-      6 │     run:
-      7 │       server: make
-        │       ^^^^^^ build runs on your PC only
-        │
-        = help: the server sets up the release in `pipeline.setup.run.server`
-    ```
-
-    Fix the problems and run shipdeck again. A YAML syntax error (Windows line endings, bad indentation, a duplicate key, a second `---` document) shows only the first problem in that file. Fix it and run again to see the rest.
-
-    The report is coloured on a terminal. Set `NO_COLOR` or redirect stderr to get plain text. [Config problems](/docs/reference/config-problems) lists every message.
+  <Accordion title="✘ shipdeck did not read the deploy: 1 shipdeck file has 2 problems">
+    A config file has a mistake. shipdeck reads every file it needs before it starts, and
+    refuses to start at all if any has a problem. Each problem shows the file, line and column,
+    a caret under the spot, and a `= help:` hint. See
+    [Config problems](/docs/reference/config-problems).
   </Accordion>
-
-  <Accordion title="Error: <path> is not a folder">
-    The argument must be the deploy root: the folder that holds one folder per deployable, such as `./scripts/deploy`. Pass that folder, not a single deployable's folder and not a `shipdeck.yaml` file.
+  <Accordion title="has no project file; expected shipdeck.yaml or .shipdeck">
+    shipdeck reads the project file in the folder you run it in. Run it in that folder, or name
+    one deploy file with `--shipdeckfile=<path>`, which needs no project file.
   </Accordion>
-
+  <Accordion title="this folder has both shipdeck.yaml and .shipdeck">
+    Keep one project file name. `shipdeck.yml` is not read at all.
+  </Accordion>
+  <Accordion title="unknown key `service`">
+    Config format 2 has no `service`. A process is `apps.<app>.process`, with one of `systemd`,
+    `pm2` or `oxmgr` inside. See [Upgrading](/docs/guides/upgrading#config-format-2) for every
+    mapped key.
+  </Accordion>
   <Accordion title="Error: the key file <path> does not exist">
-    The path given to `--key` does not exist. shipdeck expands a leading `~` itself, so `--key=~/.ssh/id_ed25519` works too. Check the spelling, and pass the private key, not the `.pub` file.
+    `--key` names a file that is not there. Check the path; shipdeck expands a leading `~`.
   </Accordion>
-
   <Accordion title="error: the argument '--key <PATH>' cannot be used with '--password <PASSWORD>'">
-    Pick one login method. With neither flag, shipdeck tries the `IdentityFile` of the `~/.ssh/config` alias, then asks for a password. See [SSH and login](/docs/guides/ssh).
+    Pass one login method. See [Login](/docs/guides/ssh).
   </Accordion>
-
-  <Accordion title="No deployables yet">
-    The screen opened but found nothing to deploy. shipdeck looks only at the **direct** subfolders of the deploy root, and only at folders with a `shipdeck.yaml` or `shipdeck.yml` inside. A `shipdeck.yaml` in the root itself, or two levels down, is ignored. Check the path you passed and the folder layout in [Deploy root](/docs/guides/deploy-root).
-  </Accordion>
-
-  <Accordion title="shipdeck.yaml has Windows line endings (CRLF); shipdeck reads LF only">
-    The file was saved with CRLF line endings, usually on Windows. Save it with LF. In Git, a `.gitattributes` line `*.yaml text eol=lf` keeps it that way on Windows checkouts.
-  </Accordion>
-
-  <Accordion title="this folder has both shipdeck.yaml and shipdeck.yml">
-    Keep one of them. shipdeck will not guess which one you meant.
-  </Accordion>
-
-  <Accordion title="`ssh.user` is not set, and ~/.ssh/config has no User for <host>">
-    shipdeck needs a user to log in as. Add `user:` under `ssh` in `shipdeck.yaml`, or a `User` line to the alias in `~/.ssh/config`. This check runs only once the rest of the file is clean, so it can appear after you fix other problems.
-  </Accordion>
-
-  <Accordion title="~/.ssh/config reaches <host> through `ProxyJump …`, which shipdeck cannot follow yet">
-    The alias uses `ProxyJump` or `ProxyCommand`, which shipdeck 0.3.0 does not support. Put the server's own address in `ssh.host` instead. Note that `Match` blocks in `~/.ssh/config` are never applied, while `Include` files are read.
+  <Accordion title="No deploys yet">
+    The project file has no `deploys:`, or the list is empty. Add one, or pass
+    `--shipdeckfile`.
   </Accordion>
 </Accordions>
 
 ## Connecting
 
-Connection problems show on the Deployables screen as a `✘` line under the deployable, and in the Log panel when they happen during a deploy.
+Connection problems show on the Deploys screen as a `✘` line under the deploy, and in the Log
+panel when they happen during a deploy.
 
 <Accordions>
   <Accordion title="Password prompts when shipdeck connects">
-    shipdeck connects when you press `c` on a deployable, or when a deploy, the Releases screen or a rollback needs the server, so host key and password prompts appear then. With no key, it asks once per `user@host` (with `:port` added when the port is not 22) and keeps the answer in memory for this run only; it is never written to disk. To avoid the prompt, pass `--key` or add an `IdentityFile` to the alias. shipdeck does not use ssh-agent and does not try default key files that no `IdentityFile` names.
+    shipdeck connects when you press `c` on a deploy, or when a deploy, the Releases screen or a
+    rollback needs the server. With no key it asks once per `user@host` and keeps the answer in
+    memory for this run only. To avoid the prompt, pass `--key` or add an `IdentityFile` to the
+    alias. shipdeck does not use ssh-agent.
   </Accordion>
-
   <Accordion title="connecting to <user>@<host> timed out after 15s">
-    shipdeck gives each connection 15 seconds. Check that the server is up, that the address and port are right (`ssh.port`, or the alias's `Port`), and that a firewall allows SSH from your PC. Try `ssh` to the same host by hand. Press `c` on the Deployables screen to try again.
-
-    The host key check is part of connecting, so the time the **New server** dialog stays open counts toward the 15 seconds. If you read the fingerprint for longer than that, the connection times out. Press `c` to connect again.
+    The TCP connection did not open. Check the address, the port, and the server's firewall.
   </Accordion>
-
   <Accordion title="HOST KEY CHANGED for <host>: it differs from line <n> of ~/.ssh/known_hosts">
-    The server presented a different key than the one saved in `~/.ssh/known_hosts`. shipdeck never asks in this case: it refuses to connect, because someone could be intercepting the connection.
-
-    If you know the server was reinstalled or its keys were regenerated, remove the line named in the message from `~/.ssh/known_hosts` and connect again. shipdeck then shows the **New server** dialog, where you can compare the new fingerprint.
+    The server shows a different key of the same type. Someone could be intercepting the
+    connection. If the server was reinstalled, remove that line or run `ssh-keygen -R <host>`,
+    then connect again.
   </Accordion>
-
   <Accordion title="the host key of <host> was not trusted">
-    You answered `n` (or `esc`) in the **New server** dialog. Compare the fingerprint with `ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub` on the server, then press `c` to connect again and answer `y` if it matches.
+    You refused the new key. Connect again and compare its fingerprint with
+    `ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub` on the server.
   </Accordion>
-
-  <Accordion title="<host> offered a host certificate; only plain host keys are supported">
-    The server authenticates with an SSH host certificate. shipdeck 0.3.0 supports only plain host keys.
+  <Accordion title="~/.ssh/config reaches <host> through `ProxyJump …`, which shipdeck cannot follow yet">
+    Put the server's own address in `server.ssh.host`.
   </Accordion>
-
   <Accordion title="<host> refused the key <path> for user <user>">
-    The server did not accept that key for that user. Check that the public half is in the user's `~/.ssh/authorized_keys` on the server. If you created the user with `server-setup.sh`, check that `--key` was the public half of the key you log in with (for example `~/.ssh/id_ed25519.pub`).
+    The server does not accept that key for that user. Add the public key to
+    `~/.ssh/authorized_keys` on the server.
   </Accordion>
-
-  <Accordion title="<host> refused the password for user <user> 3 times">
-    shipdeck allows three attempts per prompt. Check the user name in `ssh.user`, and that the server allows password login for it. A user created by the setup script without `--key` has no password until you set one with `passwd`.
-  </Accordion>
-
-  <Accordion title="login to <user@host> cancelled">
-    You pressed `esc` in the password dialog. Press `c` on the Deployables screen to connect again.
+  <Accordion title="<user> may not run: sudo <command>">
+    The sudo rule is missing or older than this shipdeck. Run `shipdeck setup`, or
+    scripts/server-setup.sh as root on the server. See
+    [Server access](/docs/guides/server-access).
   </Accordion>
 </Accordions>
 
-## Preflight
-
-Preflight checks your PC and the server before anything is built. A failure here changes nothing on the live release. On a first deploy, the app folder may already have been created.
+## The server
 
 <Accordions>
-  <Accordion title="<user> may not run: sudo <command>">
-    The SSH user is not `root` and lacks passwordless `sudo` for a command shipdeck needs. shipdeck logs one such line per missing command, then stops with `<user> may not run <N> of the commands shipdeck needs as root (sudo, without a password)`.
-
-    The five commands are:
-
-    ```txt
-    systemctl daemon-reload
-    systemctl enable <service>
-    systemctl restart <service>
-    install -m 0644 <dir>/current/<service>.service /etc/systemd/system/<service>.service
-    journalctl -u <service> -n 30 --no-pager
-    ```
-
+  <Accordion title="the server has no zstd; install it (apt install zstd, or dnf install zstd)">
+    Preflight names the package. `tar`, `zstd` and `sha256sum` are how releases are unpacked and
+    checked.
   </Accordion>
-
-  <Accordion title="the server has no <tool>, which shipdeck unpacks and checks releases with">
-    shipdeck itself needs `tar`, `zstd` and `sha256sum` on the server. Install what the message names: `apt install zstd`, or `dnf install zstd`; `sha256sum` comes with `coreutils`.
+  <Accordion title="<user> cannot create <dir>, and has no sudo without a password">
+    The deploy folder does not exist and the user cannot make it. Run `shipdeck setup`, or create
+    it by hand: `sudo install -d -o <user> <dir>`.
   </Accordion>
-
-  <Accordion title="<user> may not run sudo <command>">
-    `:stop`, `:start` or `:logs` in the TUI needs a sudo right that a deploy does not: `systemctl stop <service>`, `systemctl start <service>` or `journalctl -u <service> -f -n 200 --no-pager`. A server set up before shipdeck had these lacks them, and still deploys. See [Server access](/docs/guides/server-access).
-  </Accordion>
-
-  <Accordion title="<user> may not create <dir>, and has no sudo without a password">
-    On a first deploy shipdeck creates `dir`. The user could not create it, and could not use `sudo -n mkdir` either. Create the folder on the server and give it to the deploy user.
-  </Accordion>
-
   <Accordion title="<user> cannot write to <dir>">
-    `dir` exists but the deploy user cannot write to it. Change its owner on the server, for example `sudo chown deploy: /opt/my-api`.
+    The folder exists but belongs to someone else. Give it to the deploy user:
+    `sudo chown -R <user> <dir>`.
   </Accordion>
-
   <Accordion title="<user> cannot find <tool> on the server">
-    A program named in `service.start` (a bare name such as `node`, or an absolute path) or in `pipeline.preflight.requires` is not on the server's `PATH`. Install it, or fix `service.start` and `pipeline.preflight.requires`. A program inside the release, such as `./my-api`, is not looked up.
+    The program is not on the PATH the server commands see. Install it system-wide, or list it
+    in `release.steps.preflight.requires` and fix the PATH. With a version manager, keep
+    `server.ssh.shell_env` on.
   </Accordion>
-
-  <Accordion title="<tool> is at <path>, but the built-in unit hides home folders from the service (ProtectHome=true)">
-    The start program lives under `/home/` or `/root/`, typically Node.js installed with nvm. The built-in systemd unit sets `ProtectHome=true`, so the service could not reach it. Install the tool system-wide, for example in `/usr/bin` or `/usr/local/bin`, or add a `service.template` without `ProtectHome`. See [Service template](/docs/reference/service-template).
+  <Accordion title="<tool> is at /home/..., but the built-in unit hides home folders from the service (ProtectHome=true)">
+    The built-in systemd unit sets `ProtectHome=true`. Install the runtime system-wide (for
+    example in `/usr/bin`), use PM2, or write your own `process.systemd.template` without
+    ProtectHome. See [systemd](/docs/man/systemd).
   </Accordion>
-
   <Accordion title="only <size> free on the server">
-    Preflight needs at least 100 MiB free on the disk that holds `dir`. Free some space, or lower `pipeline.backup.keep` so fewer old releases stay on the server.
+    A release needs room for the archive and the unpacked files. Free some space, or move
+    `server.dir` to a bigger volume.
   </Accordion>
-
-  <Accordion title="pipeline.pack.files.include.deploy in <dir>: .env (not found)">
-    A file listed in `pipeline.pack.files.include.deploy` is missing from the deploy folder. After a fresh clone this is usually the gitignored `.env`. The **Deploy** confirmation already warns about it in red. Create the file, or let a `pipeline.preflight.run.local` command create it. Literal paths report `(not found)`, globs `(matched nothing)`.
-
-    `shipdeck.yaml`, `shipdeck.yml` and `service.template` at the top of the deploy folder are never shipped, so listing them also gives `(not found)`.
+  <Accordion title="the server has <free> free; this release needs about <size>">
+    Same as above, checked with the packed release's real size.
   </Accordion>
-
-  <Accordion title="the project folder <path> does not exist (project: <value>)">
-    `project` is relative to the folder that holds `shipdeck.yaml`, not to where you run shipdeck. For `scripts/deploy/my-api-prod/shipdeck.yaml` with the source at the repository root, that is `project: ../../..`.
+  <Accordion title="the systemd service <process> is still running and would clash with PM2">
+    An older systemd unit still runs the app. Stop it: `sudo systemctl disable --now <process>`.
   </Accordion>
-
-  <Accordion title="rendering <path>: unknown placeholder {{x}}">
-    Your `service.template` uses a placeholder shipdeck does not know. The known ones are `name`, `tag`, `id`, `version`, `git`, `dir`, `service`, `user`, `exec`, `binary`, `env` and `workdir`. `{{binary}}` has no value when there is no `pipeline.pack.binary`; use `{{exec}}` instead.
-  </Accordion>
-
-  <Accordion title="`<command>` exited with code <n> on the server">
-    One of your `pipeline.preflight.run.server` commands failed. Its output is in the Log panel just above. Server commands run in `dir` with `set -e`, so the first failing command in a line ends it. Local commands report the same message without `on the server`.
+  <Accordion title="a deploy or rollback is already running">
+    shipdeck runs one operation at a time per project. Wait for it, or inspect it with
+    `shipdeck work`. A second operation is refused before anything changes.
   </Accordion>
 </Accordions>
 
-## Build and pack
+## Config and files
+
+<Accordions>
+  <Accordion title="these file patterns matched nothing: dist (not found)">
+    A `files` entry found nothing. The build did not produce it, or the path is wrong. Run the
+    build, or fix the path; `shipdeck tree` prints the same list without connecting.
+  </Accordion>
+  <Accordion title="<text> is outside the project folder, so it needs `to`">
+    A `./`, `../` or absolute path in `release.files` has no place of its own. Give it one:
+    `{ path: ./prod/config.json, to: config/prod.json }`.
+  </Accordion>
+  <Accordion title="<text> is outside the app's source, so it needs `to`">
+    The same for an app file outside `apps.<app>.source`.
+  </Accordion>
+  <Accordion title="the binary target/release/api is a folder; `binary` names one file">
+    `binary` takes one file. Point it at the file, or use `files` for a folder.
+  </Accordion>
+  <Accordion title="apps/api/api would hold two files: a generated file and ./other/api">
+    A binary and a file land at the same path. Rename one, or give the binary a `to`.
+  </Accordion>
+  <Accordion title="the project folder <path> does not exist">
+    The folder shipdeck runs in is gone. Run it where the project file is.
+  </Accordion>
+  <Accordion title="app api: the source folder <path> does not exist">
+    `apps.<app>.source` points at a folder that is not there. With `source: .` the app uses the
+    project folder.
+  </Accordion>
+  <Accordion title="app api: the unit template <path> does not exist">
+    `process.systemd.template` names a file on your PC. Fix the path, or remove the line to use
+    the built-in unit.
+  </Accordion>
+  <Accordion title="nginx management is not built yet / oxmgr is not built yet">
+    Both are parsed and checked, not built. Remove `nginx:` or the `oxmgr:` process for now.
+  </Accordion>
+  <Accordion title="1.4 is outside the project folder, so it needs `to`">
+    A path in `release.files` that is not from the project folder needs a place. Give it `to`.
+  </Accordion>
+</Accordions>
+
+## Build and upload
 
 <Accordions>
   <Accordion title="the build failed: `<command>` exited with code <n>">
-    A `pipeline.build.run.local` command failed on your PC. Read its output in the Log panel. Each item of a command list runs in its own shell, so a `cd` or `export` in one item does not carry to the next; join them with `&&` in one item.
+    A `build.local` command failed. Run it yourself in the project folder to see why.
   </Accordion>
-
   <Accordion title="the binary needs glibc <need>, but the server has <have>">
-    The binary was linked against a newer glibc than the server has, so it would not start there. Build against the server's glibc, as the message suggests:
-
-    ```sh
-    cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31
-    ```
-
-    Use the version the message names. If the server has no glibc at all (for example Alpine), the message says so; build a static musl binary instead.
+    Build against the server's glibc (for example `cargo zigbuild --target x86_64-unknown-linux-gnu.<have>`),
+    or build a static musl binary.
   </Accordion>
-
   <Accordion title="the binary is built for <arch>, but the server is <arch>">
-    The binary's CPU architecture does not match the server's. Build for the server's target, for example `aarch64-unknown-linux-gnu` for an ARM server, and point `pipeline.pack.binary` at that output.
+    Build for the server's CPU. Preflight compares the two before anything ships.
   </Accordion>
-
-  <Accordion title="reading <path>: … (after the build)">
-    `pipeline.pack.binary` names a file the build did not produce. Check the path against your build's output folder; with `--target`, cargo writes to `target/<target>/release/`.
-  </Accordion>
-
-  <Accordion title="pipeline.pack.files.include.project in <dir>: dist (not found)">
-    A project pattern matched nothing after the build. Check that the build writes to that path, and that the path is relative to `project`. A pattern inside a folder you excluded can also report `(matched nothing)`, because excluded folders are not searched.
-  </Accordion>
-
-  <Accordion title="<path> is packed, but service.shared links <folder> to shared/<folder> on the server">
-    A file inside a `service.shared` folder was selected for the release. Shared folders live in `shared/` on the server and are linked into every release, so they cannot also be shipped. Leave the path out with `pipeline.pack.files.exclude`.
-  </Accordion>
-
-  <Accordion title="<name> would be in the release twice: pipeline.pack.binary, and <path> from the project folder">
-    A file pattern picked a file with the same name as the binary at the release root. Exclude it, or narrow the pattern.
-  </Accordion>
-
-  <Accordion title="the server has <free> free; this release needs about <size>">
-    Pack checks that the server has room for about twice the archive plus the release's whole size, files copied from the live release included. Free space on the server or lower `pipeline.backup.keep`.
-  </Accordion>
-
-  <Accordion title="Nothing changed since <id>, the live release">
-    The new release's fingerprint equals the live one's: the same files, modes and links, the same service file and the same `shipdeck.yaml`. The screen asks `Deploy anyway?`; No stops with nothing on the server touched. `shipdeck deploy` stops with exit code `6` instead; add `--allow-unchanged` to deploy the duplicate.
-  </Accordion>
-
-  <Accordion title="Every file is sent, though most did not change">
-    The log says why on an `ℹ` line in Pack: `nothing is live yet, so every file is sent`, or the error the server gave while hashing `current/` (for example a file the deploy user cannot read), followed by `every file is sent instead`. Files whose names hold a newline, a carriage return or a backslash are always sent.
-  </Accordion>
-
   <Accordion title="<path> changed while the release was packed">
-    A file changed on your PC between hashing and packing, so the receipt would not describe what was sent. Wait until nothing writes to it (a watcher or a second build, for example) and deploy again.
+    Something wrote to a shipped file during the deploy. Stop it (a watcher, a dev server), then
+    deploy again.
   </Accordion>
-
-  <Accordion title="Version errors such as <file> has no package.version">
-    shipdeck names the release from the version in `Cargo.toml`, `package.json`, `pyproject.toml` or `VERSION`, in that order, else the latest git tag, else `0.0.0`. Point `pipeline.build.version_from` at the right file, or add the version to it. A `Cargo.toml` with `version.workspace = true` needs a workspace `Cargo.toml` above it that sets `workspace.package.version`.
+  <Accordion title="Nothing changed since <release>, the live release">
+    The release's content equals the live one. Nothing was deployed; exit code 6. Use
+    `--allow-unchanged` to deploy a duplicate anyway.
   </Accordion>
-</Accordions>
-
-## Unpack
-
-<Accordions>
-  <Accordion title="<n> files copied from current did not match: <paths>; sending the whole release">
-    A warning in Unpack: a file of the live release changed between the hashing in Pack and the copy, so the check with `sha256sum -c` failed. shipdeck removed the half-made release and sends the whole release once; the step then ends with `verified · sent whole`. If even that does not match, the deploy stops with `releases/<id> does not match what was packed` and the live release was not touched.
-  </Accordion>
-</Accordions>
-
-## Backup
-
-<Accordions>
-  <Accordion title="pipeline.backup.files.include: <pattern> matched nothing in releases/<id>">
-    A warning, not a failure: the backup was made without it. Check the pattern against what the release holds after setup; patterns are relative to `releases/<id>`, not to `project`.
-  </Accordion>
-
-  <Accordion title="The backup step failed">
-    shipdeck removed the new release and its backup, and the old release keeps serving. The error says which part failed: listing the release, sending the file list, or `tar -I zstd` on the server. A full disk is the usual cause; free space or lower `pipeline.backup.keep`. A file whose name is not UTF-8 cannot go into a backup: rename it, or leave it out with `pipeline.backup.files.exclude`.
+  <Accordion title="unfinished release files were kept for inspection">
+    An upload or unpack failed. Look with `shipdeck work`, then remove the files with
+    `--cleanup`. The live release never stopped serving.
   </Accordion>
 </Accordions>
 
 ## After the switch
 
-A failure at Switch, Restart or Health means the new release was already made current. shipdeck logs `last journal lines:` followed by the last 30 lines of `journalctl -u <service>`. Start there.
-
 <Accordions>
-  <Accordion title="not healthy after 20s: systemd says <state>; the health url said: …">
-    The service did not reach three healthy probes in a row within `pipeline.health.timeout_secs` (default 20). A probe is healthy when `systemctl is-active` says `active` and, if set, `pipeline.health.url` answers. The URL is fetched on the server with `curl -fsS --max-time 3`, or `wget -q -T 3` when there is no curl, so `127.0.0.1` means the server itself. curl does not follow redirects here and treats only a 4xx or 5xx status as a failure, so a 3xx answer counts as healthy. With curl, the reason after `the health url said:` is curl's own error line.
-
-    Check the journal lines in the log for a crash or a wrong port. If the app needs longer to start, raise `timeout_secs`.
+  <Accordion title="app api was not healthy within 20s">
+    The `health.url` or your health commands did not pass in time. The URL is fetched from the
+    server, so check the port and that the app listens on `127.0.0.1` or `0.0.0.0`. The release
+    that was live before is put back according to `rollback.mode`.
   </Accordion>
-
-  <Accordion title="the service crashed and was restarted <n> time(s) by systemd">
-    systemd restarted the service during the health wait, so shipdeck failed the step at once without waiting for the timeout. The journal lines show why it exited. Common causes: a missing `.env` or a setting in it, a port already in use, or writing outside `dir/shared` (the built-in unit makes the rest of the system read-only).
+  <Accordion title="this release was made before config format 2; deploy again">
+    A rollback target has no `.shipdeck/settings.json`, so shipdeck cannot read what its setup
+    needs. Deploy that version again with this shipdeck.
   </Accordion>
-
-  <Accordion title="systemd reports the service as failed">
-    systemd gave up on the service. Read the journal lines in the log, or run `systemctl status <service>` on the server.
-  </Accordion>
-
-  <Accordion title="pipeline.health.url is set, but the server has neither curl nor wget">
-    The URL probe runs on the server with `curl` or `wget`. Install one of them, or remove `pipeline.health.url` and rely on `systemctl is-active` and your `pipeline.health.check` commands.
-  </Accordion>
-
   <Accordion title="nothing was live before, so there is nothing to roll back to">
-    This was the first deploy, so there is no previous release to put back. The failed release stays in place for you to inspect, and the outcome is `STOPPED`. Fix the problem and deploy again.
+    A first deploy failed after the switch. The failed release stays live so you can look at it.
   </Accordion>
-
-  <Accordion title="The rollback question ignores esc and q">
-    The question accepts only `y` (roll back now) and `n` (keep the new release live). With no answer, it rolls back after 30 seconds. To never be asked, set `pipeline.failed.rollback: auto`.
+  <Accordion title="rollback failed">
+    Putting the previous release back failed too. The server may be between two releases:
+    inspect it with `systemctl status <process>`, the journal, and `shipdeck work`. The exit code
+    is 5.
   </Accordion>
-
-  <Accordion title="rollback failed: <previous> did not come back either: systemd says <state>">
-    The new release failed, and the release shipdeck put back did not become `active` either. The banner shows `ROLLBACK FAILED` and says to check the server now. Log in, read `journalctl -u <service>`, and fix what both releases depend on: often a shared file, a database, or something outside the release. Then deploy again, or roll back from the Releases screen.
-  </Accordion>
-
-  <Accordion title="pipeline.done: …; <id> stays live">
-    A `pipeline.done` command failed. This is only a warning: the release is live and healthy. The same goes for `tidying: …` when old releases could not be compressed or deleted, and for `pipeline.failed: …`.
+  <Accordion title="<id> stays live as you chose">
+    You answered `n` to the rollback question, or `rollback.mode: off`. Roll back any time from
+    the Releases screen or with `shipdeck rollback`.
   </Accordion>
 </Accordions>
 
-## Releases
+## Next
 
-<Accordions>
-  <Accordion title="Could not read the releases">
-    shipdeck could not list `releases/` and `backups/` on the server. The line below it gives the reason, usually a connection problem. Press `r` to try again.
-  </Accordion>
-
-  <Accordion title="shipdeck did not create that folder, so it will not switch to it">
-    The release is listed as `not ours`: a folder in `releases/` whose name is not a shipdeck release id. shipdeck lists it but never switches to it, compresses it or deletes it. Remove or rename it on the server if it does not belong there.
-  </Accordion>
-
-  <Accordion title="A rollback to a backup fails at Setup">
-    A release kept only as a backup is unpacked, then `pipeline.setup` runs in it again, with `SHIPDECK_ACTION=rollback`. These are the setup commands of your `shipdeck.yaml` now, and they need what setup needs, such as access to your package registry. When they fail, shipdeck logs `releases/<id> was removed; its backup stays` and stops; the live release was not touched. Fix the cause and roll back again. If the release needs a file that setup cannot make again, add it to `pipeline.backup.files.include` for future releases.
-  </Accordion>
-
-  <Accordion title="That release is already live">
-    You pressed `⏎` on the release marked `LIVE`. Pick another release to roll back to.
-  </Accordion>
-
-  <Accordion title="An operation is already running">
-    shipdeck runs one deploy or rollback at a time across all deployables. Wait for it to finish. There is no key to cancel a running operation; quitting with `q` and then `y` stops it midway, and if it is past the switch, the server may be left on the new release without a health check.
-  </Accordion>
-
-  <Accordion title="A release shows * after its commit">
-    The release was built from a working copy with uncommitted changes to tracked files. Its id contains `-dirty`. Untracked files do not count.
-  </Accordion>
-</Accordions>
-
-<Callout title="Where are the logs?">
-  shipdeck keeps the log of the latest operation in memory, up to 5000 lines, and writes no log file. To keep a record of a deploy, use a `pipeline.done` or `pipeline.failed` command. On the server, `journalctl -u <service>` has the service's own output.
-</Callout>
+<Cards>
+  <Card title="Config problems" href="/docs/reference/config-problems" description="Every message shipdeck prints for a config it cannot use." />
+  <Card title="Health and rollback" href="/docs/guides/health-and-rollback" description="What happens when a release fails after the switch." />
+</Cards>

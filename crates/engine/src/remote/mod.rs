@@ -2,10 +2,9 @@
 //!
 //! Layout under `dir`:
 //! `current -> releases/<id>`, `releases/<id>/`, `backups/<id>.tar.zst`,
-//! `shared/`.
+//! `shared/`. Shipdeck's own files live in each release's `.shipdeck/`.
 
 mod backup;
-mod backup_apps;
 mod control;
 mod delta;
 mod health;
@@ -15,8 +14,7 @@ mod pm2;
 mod preflight;
 mod releases;
 
-pub use backup::{Picked, ReleaseFile, pick};
-pub use backup_apps::pick_apps;
+pub use backup::ReleaseFile;
 pub use control::{Control, control_commands, log_command};
 pub use delta::Unpacked;
 pub use health::{HttpCheck, Probe};
@@ -31,68 +29,85 @@ use std::sync::Arc;
 
 use anyhow::{Result, bail};
 
-use crate::config::{Manager, Service, release_path};
+use crate::config::{Deployment, Manager, release_path};
 use crate::deploy::report::{LogKind, Reporter};
 use crate::release::is_safe_id;
 use crate::ssh::{Output, Session, Stream, sh_quote};
 use shipdeck_protocol::message::agent::{AgentManager, AgentService};
 
+/// One deployment folder, and optionally one app's process inside it.
 pub struct Server {
     session: Arc<Session>,
     dir: String,
-    service: String,
-    manager: Manager,
-    pm2_app: String,
-    /// The user the app's own commands and PM2 run as.
+    /// The app this handle runs commands for, when it has one.
+    app: Option<String>,
+    /// The process name.
+    process: String,
+    /// The manager, or `None` for a static app.
+    manager: Option<Manager>,
+    /// The user the process runs as.
     user: String,
     /// The PM2 file, relative to the release.
     pm2_file: String,
-    /// What the app gets when PM2 starts it.
-    env: CommandEnv,
+    /// What the process gets when it starts.
+    env: BTreeMap<String, String>,
+    /// The app's environment file, relative to the release.
+    env_file: Option<String>,
+    /// A static app runs nothing.
+    static_site: bool,
 }
 
 impl Server {
-    pub fn new(session: Arc<Session>, service: &Service) -> Self {
-        let user = service
-            .run_as
-            .clone()
-            .unwrap_or_else(|| session.user.clone());
+    /// A handle for the whole deployment folder.
+    #[must_use]
+    pub fn new(session: Arc<Session>, dir: String) -> Self {
+        let user = session.user.clone();
         Self {
             session,
-            dir: service.dir.clone(),
-            service: service.name.clone(),
-            manager: service.manager,
-            pm2_app: service.pm2_app().to_string(),
+            dir,
+            app: None,
+            process: String::new(),
+            manager: None,
             user,
-            pm2_file: service.pm2_file(),
-            env: CommandEnv {
-                service: service.env.clone(),
-                env_file: service.env_file.as_deref().map(release_path),
-                vars: Vec::new(),
-            },
+            pm2_file: String::new(),
+            env: BTreeMap::new(),
+            env_file: None,
+            static_site: false,
         }
     }
 
-    /// Creates a server handle for a process inside a shared release.
+    /// A handle for one app of a deploy.
     ///
     /// # Errors
     /// Returns an error when the app name is unsafe.
-    pub fn for_app(session: Arc<Session>, service: &Service, app: &str) -> Result<Self> {
+    pub fn for_app(deployment: &Deployment, app: &str, session: Arc<Session>) -> Result<Self> {
         ensure_app_name(app)?;
-        let mut server = Self::new(session, service);
-        if service.pm2.ecosystem.is_some() {
-            server.pm2_file = format!("apps/{app}/{}", server.pm2_file);
+        let manager = deployment.manager(app);
+        let static_site = deployment.is_static(app);
+        let process = if manager.is_some() {
+            deployment.process_name(app)
+        } else {
+            String::new()
+        };
+        let mut env_file = deployment.env_file(app);
+        if let Some(file) = &mut env_file {
+            *file = format!(
+                "apps/{app}/{}",
+                release_path(file).unwrap_or_else(|_| file.clone())
+            );
         }
-        if let Some(file) = &mut server.env.env_file {
-            *file = format!("apps/{app}/{file}");
-        }
-        Ok(server)
-    }
-
-    /// The process name used to label combined app logs.
-    #[must_use]
-    pub fn process_name(&self) -> &str {
-        &self.service
+        Ok(Self {
+            session,
+            dir: deployment.dir().to_string(),
+            app: Some(app.to_string()),
+            process,
+            manager,
+            user: deployment.run_user(app),
+            pm2_file: deployment.pm2_file(app),
+            env: deployment.app_env(app),
+            env_file,
+            static_site,
+        })
     }
 
     #[must_use]
@@ -107,20 +122,40 @@ impl Server {
     }
 
     #[must_use]
-    pub fn manager(&self) -> Manager {
+    pub fn dir(&self) -> &str {
+        &self.dir
+    }
+
+    #[must_use]
+    pub fn manager(&self) -> Option<Manager> {
         self.manager
     }
 
-    /// Whether this deployable serves files instead of running a process.
+    /// As messages name the manager.
     #[must_use]
-    pub fn is_static(&self) -> bool {
-        self.manager == Manager::Static
+    pub fn manager_label(&self) -> &'static str {
+        match self.manager {
+            Some(manager) => manager.label(),
+            None => "static",
+        }
     }
 
-    /// The deployment folder shared by this process's releases.
+    /// The process name, or an empty string for a static app.
     #[must_use]
-    pub fn dir(&self) -> &str {
-        &self.dir
+    pub fn process_name(&self) -> &str {
+        &self.process
+    }
+
+    /// The app this handle belongs to.
+    #[must_use]
+    pub fn app(&self) -> Option<&str> {
+        self.app.as_deref()
+    }
+
+    /// Whether this app serves files and runs nothing.
+    #[must_use]
+    pub fn is_static(&self) -> bool {
+        self.static_site
     }
 
     fn q_dir(&self) -> String {
@@ -128,7 +163,7 @@ impl Server {
     }
 
     fn q_service(&self) -> String {
-        sh_quote(&self.service)
+        sh_quote(&self.process)
     }
 
     /// Where the bundle is uploaded before it is unpacked.
@@ -137,34 +172,36 @@ impl Server {
         format!("{}/releases/.{id}.tar.zst", self.dir)
     }
 
-    /// The service as the agent's typed requests carry it.
+    /// The process as the agent's typed requests carry it.
     ///
     /// # Errors
-    /// Returns an error for a static site, which has no process to carry.
+    /// Returns an error for a static app, which has no process.
     pub fn agent_service(&self) -> Result<AgentService> {
-        let manager = match self.manager {
+        let Some(manager) = self.manager else {
+            bail!("a static app has no process");
+        };
+        let manager = match manager {
             Manager::Systemd => AgentManager::Systemd,
             Manager::Pm2 => AgentManager::Pm2,
-            Manager::Static => bail!("a static site has no process"),
+            Manager::Oxmgr => bail!("oxmgr is not built yet"),
         };
         Ok(AgentService {
             root: self.dir.clone(),
-            service: self.service.clone(),
+            service: self.process.clone(),
             manager,
             user: self.user.clone(),
             pm2_file: self.pm2_file.clone(),
-            env: self.env.service.clone(),
-            env_file: self.env.env_file.clone(),
+            env: self.env.clone(),
+            env_file: self.env_file.clone(),
         })
     }
 
-    /// The commands that need root here; see [`sudo_commands`]. PM2 and
-    /// static sites need none.
+    /// The commands that need root here; see [`sudo_commands`].
     #[must_use]
     pub fn sudo_commands(&self) -> Vec<String> {
         match self.manager {
-            Manager::Systemd => sudo_commands(&self.dir, &self.service),
-            Manager::Pm2 | Manager::Static => Vec::new(),
+            Some(Manager::Systemd) => sudo_commands(&self.dir, &self.process),
+            _ => Vec::new(),
         }
     }
 
@@ -179,8 +216,8 @@ impl Server {
         if self.is_root() { "" } else { "sudo -n " }
     }
 
-    /// Creates `dir` for an app's first deploy: as the user if it
-    /// may, else with sudo (then handed to the user), else it says so.
+    /// Creates `dir` for an app's first deploy: as the user if it may, else
+    /// with sudo (then handed to the user), else it says so.
     ///
     /// # Errors
     /// Returns an error when the folder cannot be created.
@@ -320,22 +357,22 @@ echo \"current -> $(readlink current)\"",
         Ok(())
     }
 
-    /// Installs the unit `current` carries, reloads systemd and enables the
-    /// service at boot. PM2 reads its file from `current` at restart.
+    /// Installs the unit `current` carries in `.shipdeck/`, reloads systemd
+    /// and enables the service at boot.
     ///
     /// # Errors
     /// Returns an error when the unit cannot be installed or enabled.
     pub async fn install_unit(&self, report: &Reporter) -> Result<()> {
-        if !matches!(self.manager, Manager::Systemd) {
+        if self.manager != Some(Manager::Systemd) {
             return Ok(());
         }
-        let (dir, svc, sudo) = (&self.dir, &self.service, self.sudo());
+        let (dir, svc, sudo) = (&self.dir, &self.process, self.sudo());
         let script = format!(
             "set -e
 {sudo}install -m 0644 {src} {dst}
 {sudo}systemctl daemon-reload
 {sudo}systemctl enable {svc_q} 2>&1",
-            src = sh_quote(&format!("{dir}/current/{svc}.service")),
+            src = sh_quote(&format!("{dir}/current/.shipdeck/{svc}.service")),
             dst = sh_quote(&format!("/etc/systemd/system/{svc}.service")),
             svc_q = self.q_service(),
         );
@@ -344,35 +381,43 @@ echo \"current -> $(readlink current)\"",
         Ok(())
     }
 
-    /// Restarts the service on the release `current` points to. PM2 starts
-    /// or reloads the app from `current`'s file with the service's
-    /// environment, then saves its list so the app comes back after a reboot.
+    /// Restarts the service on the release `current` points to.
     ///
     /// # Errors
     /// Returns an error when the service cannot be restarted.
     pub async fn restart(&self, report: &Reporter) -> Result<()> {
-        if self.manager == Manager::Static {
-            return Ok(());
-        }
-        if self.manager == Manager::Pm2 {
-            let script = self.pm2_script("startOrReload");
-            self.run(&format!("reload {} in pm2", self.pm2_app), &script, report)
-                .await?;
-            return Ok(());
+        match self.manager {
+            None => return Ok(()),
+            Some(Manager::Pm2) => {
+                let script = self.pm2_script("startOrReload");
+                self.run(&format!("reload {} in pm2", self.process), &script, report)
+                    .await?;
+                return Ok(());
+            }
+            Some(Manager::Oxmgr) => bail!("oxmgr is not built yet"),
+            Some(Manager::Systemd) => {}
         }
         let script = format!("{}systemctl restart {}", self.sudo(), self.q_service());
-        self.run(&format!("restart {}", self.service), &script, report)
+        self.run(&format!("restart {}", self.process), &script, report)
             .await?;
         Ok(())
     }
 
     /// `pm2 <verb>` on `current`'s PM2 file, for this app only, with the
-    /// service's environment loaded; then `pm2 save`, so the app comes back
-    /// after a reboot.
+    /// service's environment loaded; then `pm2 save`.
     fn pm2_script(&self, verb: &str) -> String {
         let current = format!("{}/current", self.dir);
         let file = sh_quote(&format!("{current}/{}", self.pm2_file));
-        let mut script = env_prelude(&current, &self.env, self.env.env_file.clone());
+        let env_file = self
+            .env_file
+            .as_ref()
+            .map(|file| format!("{current}/{file}"));
+        let env = CommandEnv {
+            service: self.env.clone(),
+            env_file: None,
+            vars: Vec::new(),
+        };
+        let mut script = env_prelude(&current, &env, env_file);
         let _ = write!(
             script,
             "[ -f {file} ] || {{ echo {missing} >&2; exit 1; }}
@@ -383,13 +428,13 @@ pm2 save
                 "this release has no {}; was it deployed with systemd?",
                 self.pm2_file
             )),
-            app = sh_quote(&self.pm2_app),
+            app = sh_quote(&self.process),
         );
         script
     }
 
-    /// Links each `service.shared` folder into `releases/<id>`, creating it
-    /// in `shared/` the first time.
+    /// Links each shared folder into `releases/<id>`, creating it in
+    /// `shared/` the first time.
     ///
     /// # Errors
     /// Returns an error when the release name is unsafe or linking fails.
@@ -402,17 +447,20 @@ pm2 save
             report.log(
                 LogKind::Command,
                 format!(
-                    "{} › link service.shared into the release",
+                    "{} › link shared folders into the release",
                     self.session.label
                 ),
             );
-            let paths: Vec<String> = shared.iter().map(|entry| release_path(entry)).collect();
+            let paths: Vec<String> = shared
+                .iter()
+                .map(|entry| release_path(entry).unwrap_or_else(|_| entry.clone()))
+                .collect();
             agent.link_shared(&self.dir, id, &paths).await?;
             return Ok(());
         }
         let mut script = format!("set -e\ncd {}\n", self.q_dir());
         for entry in shared {
-            let entry = release_path(entry);
+            let entry = release_path(entry).unwrap_or_else(|_| entry.clone());
             let link = sh_quote(&format!("releases/{id}/{entry}"));
             let _ = write!(
                 script,
@@ -430,13 +478,13 @@ echo {done}
                 done = sh_quote(&format!("{entry} -> shared/{entry}")),
             );
         }
-        self.run("link service.shared into the release", &script, report)
+        self.run("link shared folders into the release", &script, report)
             .await?;
         Ok(())
     }
 
-    /// Runs one command from shipdeck.yaml at `place`, streaming its output.
-    /// It sees `service.env`, then `service.env_file` (as systemd reads it:
+    /// Runs one command from the deploy file at `place`, streaming its
+    /// output. It sees `process.env`, then `env_file` (as systemd reads it:
     /// no shell expansion), then `vars`.
     ///
     /// # Errors
@@ -448,50 +496,14 @@ echo {done}
         env: &CommandEnv,
         report: &Reporter,
     ) -> Result<()> {
-        let (dir, shown, env_file) = match place {
-            Place::AppDir => (
-                self.dir.clone(),
-                "in dir".to_string(),
-                env.env_file.as_ref().map(|f| format!("current/{f}")),
-            ),
-            Place::Release(id) => {
-                ensure_id(id)?;
-                (
-                    format!("{}/releases/{id}", self.dir),
-                    format!("in releases/{id}"),
-                    env.env_file.clone(),
-                )
-            }
-            Place::Current => (
-                format!("{}/current", self.dir),
-                "in current".to_string(),
-                env.env_file.clone(),
-            ),
-            Place::AppRelease(id, app) => {
-                ensure_id(id)?;
-                ensure_app_name(app)?;
-                (
-                    format!("{}/releases/{id}/apps/{app}", self.dir),
-                    format!("in releases/{id}/apps/{app}"),
-                    env.env_file.clone(),
-                )
-            }
-            Place::AppCurrent(app) => {
-                ensure_app_name(app)?;
-                (
-                    format!("{}/current/apps/{app}", self.dir),
-                    format!("in current/apps/{app}"),
-                    env.env_file.clone(),
-                )
-            }
-        };
+        let (dir, shown, env_file) = self.place(place, env)?;
         let mut script = env_prelude(&dir, env, env_file);
         script.push_str(&crate::remote::lease::prelude(
             &self.dir,
             &crate::remote::lease::new_token(),
         ));
-        // The command is shell by design: it comes from shipdeck.yaml, written
-        // by whoever deploys, and runs as the deploy user.
+        // The command is shell by design: it comes from the deploy file,
+        // written by whoever deploys, and runs as the deploy user.
         script.push_str(command);
         script.push('\n');
         report.log(
@@ -518,22 +530,68 @@ echo {done}
         Ok(())
     }
 
+    /// The folder, its label, and the environment file for a place.
+    fn place(&self, place: &Place, env: &CommandEnv) -> Result<(String, String, Option<String>)> {
+        let (dir, shown, release) = match place {
+            Place::Root => (
+                self.dir.clone(),
+                "in dir".to_string(),
+                "current".to_string(),
+            ),
+            Place::Release(id) => {
+                ensure_id(id)?;
+                (
+                    format!("{}/releases/{id}", self.dir),
+                    format!("in releases/{id}"),
+                    format!("releases/{id}"),
+                )
+            }
+            Place::Current => (
+                format!("{}/current", self.dir),
+                "in current".to_string(),
+                "current".to_string(),
+            ),
+            Place::AppRelease(id, app) => {
+                ensure_id(id)?;
+                ensure_app_name(app)?;
+                (
+                    format!("{}/releases/{id}/apps/{app}", self.dir),
+                    format!("in releases/{id}/apps/{app}"),
+                    format!("releases/{id}"),
+                )
+            }
+            Place::AppCurrent(app) => {
+                ensure_app_name(app)?;
+                (
+                    format!("{}/current/apps/{app}", self.dir),
+                    format!("in current/apps/{app}"),
+                    "current".to_string(),
+                )
+            }
+        };
+        let env_file = env
+            .env_file
+            .as_ref()
+            .map(|file| format!("{}/{release}/{file}", self.dir));
+        Ok((dir, shown, env_file))
+    }
+
     /// The service's last 30 log lines: its journal, or PM2's logs.
     ///
     /// # Errors
     /// Returns an error when the log command cannot run.
     pub async fn journal(&self) -> Result<Vec<String>> {
         let script = match self.manager {
-            Manager::Systemd => format!(
+            Some(Manager::Systemd) => format!(
                 "{}journalctl -u {} -n 30 --no-pager 2>&1",
                 self.sudo(),
                 self.q_service()
             ),
-            Manager::Pm2 => format!(
+            Some(Manager::Pm2) => format!(
                 "pm2 logs {} --lines 30 --nostream --raw 2>&1",
-                sh_quote(&self.pm2_app)
+                sh_quote(&self.process)
             ),
-            Manager::Static => {
+            Some(Manager::Oxmgr) | None => {
                 bail!("a static site has no process logs; nginx keeps its own in /var/log/nginx")
             }
         };
@@ -542,7 +600,7 @@ echo {done}
     }
 }
 
-/// `set -e`, `cd dir`, then `env` exported: `service.env`, then `env_file`
+/// `set -e`, `cd dir`, then `env` exported: `process.env`, then `env_file`
 /// (as systemd reads it), then `vars`.
 fn env_prelude(dir: &str, env: &CommandEnv, env_file: Option<String>) -> String {
     let mut script = format!("set -e\ncd {}\n", sh_quote(dir));
@@ -559,12 +617,12 @@ fn env_prelude(dir: &str, env: &CommandEnv, env_file: Option<String>) -> String 
     script
 }
 
-/// Where a command from shipdeck.yaml runs on the server.
+/// Where a command from the deploy file runs on the server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Place {
-    /// `dir`, for preflight; the env file is the live release's.
-    AppDir,
-    /// `releases/<id>`, for setup, while the old release is still live.
+    /// `dir`, for preflight and for rollback and failed commands.
+    Root,
+    /// `releases/<id>`, while the old release is still live.
     Release(String),
     /// `current`, for health and done.
     Current,
@@ -585,12 +643,12 @@ fn ensure_app_name(name: &str) -> Result<()> {
 /// What a server command sees besides the deploy user's environment.
 #[derive(Debug, Clone, Default)]
 pub struct CommandEnv {
-    /// `service.env`.
+    /// `process.env`.
     pub service: BTreeMap<String, String>,
-    /// `service.env_file`, relative to the release.
+    /// The environment file, relative to the release.
     pub env_file: Option<String>,
     /// `SHIPDECK_*`.
-    pub vars: Vec<(&'static str, String)>,
+    pub vars: Vec<(String, String)>,
 }
 
 /// Exports the `KEY=value` lines of a file the way systemd's
@@ -628,7 +686,9 @@ pub fn sudo_commands(dir: &str, service: &str) -> Vec<String> {
         "systemctl daemon-reload".into(),
         format!("systemctl enable {svc}"),
         format!("systemctl restart {svc}"),
-        format!("install -m 0644 {dir}/current/{svc}.service /etc/systemd/system/{svc}.service"),
+        format!(
+            "install -m 0644 {dir}/current/.shipdeck/{svc}.service /etc/systemd/system/{svc}.service"
+        ),
         format!("journalctl -u {svc} -n 30 --no-pager"),
     ]
 }
@@ -643,7 +703,7 @@ backups/{id}.tar.zst backups/.{id}.tar.zst.part backups/.{id}.files",
     )
 }
 
-fn ensure_id(id: &str) -> Result<()> {
+pub(crate) fn ensure_id(id: &str) -> Result<()> {
     if !is_safe_id(id) {
         bail!("refusing an unexpected release name: {id:?}");
     }

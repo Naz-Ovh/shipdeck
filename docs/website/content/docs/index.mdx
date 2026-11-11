@@ -3,14 +3,14 @@ title: Overview
 description: Understand Shipdeck and its deployment model in five minutes.
 ---
 
-Shipdeck builds your app on your computer, sends it to a Linux server over SSH,
-and runs it with **systemd or PM2**. Use the terminal UI for daily work, or CLI
-commands in scripts and CI. Each deployment has its own release folder, saved
-service settings, and a backup you can roll back to.
+Shipdeck builds your app on your computer, sends it to a Linux server over SSH, and runs it
+with **systemd or PM2**. Use the terminal UI for daily work, or CLI commands in scripts and
+CI. Each deployment has its own release folder, saved settings, and a backup you can roll
+back to.
 
-It fits small servers that should run apps without compiling them. Rust, Go,
-Node.js, Python, and other stacks work through your own build and setup commands.
-One deployment can hold a single app or several monorepo apps that switch together.
+It fits small servers that should run apps without compiling them. Rust, Go, Node.js,
+Python, and other stacks work through your own build and setup commands. One deployment can
+hold a single app or several apps that switch together.
 
 ## Start here
 
@@ -24,105 +24,62 @@ shipdeck --version
 From your repository root, create a deployment:
 
 ```sh
-shipdeck init ./scripts/deploy my-api --preset rust --manager systemd --host prod
+shipdeck init my-api --preset rust --manager systemd --host prod
 ```
 
-Each direct subfolder of a **deploy root** holds a `shipdeck.yaml`.
-This example creates `scripts/deploy/my-api/shipdeck.yaml`. Edit it to name:
+That writes a **project file** (`shipdeck.yaml`) and a **deploy file** (`deploy.yaml`). The
+project file lists the deploys of this repository:
+
+```yaml
+deploys:
+  production: deploy.yaml
+```
+
+The deploy file holds one whole deploy: the server, the release and every app. Edit it to
+name:
 
 - Your source folder and local build command.
 - The binary or files to send, and any shared data to keep between releases.
-- The SSH host and user, server folder, service command, and health check.
+- The SSH host and user, server folder, process command, and health check.
 
-`prod` is an SSH alias with a user and `IdentityFile`. You can instead use an
-address and pass `--key`. The SSH user must already exist.
-
-```sh
-shipdeck ./scripts/deploy
+```yaml
+name: my-api
+server:
+  ssh: { host: prod, user: deploy }
+  dir: /opt/my-api
+apps:
+  my-api:
+    source: .
+    files: [dist, package.json, .env]
+    process:
+      start: node dist/main.js
+      env_file: .env
+      systemd: {}
+    steps:
+      health:
+        url: http://127.0.0.1:3000/
 ```
 
-In the terminal UI, select a deployment and press Enter. `c` connects,
-`r` opens releases, `D` inspects a release, and `:logs` follows logs.
-Select an older release and press Enter to roll back.
-
-The [quickstart](/docs/getting-started/quickstart) has a complete config and the
-first-deploy steps on one page.
-
-## The deployment model
-
-`preflight → build → pack → upload → unpack → setup → backup → switch → restart → health → done`
-
-1. **Prepare.** Check config, access, tools, and binary compatibility. Build
-   locally and pack only listed files. Files already present can be reused
-   after server-side SHA-256 checks.
-2. **Stage.** Receive and verify a new release beside the live one. Run setup
-   in that folder, then save a backup of shipped files.
-3. **Activate.** Replace the `current` symlink in one rename, restart services,
-   and check health. A failure after switching follows the rollback policy.
-4. **Keep history.** Retain unpacked releases and compressed backups.
-   Restoring a backup runs setup again. Shared files stay across releases.
-
-The filesystem switch is atomic; service restarts can cause downtime.
-Database migrations and your custom commands need their own recovery plan.
-A monorepo switches one release folder, then restarts its apps; this does not
-make several service restarts simultaneous.
-
-## The server agent and interrupted work
-
-The first connection prepares a matching `shipdeck-agent`. The account needs
-root or password-free sudo. Shipdeck downloads the release from GitHub, checks
-its SHA-256 and version, and installs it as root under
-`/opt/shipdeck/agent/v<version>/agent`. It starts through the full path with
-sudo. The agent handles files, backups, service operations, project locks, and
-numbered events in the SSH user's `~/.shipdeck/state.db`. It opens no port and
-exits when the connection ends.
-
-Deployments run while connected. If a connection drops, reconnect and inspect:
+`prod` is an SSH alias with a user and `IdentityFile`. You can instead use an address and
+pass `--key`. The SSH user must already exist.
 
 ```sh
-shipdeck work ./scripts/deploy my-api
-shipdeck events ./scripts/deploy my-api --after 0
+shipdeck
 ```
 
-Interrupted files stay for inspection. `work --cleanup` explicitly approves
-removing the unfinished files the server reports, after a fresh check.
-If activation lost its connection, inspect the live release and service state
-before retrying. Never treat that result as a successful deploy.
+In the terminal UI the deploys of your project file are listed. Select one and press Enter.
+`c` connects, `r` opens releases, `D` inspects a release, and `:logs` follows logs. Select an
+older release and press Enter to roll back.
 
-If preparation or the handshake fails, the connection stops instead of using
-an incompatible agent. A still-running server command blocks another mutating
-operation. App and PM2 commands run as the configured service user, not as the
-root agent.
+The [quickstart](/docs/getting-started/quickstart) has a complete config and the first-deploy
+steps on one page.
 
-## What you need
-
-- **Your computer:** Linux or macOS for prebuilt binaries; Windows currently
-  needs a source build and Git for Windows. Bring your app's build tools.
-- **Server:** Linux, SSH, a supported service manager, and enough storage for
-  releases and backups. The SSH user needs write access and service permissions.
-  Agent downloads need outbound HTTPS and `curl` or `wget`; the plain SSH path
-  needs its archive, checksum, and locking tools.
-- **Limits:** One host per deployment. No SSH ProxyJump, ProxyCommand, or host
-  certificates. No built-in reverse proxy, TLS certificate management, detached
-  deployment worker, or zero-downtime guarantee.
-
-## For coding agents
-
-The installed manual matches the binary and needs no network:
-
-```sh
-shipdeck man index
-shipdeck man configs
-shipdeck man details agents cli.deploy service.start
-```
-
-[llms.txt](/llms.txt) contains this overview and topic links.
-Fetch only the relevant page; [llms-full.txt](/llms-full.txt) contains the whole manual.
+## Next
 
 | Next task | Read |
 | --- | --- |
 | First deployment | [Quickstart](/docs/getting-started/quickstart) |
-| Every config field | [shipdeck.yaml](/docs/reference/shipdeck-yaml) |
+| Every config field | [Config](/docs/reference/config) |
 | Several apps together | [Monorepos](/docs/monorepos) |
 | Permissions and setup | [Server access](/docs/guides/server-access) |
 | Flags and exit codes | [Command line](/docs/reference/cli) |

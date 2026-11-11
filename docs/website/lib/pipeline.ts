@@ -1,16 +1,17 @@
 export type Side = 'local' | 'server';
 
-/** The eleven deploy steps, with the sides that accept your commands. */
+/** The twelve deploy steps, with the sides that accept your commands. */
 export const pipelineSteps: { name: string; does: string; yours: Side[] }[] = [
-  { name: 'preflight', does: 'checks your PC and the server', yours: ['server', 'local'] },
-  { name: 'build', does: 'builds on your PC, names the release', yours: ['local'] },
-  { name: 'pack', does: 'packs what the live release lacks of what you list', yours: [] },
-  { name: 'upload', does: 'sends one archive over SSH', yours: [] },
-  { name: 'unpack', does: 'into releases/<id>, copies and checks the rest', yours: [] },
-  { name: 'setup', does: 'your commands while the old release serves', yours: ['server'] },
-  { name: 'backup', does: 'packs what a rollback needs into backups/', yours: [] },
-  { name: 'switch', does: 'points current at the new release', yours: [] },
-  { name: 'restart', does: 'restarts the systemd service', yours: [] },
-  { name: 'health', does: 'waits until it is active and answers', yours: ['server', 'local'] },
-  { name: 'done', does: 'tidies old releases', yours: ['server', 'local'] },
+  { name: 'preflight', does: 'checks your PC, the server and the runners', yours: ['server', 'local'] },
+  { name: 'build', does: 'names the release, builds, collects and hashes files', yours: ['server', 'local'] },
+  { name: 'upload', does: 'packs, sends, unpacks, links shared folders', yours: ['server', 'local'] },
+  { name: 'setup', does: 'your commands while the old release serves', yours: ['server', 'local'] },
+  { name: 'backup', does: 'packs what a rollback needs into backups/', yours: ['server', 'local'] },
+  { name: 'switch', does: 'points current at the new release', yours: ['server', 'local'] },
+  { name: 'restart', does: 'restarts every process', yours: ['server', 'local'] },
+  { name: 'nginx', does: 'parsed and checked; not built yet', yours: ['server', 'local'] },
+  { name: 'health', does: 'runs your checks and fetches the health url', yours: ['server', 'local'] },
+  { name: 'done', does: 'tidies old releases, runs your commands', yours: ['server', 'local'] },
+  { name: 'rollback', does: 'puts an older release back', yours: ['server', 'local'] },
+  { name: 'failed', does: 'your commands after any failure', yours: ['server', 'local'] },
 ];

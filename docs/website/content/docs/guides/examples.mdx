@@ -1,252 +1,301 @@
 ---
 title: Examples
-description: Complete shipdeck.yaml files for a Rust, Go, Node.js and Python service, and a static site, and what each one shows.
+description: Complete project and deploy files for a Rust, Go, Node.js and Python service, PM2, a static site, and several apps in one release.
 ---
 
-The shipdeck repository has one complete `shipdeck.yaml` per kind of app in [examples/](https://github.com/Naz-Ovh/shipdeck/tree/main/examples). Each file below is copied from there. All of them pass the launch check and start with the schema line for editor completion.
+The shipdeck repository has one complete example per kind of app in
+[examples/](https://github.com/Naz-Ovh/shipdeck/tree/main/examples), each with a project
+file (`shipdeck.yaml`) and a deploy file (`deploy.yaml`). Every file below is copied from
+there, and a test reads all of them, so they stay valid.
 
-Each example sits in its own deploy folder, such as `scripts/deploy/web-prod/shipdeck.yaml`, with `project: ../../../web` pointing at the source from there. See [Deploy root](/docs/guides/deploy-root).
+Each example is a project folder you run shipdeck in:
+
+```sh
+cd examples/rust
+shipdeck tree production
+shipdeck deploy production
+```
 
 | Example | Ships | Built | Notable |
 | --- | --- | --- | --- |
 | Rust | a binary and `.env` | on your PC, against the server's glibc | `cargo zigbuild`, `health.url` |
-| Go | a static binary, templates, `.env` and `config.yaml` | on your PC | version from the git tag, `backup.keep`, `failed.rollback: auto` |
-| Node.js | `dist` and the package files | on your PC; dependencies on the server | `requires`, `shared`, `setup`, `backup`, `done` and `failed` |
-| Python | the source | on the server, in Setup | `include: [.]` with excludes, `.venv` in the release |
-| Static | `dist` | before the deploy | `static` with no process, a fixed nginx path |
+| Go | a static binary, templates, `.env` and `config.yaml` | on your PC | `rollback.mode: auto` |
+| Node.js | `dist` and the package files | on your PC; dependencies on the server | `requires`, `shared`, `setup`, `done` and `failed` |
+| Python | the source | on the server, in `setup` | the whole project with excludes, `.venv` in the release |
+| PM2 | `dist` and the package files | on your PC | `process.pm2.options`, cluster mode, no sudo |
+| Static | `dist` | before the deploy | `static: true`, serving is yours |
+| Monorepo | two apps in one release | on your PC | a process app and a static app together |
 
 ## Rust
 
 A compiled service where only the binary and its `.env` travel.
 
-- `build.run.local` uses [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild) with the target `x86_64-unknown-linux-gnu.2.31`, so the binary needs at most glibc 2.31. After the build shipdeck compares the binary's CPU and glibc with the server's and stops if they do not fit.
-- `pack.binary` names the file the build produces. It lands at the release root as `my-api`.
-- `start` adds arguments to the default `./my-api`.
-- `ssh.host: prod` is an alias from `~/.ssh/config`; `user` is set here, so the alias does not need a `User`.
-- `health.url` is fetched on the server, so `127.0.0.1` works.
+```yaml title="examples/rust/deploy.yaml"
+name: my-api
+server:
+  ssh: { host: prod, user: deploy }
+  dir: /opt/my-api
 
-```yaml title="examples/rust/shipdeck.yaml"
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
-# A Rust service: compiled here, only the binary and its .env travel.
-name: My API (prod)
-project: ../../../my-api          # your source, relative to this file
-dir: /opt/my-api                  # current/ releases/ backups/ shared/
-
-ssh:
-  host: prod                      # an address, or an alias from ~/.ssh/config
-  user: deploy                    # optional when the alias has a User
-
-service:
-  name: my-api                    # my-api.service
-  start: ./my-api -E=.env         # default: ./<binary>
-
-pipeline:
-  build:
-    run:
-      # Build against the server's glibc so the binary runs there.
-      local: cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31
-  pack:
+apps:
+  my-api:
+    source: .
+    files: [.env]
     binary: target/x86_64-unknown-linux-gnu/release/my-api
-    files:
-      include:
-        deploy: [.env]            # next to this file; gitignored
-  health:
-    url: http://127.0.0.1:8080/health
+    process:
+      systemd: {}
+    steps:
+      health:
+        url: http://127.0.0.1:8080/health
+
+release:
+  steps:
+    build:
+      local: cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31
+    health:
+      timeout_secs: 30
 ```
+
+- `build.local` uses [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild) with
+  the target `x86_64-unknown-linux-gnu.2.31`, so the binary needs at most glibc 2.31. Then
+  the build step compares the binary's CPU and glibc with the server's and stops if they do
+  not fit.
+- `binary` names the file the build produces. It lands at `apps/my-api/my-api`, and the
+  default `start` is `./my-api`.
+- `health.url` is fetched on the server, so `127.0.0.1` works.
 
 ## Go
 
 A static Go binary that needs nothing from the server.
 
-- There is no version file in the project, so the version comes from the latest git tag (`v1.2.0` gives `1.2.0`). The build passes it into the binary with `$SHIPDECK_VERSION`.
-- `CGO_ENABLED=0` makes a static binary, so there is no glibc to match.
-- `env` values are text; `"2"` is quoted here, though `2` would be read as text too.
-- Files come from both sources: `templates` from the project, `.env` and `config.yaml` from the deploy folder.
-- `backup.keep` holds 3 open releases and the backups of 10 more instead of the default 5 and 15. The backup holds what was shipped, which is all this service needs.
-- `health.check.server` runs a command in `current/` until it passes or `timeout_secs` runs out, and `failed.rollback: auto` rolls back without asking.
-- `ssh` has no `user`, so the alias `prod` in `~/.ssh/config` must have a `User`.
+```yaml title="examples/go/deploy.yaml"
+name: worker
+server:
+  ssh: { host: prod }
+  dir: /opt/worker
 
-```yaml title="examples/go/shipdeck.yaml"
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
-# A Go service: a static binary needs nothing from the server.
-name: Worker (prod)
-project: ../../../worker
-dir: /opt/worker
-
-ssh:
-  host: prod
-
-service:
-  name: worker
-  start: ./worker --config config.yaml
-  env_file: .env                  # the service's environment; server commands load it too
-  env:
-    GOMAXPROCS: "2"
-
-pipeline:
-  preflight:
-    run:
+release:
+  steps:
+    preflight:
       local: go vet ./...
-  build:
-    # No version file: the version is the latest git tag (v1.2.0 → 1.2.0).
-    run:
-      local: CGO_ENABLED=0 go build -ldflags "-X main.version=$SHIPDECK_VERSION" -o dist/worker ./cmd/worker
-  pack:
+    build:
+      local: CGO_ENABLED=0 go build -o dist/worker ./cmd/worker
+    rollback:
+      mode: auto
+
+apps:
+  worker:
+    source: .
+    files: [templates, config.yaml, .env]
     binary: dist/worker
-    files:
-      include:
-        project: [templates]
-        deploy: [.env, config.yaml]
-  backup:
-    keep: { open: 3, compressed: 10 }
-  health:
-    check:
-      server: ./worker healthcheck  # runs in current/, retried until timeout_secs
-  failed:
-    rollback: auto                  # no question: roll back at once
+    process:
+      start: ./worker --config config.yaml
+      env: { GOMAXPROCS: "2" }
+      env_file: .env
+      systemd: {}
+    steps:
+      health:
+        server: ./worker healthcheck
 ```
+
+- `CGO_ENABLED=0` makes a static binary, so the server needs no libc for it.
+- `rollback.mode: auto` puts the previous release back without asking.
+- `health.server` runs the app's own health command; there is no URL.
 
 ## Node.js
 
-An app with no binary: built on your PC, with production dependencies installed on the server before the release goes live.
+Built on your PC, with production dependencies installed on the server.
 
-- `start: node dist/main.js` starts with a bare name, so Preflight looks `node` up on the server and the unit uses the full path it finds. With the built-in unit, a `node` under `/home/` or `/root/` (such as one from nvm) is refused, because the unit hides home folders.
-- `requires: [npm]` stops Preflight if the server has no `npm`.
-- The pack ships `dist` and the two package files and leaves out source maps. `"**/*.map"` is quoted because YAML reads a leading `*` as an alias.
-- `setup` runs in the new release folder while the old release still serves: `npm ci --omit=dev` installs only production dependencies, then the migration runs. `check.server` must pass before the switch.
-- `shared: [uploads]` keeps uploaded files in `/opt/web/shared/uploads` across releases.
-- `backup` keeps the shipped files of each release, not `node_modules`: a rollback to a backup runs `setup` again to install them. `keep` holds 3 open releases and the backups of 20 more.
-- `done` and `failed` call a local script. `SHIPDECK_STEP` in `failed` names the step that failed.
+```yaml title="examples/node/deploy.yaml"
+name: web
+server:
+  ssh: { host: prod }
+  dir: /opt/web
 
-```yaml title="examples/node/shipdeck.yaml"
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
-# A Node.js app: built here, production dependencies installed on the server
-# before the release goes live.
-name: Web (prod)
-project: ../../../web
-dir: /opt/web
-
-ssh:
-  host: prod
-
-service:
-  name: web
-  start: node dist/main.js        # node is looked up on the server
-  env_file: .env
-  env: { NODE_ENV: production }
-  shared: [uploads]               # kept in shared/ across releases
-
-pipeline:
-  preflight:
-    requires: [npm]               # the server must have it
-    run:
+release:
+  steps:
+    preflight:
+      requires: [npm]
       local: npm test
-  build:
-    run:
+    build:
       local: [npm ci, npm run build]
-  pack:
-    files:
-      include:
-        project: [dist, package.json, package-lock.json]
-        deploy: [.env]
-      exclude:
-        project: ["**/*.map"]
-  setup:                          # in releases/<id>; the old release still serves
-    run:
-      server: [npm ci --omit=dev, npm run migrate]
-    check:
-      server: node --check dist/main.js
-  backup:                         # the shipped files, kept for rollback; setup remakes node_modules
-    keep: { open: 3, compressed: 20 }
-  health:
-    url: http://127.0.0.1:3000/health
-  done:
-    run:
-      local: ./notify.sh "web $SHIPDECK_VERSION is live"
-  failed:
-    run:
+    backup:
+      keep: { open: 3, compressed: 20 }
+    done:
+      local: ./notify.sh "web {{VERSION}} is live"
+    failed:
       local: ./notify.sh "web failed at $SHIPDECK_STEP"
+
+apps:
+  web:
+    source: .
+    files: [dist, package.json, package-lock.json, .env]
+    exclude: ["**/*.map"]
+    shared: [uploads]
+    process:
+      start: node dist/main.js
+      env: { NODE_ENV: production }
+      env_file: .env
+      systemd: {}
+    steps:
+      setup:
+        server: [npm ci --omit=dev, npm run migrate]
+      health:
+        url: http://127.0.0.1:3000/health
 ```
+
+- `requires: [npm]` makes preflight check that the server has npm.
+- `setup.server` installs production dependencies in the new release while the old one
+  still serves.
+- `uploads` is a shared folder, kept in `shared/apps/web/uploads` and linked into every
+  release.
+- `done` and `failed` get `{{VERSION}}`, `$SHIPDECK_STEP` and the rest of the variables.
 
 ## Python
 
-A source-only app: nothing is built on your PC, and the server builds the virtualenv.
+The source ships as it is; the server makes its virtualenv.
 
-- `include.project: [.]` ships the whole project. shipdeck does not read `.gitignore`, so the excludes leave out tests, caches, compiled files and the local `.venv`.
-- There is no `build` step. The log says `pipeline.build.run.local is empty; shipping the files as they are`.
-- `setup` creates `.venv` inside the new release and installs the requirements into it. Each list item runs in its own shell, which is why the second command calls `.venv/bin/pip` by path.
-- `start: .venv/bin/python -m app` contains a `/`, so it is a path inside the release: `/opt/reports/current/.venv/bin/python`.
-- The backup holds the shipped source, not `.venv`: a rollback to a backup runs `setup` again to build it.
-- There is no `health.url`, so Health waits until `systemctl is-active` says `active` three times in a row, one second apart.
+```yaml title="examples/python/deploy.yaml"
+name: reports
+server:
+  ssh: { host: prod, user: deploy }
+  dir: /opt/reports
 
-```yaml title="examples/python/shipdeck.yaml"
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.3.0/deploy.schema.json
-# A Python app: the source ships as it is; the server builds its virtualenv.
-name: Reports (prod)
-project: ../../../reports
-dir: /opt/reports
-
-ssh:
-  host: prod
-  user: deploy
-
-service:
-  name: reports
-  start: .venv/bin/python -m app
-  env_file: .env
-
-pipeline:
-  preflight:
-    requires: [python3]
-    run:
+release:
+  steps:
+    preflight:
+      requires: [python3]
       local: python3 -m pytest -q
-  pack:
-    files:
-      include:
-        project: [.]              # the whole project...
-        deploy: [.env]
-      exclude:
-        project: [tests, "**/__pycache__", .venv, "**/*.pyc"]   # ...but these
-  setup:
-    run:
-      server:
-        - python3 -m venv .venv
-        - .venv/bin/pip install -q -r requirements.txt
-    check:
-      server: .venv/bin/python -c "import app"
+
+apps:
+  reports:
+    source: .
+    files: [.]
+    exclude: [tests, "**/__pycache__", .venv, "**/*.pyc"]
+    process:
+      start: .venv/bin/python -m app
+      env_file: .env
+      systemd: {}
+    steps:
+      setup:
+        server:
+          - python3 -m venv .venv
+          - .venv/bin/pip install -q -r requirements.txt
+      health:
+        server: .venv/bin/python -c "import app"
 ```
 
-## Static site
+- `files: [.]` ships the whole project; `exclude` leaves out tests and build leftovers.
+- The server makes `.venv` in the release at `setup`, so the backup does not need it.
 
-A site with files and no process. The release switches as usual, but nothing
-runs: nginx serves `current/dist`, so the path stays the same.
+## PM2
 
-```yaml title="examples/static/shipdeck.yaml"
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Naz-Ovh/shipdeck/v0.8.1/docs/schema/deploy.schema.json
-# A static site: dist is packed and switched, and nginx serves current/dist.
-name: Static site
-dir: /var/www/static
-ssh: { host: prod, user: deploy }
-static:
-  root: dist
-pipeline:
-  pack:
-    files:
-      include:
-        project: [dist]
-  health:
-    url: https://static.example.com/
+PM2 runs the app as the SSH user, in cluster mode, without sudo.
+
+```yaml title="examples/pm2/deploy.yaml"
+name: my-api
+server:
+  ssh: { host: prod, shell_env: true }
+  dir: /opt/my-api
+
+apps:
+  my-api:
+    source: .
+    files: [dist, package.json, package-lock.json, .env]
+    process:
+      start: node dist/main.js --port 3000
+      env: { NODE_ENV: production }
+      env_file: .env
+      pm2:
+        options: { instances: max, exec_mode: cluster, max_memory_restart: 300M }
+    steps:
+      setup:
+        server: npm ci --omit=dev
+      health:
+        url: http://127.0.0.1:3000/health
 ```
 
-- `static.root` is relative to the release. `dist` and `./dist` are the same.
-- The pack step stops if the release has no `dist` folder.
-- `health.url` checks the site through nginx.
-- There is no restart and no process log. A monorepo app uses
-  `static: {root: dist}` and is served from `current/apps/<app>/`.
+- The manager is the block: `pm2:` instead of `systemd:`.
+- `options` are PM2's own app settings. Shipdeck refuses the ones it writes itself: name,
+  cwd, script, args, interpreter and env.
+- With PM2 there is no sudo rule; guided setup starts that user's PM2 at boot instead.
+
+## Static
+
+Shipdeck ships the files and switches `current`. Serving them is up to you.
+
+```yaml title="examples/static/deploy.yaml"
+name: static-site
+server:
+  ssh: { host: prod, user: deploy }
+  dir: /var/www/static
+
+apps:
+  site:
+    source: .
+    files: [dist]
+    static: true
+    steps:
+      health:
+        url: https://static.example.com/
+```
+
+- `static: true` means nothing runs on the server.
+- Point your own web server at `<dir>/current/apps/site/dist`; the path does not change
+  between releases.
+- There is no restart and no process log.
+- Add `nginx:` for shipdeck-managed serving once nginx is built. Today a deploy with
+  `nginx:` stops at preflight.
+
+## Several apps in one release
+
+One deploy, one switch, one health gate.
+
+```yaml title="examples/monorepo/deploy.yaml"
+name: product
+server:
+  ssh: { host: prod, user: deploy }
+  dir: /opt/product
+
+release:
+  steps:
+    backup:
+      keep: { open: 3, compressed: 15 }
+    health:
+      timeout_secs: 20
+
+apps:
+  api:
+    source: api
+    files: [api/server.js, api/.env]
+    process:
+      start: node server.js
+      env: { PORT: "3000" }
+      env_file: .env
+      systemd: {}
+    shared: [uploads]
+    steps:
+      health:
+        url: http://127.0.0.1:3000/
+
+  web:
+    source: web
+    files: [web/server.js]
+    process:
+      start: node server.js
+      env: { PORT: "3001" }
+      pm2: {}
+    steps:
+      health:
+        url: http://127.0.0.1:3001/
+```
+
+- Apps run in name order: `api`, then `web`.
+- Process names default to `<name>-<app>`: `product-api` and `product-web`.
+- Each app has its own folder in the release: `apps/api`, `apps/web`.
 
 ## Next
 
 <Cards>
-  <Card title="shipdeck.yaml" href="/docs/reference/shipdeck-yaml" description="Every field in these files, with defaults and rules." />
-  <Card title="Packing files" href="/docs/guides/packing-files" description="How include and exclude patterns pick the files." />
+  <Card title="Config" href="/docs/reference/config" description="Every key in these files, with defaults and rules." />
+  <Card title="Files and layout" href="/docs/guides/files-and-layout" description="How files and patterns decide what ships and where it lands." />
 </Cards>

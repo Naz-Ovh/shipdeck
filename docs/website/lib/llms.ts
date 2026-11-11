@@ -203,7 +203,7 @@ function intro(): string {
     '',
     `> ${appDescription}`,
     '',
-    `These are the docs for ${appName} ${shipdeckVersion()}. shipdeck is a terminal UI: you run \`shipdeck <deploy-root>\`, where the deploy root holds one folder per deployable, each with a \`shipdeck.yaml\`. Deploys run a fixed pipeline (${pipelineSteps.map((s) => s.name).join(', ')}). Each deploy sends only the files the live release lacks, unpacks into its own folder under \`/opt/<app>/releases/\` with the rest copied from the live release and every file checked by SHA-256, and leaves a backup of what it shipped in \`/opt/<app>/backups/\`, and you can roll back to any of them.`,
+    `These are the docs for ${appName} ${shipdeckVersion()}. shipdeck is a terminal UI and a set of commands: you run \`shipdeck\` in the folder that holds \`shipdeck.yaml\` or \`.shipdeck\`, the project file that lists the deploys by name, or name one deploy file with \`--shipdeckfile\`. Each deploy file holds its server, its release and its apps. Deploys run a fixed twelve-step pipeline (${pipelineSteps.map((s) => s.name).join(', ')}), where each step runs your commands first (\`server\`, then \`local\`) and then shipdeck's work. Each deploy sends only the files the live release lacks, unpacks into \`<dir>/releases/<id>/\` with the rest copied from the live release and every file checked by SHA-256, keeps shipdeck's own files in \`.shipdeck/\`, and leaves a backup in \`<dir>/backups/\`, and you can roll back to any release.`,
   ].join('\n');
 }
 

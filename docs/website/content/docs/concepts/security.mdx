@@ -3,76 +3,73 @@ title: Security model
 description: SSH trust, agent validation, privileges, secrets, and recovery limits.
 ---
 
-Shipdeck runs your build commands locally and your server commands over SSH.
-Treat `shipdeck.yaml` as executable code. Review it before deploying.
+Shipdeck runs your build commands locally and your server commands over SSH. Treat a deploy
+file as executable code. Review it before deploying.
 
 ## SSH and the agent
 
-Known host keys must match `~/.ssh/known_hosts`. A changed key is refused.
-The terminal UI asks before trusting a new host; CLI commands require explicit
-trust. SSH host certificates, ProxyJump, and ProxyCommand are not supported.
+Known host keys must match `~/.ssh/known_hosts`. A changed key is refused. The terminal UI
+asks before trusting a new host; CLI commands require explicit `--trust-new-host`. SSH host
+certificates, ProxyJump, and ProxyCommand are not supported.
 
-The engine installs the agent release it needs over HTTPS from GitHub, checks
-SHA-256 and the printed version, and verifies the protocol on startup. The
-checksum comes from the same release host; it is an integrity check, not an
-independent signature. The agent lives at
-`/opt/shipdeck/agent/v<version>/agent` and root owns it and every parent
-directory. It opens no port, starts through sudo, runs as root, and exits on
-disconnect. The SSH account must be root or have password-free sudo.
+The engine installs the agent release it needs over HTTPS from GitHub, checks SHA-256 and the
+printed version, and verifies the protocol on startup. The checksum comes from the same
+release host; it is an integrity check, not an independent signature. The agent lives at
+`/opt/shipdeck/agent/v<version>/agent`, and root owns it and every parent directory. It opens
+no port, starts through sudo, runs as root, and exits on disconnect. The SSH account must be
+root or have password-free sudo.
 
 ## Files and concurrency
 
-Typed agent requests validate project and release paths. Archive handling checks
-paths, symlinks, file modes, size and entry limits, and hashes before activation.
-Uploaded data requires a one-use reservation tied to the held project lock.
+Typed agent requests validate project and release paths. Archive handling checks paths,
+symlinks, file modes, size and entry limits, and hashes before activation. Uploaded data
+requires a one-use reservation tied to the held project lock.
 
-Deploy, rollback, cleanup, and service control share a project lock held by
-the connected agent. Server-command leases prevent another operation from
-overlapping a command that survived a lost agent connection.
+Deploy, rollback, cleanup, and service control share a project lock held by the connected
+agent. Server-command leases prevent another operation from overlapping a command that
+survived a lost agent connection.
 
-These locks coordinate Shipdeck operations. They do not lock out an unrelated
-administrator or another tool changing files or services.
+These locks coordinate Shipdeck operations. They do not lock out an unrelated administrator
+or another tool changing files or services.
 
 ## Shell commands and privileges
 
-The agent handles native file and service work. Installer and systemd steps
-need root. The agent never lets app or PM2 commands inherit that identity: the
-request carries the service user, and the agent starts those commands through
-`runuser` with that user's home and login `PATH`. New deployment files are
-given back to the SSH user, so existing app and service ownership is preserved.
+The agent handles native file and service work. Installer and systemd steps need root. The
+agent never lets app or PM2 commands inherit that identity: the request carries the service
+user, and the agent starts those commands through `runuser` with that user's home and login
+`PATH`. New deployment files are given back to the SSH user, so existing app and process
+ownership is preserved.
 
-Your own pipeline commands are shell by design and run as written. They run as
-the deploy user, not as the root agent. They can modify databases and files
-outside the release folder. Guided setup offers `commands` or `full` access,
-validates the rule with `visudo`, and never saves the sudo password. `full`
-grants password-free sudo for every command. See
+Your own commands are shell by design and run as written. They run as the deploy user, not as
+the root agent. They can modify databases and files outside the release folder. Guided setup
+offers `commands` or `full` access, validates the rule with `visudo`, and never saves the
+sudo password. `full` grants password-free sudo for every command. See
 [server access](/docs/guides/server-access).
 
-The default systemd unit restricts writes to shared data and blocks home folders.
-A custom unit can change those restrictions. PM2 runs under its configured
-service user.
+The default systemd unit restricts writes to shared data and blocks home folders. A custom
+template can change those restrictions. PM2 runs under its configured service user.
 
 ## Secrets
 
-Keep deployment `.env` files out of git. Packed environment files use private
-file modes. A private key or password passed in a CLI argument may appear in
-process listings or shell history; prefer a key file or the documented environment
-variables. Passwords and passphrases retained for a connection stay in memory.
+Keep `.env` files out of git. Packed env files use private file modes. A private key or
+password passed in a CLI argument may appear in process listings or shell history; prefer a
+key file (`--key`, `SHIPDECK_SSH_KEY`) or the documented environment variables. Passwords and
+passphrases retained for a connection stay in memory. A value with `%` belongs in the env
+file, not in `process.env`, because systemd reads `%` in unit files.
 
-Your commands control their own output. Avoid printing credentials into logs,
-release files, or custom notifications.
+Your commands control their own output. Avoid printing credentials into logs, release files,
+or custom notifications.
 
 ## Failure and recovery
 
-The folder switch is atomic, but service restarts, migrations, and your custom
-commands are not one transaction. Rollback restores release files and saved
-service settings; it does not undo a migration.
+The folder switch is atomic, but process restarts, migrations, and your custom commands are
+not one transaction. Rollback restores release files and the restored release's own setup
+state; it does not undo a migration.
 
-A dropped connection during activation is uncertain. Reconnect, inspect the
-live release and services with `shipdeck work`, and read numbered events.
-Interrupted files stay until approved cleanup. Cleanup rechecks the reported
-paths and refuses the live release, backups, and paths outside the project.
+A dropped connection during activation is uncertain. Reconnect, inspect the live release and
+processes with `shipdeck work`, and read numbered events. Interrupted files stay until
+approved cleanup. Cleanup rechecks the reported paths and refuses the live release, backups,
+and paths outside the project.
 
-The completion review covers tested locking, archive, backup, and disconnect
-cases. Disk-full behavior has not been verified. No zero-downtime or upload
-speed guarantee is made.
+The completion review covers tested locking, archive, backup, and disconnect cases. Disk-full
+behavior has not been verified. No zero-downtime or upload speed guarantee is made.

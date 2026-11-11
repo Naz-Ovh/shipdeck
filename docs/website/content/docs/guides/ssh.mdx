@@ -3,32 +3,33 @@ title: SSH and login
 description: How shipdeck finds the server, logs in, checks the host key and keeps one connection per server.
 ---
 
-shipdeck talks to the server over SSH with its own client. It reads the target from `shipdeck.yaml`, can borrow settings from `~/.ssh/config`, and picks the login method from the command line.
+shipdeck talks to the server over SSH with its own client. It reads the target from `server.ssh` in the deploy file, can borrow settings from `~/.ssh/config`, and picks the login method from the command line.
 
-## The target in shipdeck.yaml
+## The target in a deploy file
 
-The `ssh` block has three separate fields. There is no `user@host:port` form: write each part in its own field.
+`server.ssh` has three separate fields. There is no `user@host:port` form: write each part in its own field.
 
-```yaml title="scripts/deploy/my-api-prod/shipdeck.yaml"
-ssh:
-  host: 203.0.113.10   # an address, a DNS name, or a ~/.ssh/config alias
-  user: deploy         # optional when the alias has User
-  port: 2222           # optional; the alias's Port, else 22
+```yaml title="scripts/deploy/production.yaml"
+server:
+  ssh:
+    host: 203.0.113.10   # an address, a DNS name, or a ~/.ssh/config alias
+    user: deploy         # optional when the alias has User
+    port: 2222           # optional; the alias's Port, else 22
 ```
 
 | Field | Required | Default | Rule |
 | --- | --- | --- | --- |
-| `ssh.host` | yes | - | not empty |
-| `ssh.user` | no | the alias's `User` | letters, digits, `.`, `_`, `-` only |
-| `ssh.port` | no | the alias's `Port`, else `22` | an unquoted whole number, at most 65535 |
+| `server.ssh.host` | yes | - | not empty |
+| `server.ssh.user` | no | the alias's `User` | letters, digits, `.`, `_`, `-` only |
+| `server.ssh.port` | no | the alias's `Port`, else `22` | an unquoted whole number, at most 65535 |
 
-If neither `ssh.user` nor the alias gives a user, shipdeck reports at launch: ``` `ssh.user` is not set, and ~/.ssh/config has no User for <host> ```.
+If neither `server.ssh.user` nor the alias gives a user, shipdeck reports at launch: `~/.ssh/config has no User for <host>`.
 
 Screens show the target as `deploy@prod`, or `deploy@prod:2222` when the port is not 22.
 
 ## Using a ~/.ssh/config alias
 
-Set `ssh.host` to an alias and shipdeck reads the matching entry:
+Set `server.ssh.host` to an alias and shipdeck reads the matching entry:
 
 ```ini title="~/.ssh/config"
 Host prod
@@ -39,11 +40,11 @@ Host prod
 ```
 
 ```yaml
-ssh:
-  host: prod
+server:
+  ssh: { host: prod }
 ```
 
-**Values in `shipdeck.yaml` win over the alias.** The address is the alias's `HostName`, else `ssh.host`; the port is `ssh.port`, else `Port`, else 22; the user is `ssh.user`, else `User`. When an alias is in use, the connect log line shows the real address: `connect deploy@prod → 203.0.113.10:2222 (...)`.
+**Values in the deploy file win over the alias.** The address is the alias's `HostName`, else the written host; the port is the written port, else `Port`, else 22; the user is the written user, else `User`. When an alias is in use, the connect log line shows the real address: `connect deploy@prod → 203.0.113.10:2222 (...)`.
 
 ### What is read
 
@@ -63,20 +64,20 @@ The matching follows `ssh`: lines before the first `Host` apply to every host, `
 - An alias that needs `ProxyJump` or `ProxyCommand` is refused at launch:
 
   ```txt
-  ~/.ssh/config reaches <host> through `ProxyJump bastion`, which shipdeck cannot follow yet; put the server's own address in ssh.host
+  ~/.ssh/config reaches <host> through `ProxyJump bastion`, which shipdeck cannot follow yet; put the server's own address in server.ssh.host
   ```
 
 - Any other keyword is ignored. No config file means no settings.
 
 ## Logging in
 
-The login method comes from the command line, never from `shipdeck.yaml`. It applies to every deployable in the run.
+The login method comes from the command line, never from a config file. It applies to every deploy in the run.
 
 | You run | shipdeck does |
 | --- | --- |
-| `shipdeck ./scripts/deploy --key ~/.ssh/id_deploy` | logs in with that private key file |
-| `shipdeck ./scripts/deploy --password 's3cret'` | logs in with that password |
-| `shipdeck ./scripts/deploy` | tries the alias's `IdentityFile`; if there is none, or it is refused or unreadable, asks for a password in the screen |
+| `shipdeck deploy production --key ~/.ssh/id_deploy` | logs in with that private key file |
+| `shipdeck deploy production --password 's3cret'` | logs in with that password |
+| `shipdeck` (the TUI) | tries the alias's `IdentityFile`; if there is none, or it is refused or unreadable, asks for a password in the screen |
 
 `--key` and `--password` cannot be used together. A leading `~` in `--key` is expanded by shipdeck, and a missing file stops at launch: `the key file <path> does not exist`.
 
@@ -87,7 +88,7 @@ shipdeck does not use ssh-agent, and it does not try default keys such as `~/.ss
 `--password` lands in your shell history. In zsh with `HIST_IGNORE_SPACE`, start the command with a space:
 
 ```sh
- shipdeck ./scripts/deploy --password 's3cret'
+ shipdeck deploy production --password 's3cret'
 ```
 
 ### Passwords and passphrases in the screen
@@ -109,7 +110,7 @@ When a password is needed, the "SSH password" dialog asks for it:
 When the key was refused first, the prompt says so: `Password for <label> (key <path> was refused)`. An encrypted key file opens the "Key passphrase" dialog: `Passphrase for <path>`.
 
 - You get 3 attempts; retries show ` (wrong, try again)`.
-- What you type is kept in memory for this run only, so each password or passphrase is asked once: a password per `user@host` (with `:port` when the port is not 22, and `host` as written in `ssh.host`), a passphrase per key file. Deployables that share that target share the password. A rejected one is forgotten.
+- What you type is kept in memory for this run only, so each password or passphrase is asked once: a password per `user@host` (with `:port` when the port is not 22, and the host as written), a passphrase per key file. Deploys that share that target share the password. A rejected one is forgotten.
 - Failures read `<host> refused the password for user <user> 3 times` or `wrong passphrase for <path> 3 times`. Esc gives `login to <label> cancelled`.
 - A refused key: `<host> refused the key <path> for user <user>`.
 
@@ -139,7 +140,7 @@ An unknown server opens the "New server" dialog:
 2. Press `y` to trust and connect. shipdeck appends the key to `~/.ssh/known_hosts`, creating `~/.ssh` if needed.
 3. Press `n`, Esc or Ctrl-C to refuse. The connection stops with `the host key of <host> was not trusted`.
 
-shipdeck connects when you press `c` on a deployable, or when a deploy, the Releases screen or a rollback needs the server, so this dialog appears then.
+shipdeck connects when you press `c` on a deploy, or when a deploy, the Releases screen or a rollback needs the server, so this dialog appears then.
 
 ### A changed key
 
@@ -157,7 +158,7 @@ Host certificates are refused: `<host> offered a host certificate; only plain ho
 
 ## One session per server
 
-shipdeck opens one SSH session per endpoint (host, port, user and key) and reuses it for status checks, the Releases listing, uploads and every deploy step. A closed session reconnects on the next use. Nothing connects until it is needed: `c` on the Deployables screen, a deploy, the Releases listing or a rollback. `c` on a connected deployable closes its session, so every deployable on the same `user@host:port` shows `not connected`.
+shipdeck opens one SSH session per endpoint (host, port, user and key) and reuses it for status checks, the Releases listing, uploads and every deploy step. A closed session reconnects on the next use. Nothing connects until it is needed: `c` on the Deploys screen, a deploy, the Releases listing or a rollback. `c` on a connected deploy closes its session, so every deploy on the same `user@host:port` shows `not connected`.
 
 - Connecting times out after 15 seconds: `connecting to <label> timed out after 15s`.
 - Keepalives go out every 15 seconds.
@@ -165,7 +166,7 @@ shipdeck opens one SSH session per endpoint (host, port, user and key) and reuse
 
 ## Deploying as any SSH user
 
-shipdeck deploys as `ssh.user`, whoever that is. When the user is literally `root`, nothing goes through sudo. Any other user needs write access to `dir` (or the right to create it) and passwordless sudo for five commands, plus three more to stop, start or follow the service from the TUI. [Server access](/docs/guides/server-access) covers the options and the setup script.
+shipdeck deploys as `server.ssh.user`, whoever that is. When the user is literally `root`, nothing goes through sudo. Any other user needs write access to `server.dir` (or the right to create it) and passwordless sudo for five commands per process, plus four more to stop, start or follow it from the TUI. [Server access](/docs/guides/server-access) covers the options and the setup script.
 
 ## Next
 

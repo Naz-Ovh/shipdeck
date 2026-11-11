@@ -1,170 +1,179 @@
-//! Setup, the backup and the rotation of old releases on the server.
+//! Step 5: what stays on the server once a release's folder goes.
 
-use std::collections::{BTreeSet, HashSet};
-use std::time::Instant;
+use std::collections::{BTreeMap, BTreeSet};
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 
-use super::report::{LogKind, Reporter, Unit};
-use super::{Run, Step, count};
-use crate::config::{Deployable, release_path};
+use super::report::LogKind;
+use super::run::{Ended, Run};
+use super::steps::Step;
+use crate::bundle::Plan;
+use crate::config::count;
+use crate::config::glob::{Rules, Verdict};
 use crate::human;
-use crate::release::MANIFEST_FILE;
-use crate::remote::{Place, Server, pick, plan_rotation};
+use crate::remote::{ReleaseFile, Server};
 
 impl Run<'_> {
-    /// Whether `pipeline.setup` has anything to run.
-    pub(super) fn has_setup(&self) -> bool {
-        let setup = &self.config().pipeline.setup;
-        !(setup.run.server.is_empty() && setup.check.server.is_empty())
+    /// Backup: your commands, then `backups/<id>.tar.zst`.
+    pub(super) async fn step_backup(&mut self, server: &Server) -> Result<(), Ended> {
+        self.start(Step::Backup, "packing the backup");
+        let backed = Box::pin(self.backup(server)).await;
+        match backed {
+            Ok(detail) => {
+                self.finish(Step::Backup, detail);
+                Ok(())
+            }
+            Err(err) => Err(self.stop(Step::Backup, &err)),
+        }
     }
 
-    /// Runs `pipeline.setup` in `releases/<id>`: `run.server`, then
-    /// `check.server`. Returns the step's summary.
-    pub(super) async fn set_up(&self, server: &Server, id: &str) -> Result<String> {
-        let setup = &self.config().pipeline.setup;
-        let started = Instant::now();
-        let place = Place::Release(id.to_string());
-        self.remote(server, place.clone(), Step::Setup, &setup.run.server)
-            .await?;
-        self.remote(server, place, Step::Setup, &setup.check.server)
-            .await
-            .map_err(|err| err.context("a setup check failed"))?;
-        Ok(format!(
-            "{} · {}",
-            count(setup.run.server.len() + setup.check.server.len(), "command"),
-            human::duration(started.elapsed())
-        ))
-    }
-
-    /// Packs what `pipeline.backup.files` picks from `releases/<id>` into
-    /// `backups/<id>.tar.zst`. `deployed` is every path the bundle had.
-    pub(super) async fn back_up(
-        &self,
-        server: &Server,
-        id: &str,
-        deployed: &[String],
-    ) -> Result<String> {
-        let config = self.config();
-        let report = self.report;
-        let listing = server.release_files(id).await?;
-        let own: Vec<String> = std::iter::once(MANIFEST_FILE.to_string())
-            .chain(config.service.own_file())
-            .collect();
-        let shared: Vec<String> = config
-            .service
-            .shared
-            .iter()
-            .map(|s| release_path(s))
-            .collect();
-        let deployed: BTreeSet<String> = deployed.iter().cloned().collect();
-        let picked = pick(
-            &listing,
-            &deployed,
-            &own,
-            &shared,
-            &config.pipeline.backup.files,
-        )?;
+    async fn backup(&mut self, server: &Server) -> Result<String> {
+        Box::pin(self.exec(Step::Backup).step(Step::Backup, None)).await?;
+        self.check_lock()?;
+        let id = self
+            .release
+            .clone()
+            .ok_or_else(|| anyhow!("the release is not named"))?;
+        let keep = self.deployment.keep();
+        if keep.compressed == 0 {
+            return Ok("keep.compressed is 0, so no backup is made".into());
+        }
+        let plan = self
+            .plan
+            .clone()
+            .ok_or_else(|| anyhow!("the release has no files"))?;
+        let listing = server.release_files(&id).await?;
+        let picked = select(self, &plan, &listing);
         for pattern in &picked.unmatched {
-            report.log(
+            self.report.log(
                 LogKind::Warn,
-                format!(
-                    "pipeline.backup.files.include: {pattern} matched nothing in releases/{id}"
-                ),
+                format!("backup pattern matched nothing: {pattern}"),
             );
         }
-        let folders: HashSet<&str> = listing
-            .iter()
-            .filter(|f| f.is_dir)
-            .map(|f| f.path.as_str())
-            .collect();
-        let kept = picked
-            .paths
-            .iter()
-            .filter(|p| !folders.contains(p.as_str()))
-            .count();
-        let all = listing.iter().filter(|f| !f.is_dir).count();
-        let bytes = server.back_up(id, &picked.paths, report).await?;
-        report.log(
-            LogKind::Info,
-            format!(
-                "backups/{id}.tar.zst holds {kept} of the release's {} ({})",
-                count(all, "file"),
-                human::bytes(bytes)
-            ),
-        );
-        Ok(format!("{} · {}", count(kept, "file"), human::bytes(bytes)))
+        let bytes = server.back_up(&id, &picked.paths, self.report).await?;
+        Ok(format!(
+            "{} · {}",
+            count(picked.paths.len(), "path"),
+            human::bytes(bytes)
+        ))
     }
+}
 
-    /// Keeps a failed release before the switch for later inspection.
-    pub(super) fn keep_new(&self, id: &str) {
-        let live = match &self.previous {
-            Some(previous) => format!("; {previous} is still live"),
-            None => String::new(),
+/// What goes into one release's backup.
+#[derive(Debug, Default)]
+struct Picked {
+    paths: Vec<String>,
+    unmatched: Vec<String>,
+}
+
+/// Uploaded files and `.shipdeck/`, plus `include`, minus `exclude`, per
+/// release and per app. Shared folders never.
+fn select(run: &Run<'_>, plan: &Plan, listing: &[ReleaseFile]) -> Picked {
+    let link_paths: Vec<&str> = plan.links.iter().map(|link| link.path.as_str()).collect();
+    let deployed: BTreeSet<&str> = plan
+        .entries
+        .iter()
+        .map(|entry| entry.path.as_str())
+        .collect();
+    let release = &run.deployment.steps().backup;
+    let release_rules = Rules::parse(&release.include, &release.exclude).unwrap_or_default();
+    let mut apps: BTreeMap<&str, Rules> = BTreeMap::new();
+    for (name, app) in &run.deployment.deploy.apps {
+        if let Ok(rules) = Rules::parse(&app.steps.backup.include, &app.steps.backup.exclude) {
+            apps.insert(name.as_str(), rules);
+        }
+    }
+    let mut hits: BTreeMap<&str, usize> = BTreeMap::new();
+    for (name, rules) in
+        std::iter::once(("", &release_rules)).chain(apps.iter().map(|(name, rules)| (*name, rules)))
+    {
+        for _ in 0..rules.include.len() {
+            hits.entry(name).or_insert(0);
+        }
+    }
+    let mut release_hits = vec![0; release_rules.include.len()];
+    let mut app_hits: BTreeMap<&str, Vec<usize>> = apps
+        .iter()
+        .map(|(name, rules)| (*name, vec![0; rules.include.len()]))
+        .collect();
+    let mut folders: BTreeMap<String, Verdict> = BTreeMap::new();
+    let mut paths = Vec::new();
+    let mut sorted: Vec<&ReleaseFile> = listing.iter().collect();
+    sorted.sort_by(|a, b| a.path.cmp(&b.path));
+    for file in sorted {
+        let path = file.path.as_str();
+        if link_paths
+            .iter()
+            .any(|link| path == *link || path.starts_with(&format!("{link}/")))
+        {
+            continue;
+        }
+        let (scope, relative, rules, hits_for) = if let Some((name, rest)) = path
+            .strip_prefix("apps/")
+            .and_then(|rest| rest.split_once('/'))
+            && let Some(rules) = apps.get(name)
+        {
+            (
+                name.to_string(),
+                rest,
+                rules,
+                app_hits.get_mut(name).map(std::vec::Vec::as_mut_slice),
+            )
+        } else {
+            (
+                String::new(),
+                path,
+                &release_rules,
+                Some(release_hits.as_mut_slice()),
+            )
         };
-        self.report.log(
-            LogKind::Info,
-            format!("releases/{id} was kept for inspection{live}"),
+        let parent = relative
+            .rsplit_once('/')
+            .and_then(|(parent, _)| folders.get(&format!("{scope}/{parent}")))
+            .copied()
+            .unwrap_or_default();
+        let verdict = match hits_for {
+            Some(hits) => rules.judge(parent, relative, file.is_dir, hits),
+            None => parent,
+        };
+        if file.is_dir {
+            folders.insert(format!("{scope}/{relative}"), verdict);
+        }
+        let generated = path == ".shipdeck" || path.starts_with(".shipdeck/");
+        let wanted = generated
+            || deployed.contains(path)
+            || verdict.included()
+            || (file.is_dir && has_wanted_below(plan, path));
+        if wanted && !verdict.excluded() {
+            paths.push(file.path.clone());
+        }
+    }
+    let mut unmatched: Vec<String> = release_rules
+        .include
+        .iter()
+        .zip(&release_hits)
+        .filter(|(pattern, hits)| !pattern.negated && **hits == 0)
+        .map(|(pattern, _)| pattern.text.clone())
+        .collect();
+    for (name, rules) in &apps {
+        let hits = app_hits.get(name).cloned().unwrap_or_default();
+        unmatched.extend(
+            rules
+                .include
+                .iter()
+                .zip(&hits)
+                .filter(|(pattern, hits)| !pattern.negated && **hits == 0)
+                .map(|(pattern, _)| format!("{name}: {}", pattern.text)),
         );
     }
+    let _ = &mut hits;
+    Picked { paths, unmatched }
 }
 
-/// Points `current` back at `id` and reinstalls its unit.
-pub(super) async fn restore(server: &Server, id: &str, report: &Reporter) -> Result<()> {
-    super::switch_processes(&[server], id, report).await
-}
-
-pub(super) async fn rotate(
-    server: &Server,
-    deployable: &Deployable,
-    report: &Reporter,
-    step: usize,
-) -> Result<String> {
-    let keep = deployable.config.pipeline.backup.keep;
-    let listing = server.list().await?;
-    let plan = plan_rotation(&listing, keep);
-    if plan.is_empty() {
-        let open = listing
-            .entries
-            .iter()
-            .filter(|e| e.kind == crate::remote::Kind::Open)
-            .count();
-        return Ok(format!("{open}/{} open", keep.open));
-    }
-    let total = plan.len() as u64;
-    let mut done = 0;
-    for id in &plan.close {
-        report.progress(
-            step,
-            done,
-            total,
-            Unit::Items,
-            format!("deleting releases/{id}; its backup stays"),
-        );
-        server.drop_open(id, report).await?;
-        done += 1;
-    }
-    for id in &plan.drop_open {
-        report.progress(step, done, total, Unit::Items, format!("deleting {id}"));
-        server.drop_open(id, report).await?;
-        done += 1;
-    }
-    for id in &plan.drop_backup {
-        report.progress(
-            step,
-            done,
-            total,
-            Unit::Items,
-            format!("deleting the backup of {id}"),
-        );
-        server.drop_backup(id, report).await?;
-        done += 1;
-    }
-    report.progress(step, done, total, Unit::Items, "tidied");
-    let deleted: BTreeSet<&String> = plan.drop_open.iter().chain(&plan.drop_backup).collect();
-    Ok(format!(
-        "{} backed up only · {} deleted",
-        plan.close.len(),
-        deleted.len()
-    ))
+/// Whether a folder holds a path that was uploaded.
+fn has_wanted_below(plan: &Plan, folder: &str) -> bool {
+    let prefix = format!("{folder}/");
+    plan.entries
+        .iter()
+        .any(|entry| entry.path.starts_with(&prefix))
 }

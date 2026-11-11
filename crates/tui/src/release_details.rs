@@ -21,7 +21,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let Some(details) = &view.details else {
         return;
     };
-    let dir = &app.deployables[view.deployable].config.service.dir;
+    let dir = &app.deployables[view.deployable].dir();
     let area = frame
         .area()
         .centered(Constraint::Percentage(90), Constraint::Percentage(90));

@@ -5,8 +5,8 @@ use serde_json::Value;
 use shipdeck_protocol::message::request::ServerSetup;
 use shipdeck_protocol::wire::Id;
 
-use crate::config::monorepo::AppDefinition;
-use crate::config::{Deployment, Service};
+use crate::config::Deployment;
+use crate::setup::SetupProcess;
 
 use super::convert;
 use super::session::Session;
@@ -18,14 +18,14 @@ pub async fn run(session: &Session, id: Id, params: Value) {
         let deployment = session.deployment(&asked.deployable)?;
         let pool = session.pool()?;
         let connection = pool
-            .get(deployment.endpoint())
+            .get(&deployment.endpoint)
             .await
             .map_err(|err| convert::failed(&err))?;
-        let services = services(&deployment)?;
-        let dir = deployment_dir(&deployment);
+        let processes = processes(&deployment);
+        let dir = deployment.dir().to_string();
         let report = crate::setup::guided(
             &dir,
-            &services,
+            &processes,
             &connection,
             asked.access,
             asked.sudo_password.as_deref(),
@@ -38,29 +38,13 @@ pub async fn run(session: &Session, id: Id, params: Value) {
     session.reply(id, reply);
 }
 
-fn deployment_dir(deployment: &Deployment) -> String {
-    match deployment {
-        Deployment::Single(deployable) => deployable.config.service.dir.clone(),
-        Deployment::Monorepo(monorepo) => monorepo.config.dir.clone(),
-    }
-}
-
-fn services(deployment: &Deployment) -> Result<Vec<Service>, shipdeck_protocol::wire::ErrorObject> {
-    match deployment {
-        Deployment::Single(deployable) => Ok(vec![deployable.config.service.clone()]),
-        Deployment::Monorepo(monorepo) => {
-            monorepo
-                .config
-                .check_apps()
-                .map_err(|err| convert::failed(&err))?;
-            let mut services = Vec::with_capacity(monorepo.config.apps.len());
-            for (name, definition) in &monorepo.config.apps {
-                let AppDefinition::Inline(app) = definition else {
-                    return Err(convert::failed(&anyhow::anyhow!("unresolved app {name}")));
-                };
-                services.push(app.service(&monorepo.config, name));
-            }
-            Ok(services)
-        }
-    }
+fn processes(deployment: &Deployment) -> Vec<SetupProcess> {
+    deployment
+        .process_apps()
+        .map(|(name, manager)| SetupProcess {
+            name: deployment.process_name(name),
+            manager: Some(manager),
+            user: deployment.run_user(name),
+        })
+        .collect()
 }

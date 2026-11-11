@@ -1,55 +1,70 @@
-//! The second look at a shipdeck.yaml: values that have the right shape but
-//! would be unsafe or ambiguous once they reach a remote shell, a systemd
-//! unit or the release folder.
+//! Every value check a deploy file needs after its shape is known: required
+//! and refused keys, one manager, reserved properties, names and paths.
 
-use std::path::Path;
-
-use super::glob::Pattern;
+use super::names::{is_plain_name, is_program, is_safe_dir};
+use super::paths;
+use super::placeholders::{self, Scope};
 use super::problem::{Problem, Span};
-use super::yaml::Node;
-use super::{
-    Commands, DeployConfigFile, Manager, Program, Service, file_name, inside_path,
-    is_ecosystem_file, is_node, is_plain_name, is_program, is_unit_name, release_path, split_args,
-};
-use crate::release::MANIFEST_FILE;
+use super::types::DeployFile;
 
-pub fn check(config: &DeployConfigFile, root: &Node) -> Vec<Problem> {
+mod app_rules;
+mod file_rules;
+use super::yaml::{Node, Value};
+
+/// The systemd properties shipdeck writes itself.
+const SYSTEMD_OWN: [(&str, &str); 5] = [
+    ("ExecStart", "it comes from `process.start` or `binary`"),
+    ("WorkingDirectory", "the process runs in the app folder"),
+    ("User", "use `systemd.user`"),
+    ("Environment", "use `process.env` or `process.env_file`"),
+    ("EnvironmentFile", "use `process.env_file`"),
+];
+
+/// The PM2 properties shipdeck writes itself.
+const PM2_OWN: [(&str, &str); 6] = [
+    ("name", "use `process.name`"),
+    ("cwd", "the process runs in the app folder"),
+    ("script", "it comes from `process.start` or `binary`"),
+    ("args", "they come from `process.start`"),
+    ("interpreter", "it comes from `process.start`"),
+    ("env", "use `process.env` or `process.env_file`"),
+];
+
+/// Checks a deploy file, with its lines when the YAML tree is given.
+#[must_use]
+pub fn check(deploy: &DeployFile, root: Option<&Node>) -> Vec<Problem> {
     let mut rules = Rules {
+        deploy,
         root,
         problems: Vec::new(),
     };
-    rules.top(config);
-    rules.dir(&config.dir);
-    match (&config.service, &config.static_site) {
-        (Some(service), None) if service.is_static() => rules.static_site(config, service),
-        (Some(service), None) => {
-            rules.service(service, config.pipeline.pack.binary.is_some());
-            rules.pm2(config, service);
-        }
-        (None, Some(site)) => {
-            let service =
-                Service::static_site(config.name.clone(), config.dir.clone(), site.root.clone());
-            rules.static_site(config, &service);
-        }
-        _ => {}
-    }
-    rules.pipeline(config);
-    rules.backup(config);
-    rules.files(config);
+    rules.top();
+    rules.release();
+    rules.apps();
+    rules.steps();
+    rules.placeholders();
     rules.problems
 }
 
+/// Whether a deploy file passes the value checks, without its lines.
+#[must_use]
+pub fn valid(deploy: &DeployFile) -> bool {
+    check(deploy, None).is_empty()
+}
+
 struct Rules<'a> {
-    root: &'a Node,
+    deploy: &'a DeployFile,
+    root: Option<&'a Node>,
     problems: Vec<Problem>,
 }
 
 impl Rules<'_> {
     /// Where `path` was written, or its nearest parent that was.
     fn span(&self, path: &[&str]) -> Option<Span> {
+        let root = self.root?;
         (1..=path.len())
             .rev()
-            .find_map(|len| self.root.span_of(&path[..len]))
+            .find_map(|len| root.span_of(&path[..len]))
     }
 
     fn fail(&mut self, path: &[&str], message: impl Into<String>, label: &str, help: &str) {
@@ -60,639 +75,272 @@ impl Rules<'_> {
         self.problems.push(problem);
     }
 
-    fn top(&mut self, config: &DeployConfigFile) {
-        if config.name.trim().is_empty() {
+    fn top(&mut self) {
+        let name = &self.deploy.name;
+        if name.trim().is_empty() {
+            self.fail(&["name"], "`name` is empty", "empty", "such as `shop`");
+        } else if !name.contains("{{") && (!is_plain_name(name) || name.starts_with('.')) {
             self.fail(
                 &["name"],
-                "`name` is empty",
-                "empty",
-                "such as `My API (prod)`",
+                "`name` is not a plain name",
+                "not allowed",
+                "letters, digits, `.`, `_` and `-`, not starting with `.`",
             );
-        } else if config.name.contains(['\n', '\r']) {
-            self.fail(&["name"], "`name` must be one line", "several lines", "");
         }
-        if config.project.trim().is_empty() {
+        if !is_safe_dir(&self.deploy.server.dir) {
             self.fail(
-                &["project"],
-                "`project` is empty",
-                "empty",
-                "a folder relative to this shipdeck.yaml, such as `../../../web`; leave it out for this folder",
+                &["server", "dir"],
+                "`server.dir` must be an absolute, safe folder",
+                "not allowed",
+                "such as /opt/shop, with no `..`",
             );
         }
-        if config.ssh.host.trim().is_empty() {
-            self.fail(&["ssh", "host"], "`ssh.host` is empty", "empty", "");
+        if self.deploy.server.ssh.host.trim().is_empty() {
+            self.fail(&["server", "ssh", "host"], "`host` is empty", "empty", "");
         }
-        if let Some(user) = &config.ssh.user
+        if let Some(user) = &self.deploy.server.ssh.user
             && !is_plain_name(user)
         {
             self.fail(
-                &["ssh", "user"],
-                "`ssh.user` is not a user name",
+                &["server", "ssh", "user"],
+                "`user` is not a user name",
                 "not allowed",
-                "letters, digits, `.`, `_` and `-` only",
+                "letters, digits, `.`, `_` and `-`",
             );
         }
-        match (&config.service, &config.static_site) {
-            (Some(_), Some(_)) => self.fail(
-                &["static"],
-                "`service` and `static` cannot both be set",
-                "pick one",
-                "remove `static` for a process, or `service` for a static site",
-            ),
-            (None, None) => self.fail(
-                &["service"],
-                "one of `service` or `static` is needed",
-                "nothing to run or serve",
-                "add `service` with `start`, or `static` with `dir` and `root`",
-            ),
-            _ => {}
-        }
-    }
-
-    fn service(&mut self, service: &Service, binary: bool) {
-        self.service_name(service);
-        self.service_run(service, binary);
-        self.service_env(service);
-        self.service_shared(service);
-    }
-
-    /// `service.name`: a unit name, without `.service`.
-    fn service_name(&mut self, service: &Service) {
-        let name = &service.name;
-        if name.ends_with(".service") {
+        if self.deploy.apps.is_empty() {
             self.fail(
-                &["service", "name"],
-                "`service.name` is the name without .service",
-                "drop .service",
-                "",
-            );
-        } else if !is_unit_name(name) {
-            self.fail(
-                &["service", "name"],
-                "`service.name` is not a unit name",
-                "not allowed",
-                "letters, digits, `.`, `_`, `@` and `-` only",
+                &["apps"],
+                "a deploy needs at least one app",
+                "no apps",
+                "add `apps: { web: ... }`",
             );
         }
-    }
-
-    /// `dir`: an absolute folder on the server, for every kind of deploy.
-    fn dir(&mut self, dir: &str) {
-        if !(dir.starts_with('/') && dir.len() > 1) {
-            self.fail(
-                &["dir"],
-                "`dir` must be an absolute path",
-                "not absolute",
-                "such as /opt/my-api",
-            );
-        } else if !dir
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "._/-".contains(c))
-            || dir.split('/').any(|part| part == "..")
-        {
-            self.fail(
-                &["dir"],
-                "`dir` may only use letters, digits, `.`, `_`, `-` and `/`",
-                "not allowed",
-                "and no `..`",
-            );
-        }
-    }
-
-    /// What runs: `service.start`, `service.run_as` and `service.env_file`.
-    fn service_run(&mut self, service: &Service, binary: bool) {
-        let ecosystem = service.manager == Manager::Pm2 && service.pm2.ecosystem.is_some();
-        match &service.start {
-            None if !binary && !ecosystem => self.fail(
-                &["service"],
-                "`service.start` is needed when there is no `pipeline.pack.binary`",
-                "what does the service run?",
-                "such as `start: node dist/main.js`, or `pm2.ecosystem` with `manager: pm2`",
-            ),
-            None => {}
-            Some(_) if ecosystem => self.fail(
-                &["service", "start"],
-                "`service.start` and `pm2.ecosystem` both say what runs",
-                "pick one",
-                "keep `pm2.ecosystem` (your file runs the app), or `service.start` (shipdeck writes the file)",
-            ),
-            Some(start) => {
-                let program = start.split_whitespace().next().unwrap_or_default();
-                if start.trim().is_empty() {
+        let mut processes: Vec<String> = Vec::new();
+        for (name, app) in &self.deploy.apps {
+            if !is_plain_name(name) || name.starts_with('.') {
+                self.fail(
+                    &["apps", name],
+                    format!("app name {name:?} is not a plain name"),
+                    "not allowed",
+                    "letters, digits, `.`, `_` and `-`, not starting with `.`",
+                );
+            }
+            if app.process.is_some() {
+                let process = self.process_name(name);
+                if process.contains('@') {
                     self.fail(
-                        &["service", "start"],
-                        "`service.start` is empty",
-                        "empty",
-                        "",
+                        &["apps", name, "process", "name"],
+                        format!("process name {process:?} holds `@`, which systemd reserves"),
+                        "reserved",
+                        "systemd instances are planned, not supported yet",
                     );
-                } else if start.contains(['\n', '\r', '\\']) {
+                }
+                if processes.contains(&process) {
                     self.fail(
-                        &["service", "start"],
-                        "`service.start` must be one line without backslashes",
-                        "not allowed",
-                        "",
+                        &["apps", name, "process", "name"],
+                        format!("a process named {process:?} already exists"),
+                        "twice",
+                        "give one app's process another name",
                     );
-                } else if split_args(start).is_none() {
-                    self.fail(
-                        &["service", "start"],
-                        "`service.start` has a quote that is never closed",
-                        "unclosed quote",
-                        "quote an argument with spaces like `--title \"my api\"`",
-                    );
-                } else if !is_program(program) {
-                    self.fail(
-                        &["service", "start"],
-                        format!("`service.start` must begin with a program, not {program:?}"),
-                        "not a program",
-                        "a name such as `node`, or a path such as `./my-api` or `/usr/bin/node`",
-                    );
+                } else {
+                    processes.push(process);
                 }
             }
         }
-        if let Some(user) = &service.run_as
-            && !is_plain_name(user)
-        {
-            self.fail(
-                &["service", "run_as"],
-                "`service.run_as` is not a user name",
-                "not allowed",
-                "letters, digits, `.`, `_` and `-` only",
-            );
-        }
-        if let Some(file) = &service.env_file
-            && (!is_program(file) || file.starts_with('/'))
-        {
-            self.fail(
-                &["service", "env_file"],
-                "`service.env_file` must be a path inside the release",
-                "not inside the release",
-                "such as `.env`, shipped with `pipeline.pack.files.include.deploy: [.env]`",
-            );
-        }
     }
 
-    /// `service.env`: variable names and values a unit line can carry.
-    fn service_env(&mut self, service: &Service) {
-        for (key, value) in &service.env {
-            let valid = !key.is_empty()
-                && !key.starts_with(|c: char| c.is_ascii_digit())
-                && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
-            if !valid {
-                self.fail(
-                    &["service", "env", key],
-                    format!("`service.env` key {key:?} is not a variable name"),
-                    "not a variable name",
-                    "letters, digits and `_`, not starting with a digit",
-                );
-            } else if value.contains(['"', '\\', '\n', '\r']) {
-                self.fail(
-                    &["service", "env", key],
-                    format!("`service.env.{key}` must not contain quotes, backslashes or newlines"),
-                    "not allowed",
-                    "put values like this in `service.env_file`",
-                );
-            }
-        }
-    }
-
-    /// `service.shared`: folders inside the release, none of them overlapping.
-    fn service_shared(&mut self, service: &Service) {
-        let mut seen: Vec<String> = Vec::new();
-        for (index, entry) in service.shared.iter().enumerate() {
-            let at = ["service", "shared", &index.to_string()];
-            let stored = release_path(entry);
-            if entry.starts_with('/') || !is_program(entry) || stored.is_empty() {
-                self.fail(
-                    &at,
-                    format!("`service.shared` entry {entry:?} must be a folder inside the release"),
-                    "not allowed",
-                    "such as `uploads` or `data/cache`",
-                );
-            } else if reserved(service).contains(&stored) {
-                self.fail(&at, format!("{stored} belongs to shipdeck"), "reserved", "");
-            } else if let Some(other) = seen.iter().find(|other| overlaps(other, &stored)).cloned()
-            {
-                self.fail(
-                    &at,
-                    format!("`service.shared` lists {stored:?} and {other:?}, which overlap"),
-                    "overlaps",
-                    "keep the outer folder",
-                );
-            } else {
-                seen.push(stored);
-            }
-        }
-    }
-
-    /// `static.root`: files to serve, with no process.
-    fn static_site(&mut self, config: &DeployConfigFile, service: &Service) {
-        let root = service.static_root().unwrap_or_default();
-        if let Err(why) = inside_path(root) {
-            self.fail(
-                &["static", "root"],
-                format!("`static.root` {why}"),
-                "not a folder inside the release",
-                "such as `dist`, shipped with `pipeline.pack.files.include`",
-            );
-        }
-        if config.pipeline.pack.binary.is_some() {
-            self.fail(
-                &["pipeline", "pack", "binary"],
-                "`pipeline.pack.binary` does not apply to a static site",
-                "nothing to run",
-                "remove it, and ship the site with `pipeline.pack.files.include`",
-            );
-        }
-    }
-
-    fn pm2(&mut self, config: &DeployConfigFile, service: &Service) {
-        let pm2 = &service.pm2;
-        if service.manager != Manager::Pm2 {
-            if self.root.span_of(&["service", "pm2"]).is_some() {
-                self.fail(
-                    &["service", "pm2"],
-                    "`service.pm2` is only read with `manager: pm2`",
-                    "not used",
-                    "add `manager: pm2` to `service`, or remove this",
-                );
-            }
-            return;
-        }
-        if let Some(user) = &service.run_as
-            && *user != config.ssh.user.clone().unwrap_or_default()
-        {
-            self.fail(
-                &["service", "run_as"],
-                "PM2 runs the app as the SSH user, so `service.run_as` cannot apply",
-                "not with PM2",
-                "remove it, or log in as that user with `ssh.user`",
-            );
-        }
-        let app = service.pm2_app();
-        let at: &[&str] = if pm2.app.is_some() {
-            &["service", "pm2", "app"]
-        } else {
-            &["service", "name"]
-        };
-        if !is_plain_name(app) {
-            self.fail(
-                at,
-                format!("{app:?} is not a PM2 app name"),
-                "not allowed",
-                "letters, digits, `.`, `_` and `-` only",
-            );
-        } else if app.chars().all(|c| c.is_ascii_digit()) {
-            self.fail(
-                at,
-                format!("{app:?} is not a PM2 app name"),
-                "PM2 reads a number as a process id",
-                "use a name with a letter in it",
-            );
-        }
-        if let Some(file) = &pm2.ecosystem {
-            let at = ["service", "pm2", "ecosystem"];
-            if file.starts_with('/') || !is_program(file) || release_path(file).is_empty() {
-                self.fail(
-                    &at,
-                    "`pm2.ecosystem` must be a file inside the release",
-                    "not inside the release",
-                    "such as `ecosystem.config.js`, shipped with `pipeline.pack.files`",
-                );
-            } else if !is_ecosystem_file(file) {
-                self.fail(
-                    &at,
-                    format!("PM2 does not read {file:?} as an ecosystem file"),
-                    "not an ecosystem file",
-                    "its name must end in .config.js, .config.cjs, .json, .yml or .yaml",
-                );
-            }
-            if !pm2.options.is_empty() {
-                self.fail(
-                    &["service", "pm2", "options"],
-                    "`pm2.options` and `pm2.ecosystem` are both set",
-                    "pick one",
-                    "keep `pm2.ecosystem` (your file, shipdeck.yaml settings ignored), or `pm2.options` (shipdeck writes the file)",
-                );
-            }
-        }
-        if pm2.ecosystem.is_none()
-            && let Some(start) = &service.start
-            && let Some(words) = split_args(start)
-            && let [program, first, ..] = words.as_slice()
-            && is_node(&Program::Tool(program.clone()))
-            && first.starts_with('-')
-        {
-            self.fail(
-                &["service", "start"],
-                format!("with PM2, node's first argument is the script, not {first:?}"),
-                "a node flag",
-                "move node's flags to `pm2.options.node_args`, such as `node_args: [--enable-source-maps]`",
-            );
-        }
-        for key in pm2.options.keys() {
-            if let Some((_, help)) = PM2_OWN_OPTIONS.iter().find(|(own, _)| own == key) {
-                self.fail(
-                    &["service", "pm2", "options", key],
-                    format!("shipdeck sets the PM2 `{key}` itself"),
-                    "set by shipdeck",
-                    help,
-                );
-            }
-        }
-    }
-
-    fn pipeline(&mut self, config: &DeployConfigFile) {
-        let pipeline = &config.pipeline;
-        for (index, tool) in pipeline.preflight.requires.iter().enumerate() {
+    fn release(&mut self) {
+        let release = &self.deploy.release;
+        self.files(&[], &release.files, &release.exclude, &release.shared, None);
+        self.shared(&["release"], &release.shared);
+        let steps = &release.steps;
+        for tool in &steps.preflight.requires {
             if !is_program(tool) {
                 self.fail(
-                    &["pipeline", "preflight", "requires", &index.to_string()],
+                    &["release", "steps", "preflight", "requires"],
                     format!("{tool:?} is not a program name"),
                     "not a program",
                     "a name such as `node`, or an absolute path",
                 );
             }
         }
-        let commands: [(&[&str], &Commands); 10] = [
-            (
-                &["pipeline", "preflight", "run", "local"],
-                &pipeline.preflight.run.local,
-            ),
-            (
-                &["pipeline", "preflight", "run", "server"],
-                &pipeline.preflight.run.server,
-            ),
-            (
-                &["pipeline", "build", "run", "local"],
-                &pipeline.build.run.local,
-            ),
-            (
-                &["pipeline", "setup", "run", "server"],
-                &pipeline.setup.run.server,
-            ),
-            (
-                &["pipeline", "setup", "check", "server"],
-                &pipeline.setup.check.server,
-            ),
-            (
-                &["pipeline", "health", "check", "local"],
-                &pipeline.health.check.local,
-            ),
-            (
-                &["pipeline", "health", "check", "server"],
-                &pipeline.health.check.server,
-            ),
-            (
-                &["pipeline", "done", "run", "local"],
-                &pipeline.done.run.local,
-            ),
-            (
-                &["pipeline", "done", "run", "server"],
-                &pipeline.done.run.server,
-            ),
-            (
-                &["pipeline", "failed", "run", "local"],
-                &pipeline.failed.run.local,
-            ),
-        ];
-        for (path, list) in commands {
-            for (index, command) in list.iter().enumerate() {
-                if command.trim().is_empty() {
-                    let mut at = path.to_vec();
-                    let index = index.to_string();
-                    at.push(&index);
-                    self.fail(&at, "this command is empty", "empty", "remove it");
-                }
-            }
-        }
-        if let Some(file) = &pipeline.build.version_from
+        if let Some(file) = &steps.build.version_from
             && file.trim().is_empty()
         {
             self.fail(
-                &["pipeline", "build", "version_from"],
-                "`pipeline.build.version_from` is empty",
+                &["release", "steps", "build", "version_from"],
+                "`version_from` is empty",
                 "empty",
-                "a file relative to `project`, such as `package.json`",
+                "a file relative to the project folder",
             );
         }
-
-        let health = &pipeline.health;
-        if let Some(url) = &health.url {
-            if !(url.starts_with("http://") || url.starts_with("https://")) {
-                self.fail(
-                    &["pipeline", "health", "url"],
-                    "`pipeline.health.url` must start with http:// or https://",
-                    "not a URL",
-                    "such as http://127.0.0.1:3000/health",
-                );
-            } else if url.contains(['\'', '"', '\n', '\r', ' ']) {
-                self.fail(
-                    &["pipeline", "health", "url"],
-                    "`pipeline.health.url` must not contain quotes, spaces or newlines",
-                    "not allowed",
-                    "",
-                );
-            }
-        }
-        if health.timeout_secs < 3 {
+        self.health(
+            &["release", "steps", "health"],
+            Some(&steps.health),
+            self.deploy.release.steps.health.url.is_some(),
+        );
+        let keep = steps.backup.keep.unwrap_or_default();
+        if keep.open < 1 {
             self.fail(
-                &["pipeline", "health", "timeout_secs"],
-                "`pipeline.health.timeout_secs` must be at least 3",
-                "too short",
-                "a release counts as up after 3 healthy seconds",
-            );
-        }
-    }
-
-    fn backup(&mut self, config: &DeployConfigFile) {
-        let backup = &config.pipeline.backup;
-        if backup.keep.open < 1 {
-            self.fail(
-                &["pipeline", "backup", "keep", "open"],
-                "`pipeline.backup.keep.open` must be at least 1",
-                "the live release counts",
+                &["release", "steps", "backup", "keep", "open"],
+                "`keep.open` must be at least 1; the live release counts",
+                "too small",
                 "",
             );
         }
-        let files = &backup.files;
-        let shared: Vec<String> = config.service.as_ref().map_or_else(Vec::new, |service| {
-            service.shared.iter().map(|s| release_path(s)).collect()
-        });
-        for (list, entries) in [("include", &files.include), ("exclude", &files.exclude)] {
-            let mut literals: Vec<String> = Vec::new();
-            for (index, text) in entries.iter().enumerate() {
-                let index = index.to_string();
-                let at = ["pipeline", "backup", "files", list, &index];
-                let pattern = match Pattern::parse(text) {
-                    Ok(pattern) => pattern,
-                    Err(why) => {
-                        let help = if why.contains("..") {
-                            "a pattern stays inside the release"
-                        } else {
-                            ""
-                        };
-                        self.fail(&at, format!("{text:?} {why}"), "not a usable pattern", help);
-                        continue;
-                    }
-                };
-                let Some(literal) = pattern.literal() else {
-                    continue;
-                };
-                if literals.contains(&literal) {
-                    self.fail(
-                        &at,
-                        format!("{text:?} is listed twice"),
-                        "again",
-                        "remove one",
-                    );
-                } else if list == "include"
-                    && let Some(shared) = shared
-                        .iter()
-                        .find(|shared| !literal.is_empty() && overlaps(shared, &literal))
-                {
-                    self.fail(
-                        &at,
-                        format!("{literal:?} is in `service.shared`, so no backup holds it"),
-                        "shared across releases",
-                        &format!("{shared} lives in shared/{shared}, outside every release"),
-                    );
-                } else {
-                    literals.push(literal);
-                }
-            }
-        }
-        let brings_something = files.deployed || files.include.iter().any(|p| !p.starts_with('!'));
-        if !brings_something && backup.keep.compressed > 0 {
-            self.fail(
-                &["pipeline", "backup", "files"],
-                "the backup would hold nothing but release.json and the service file",
-                "nothing to back up",
-                "set `deployed: true`, list paths in `include`, or keep no backups with `keep.compressed: 0`",
-            );
-        }
+        self.patterns(
+            &["release", "steps", "backup", "include"],
+            &steps.backup.include,
+            "include",
+        );
+        self.patterns(
+            &["release", "steps", "backup", "exclude"],
+            &steps.backup.exclude,
+            "exclude",
+        );
+        self.commands(
+            &["release", "steps"],
+            [
+                ("preflight", &steps.preflight.local, &steps.preflight.server),
+                ("build", &steps.build.local, &steps.build.server),
+                ("upload", &steps.upload.local, &steps.upload.server),
+                ("setup", &steps.setup.local, &steps.setup.server),
+                ("backup", &steps.backup.local, &steps.backup.server),
+                ("switch", &steps.switch.local, &steps.switch.server),
+                ("restart", &steps.restart.local, &steps.restart.server),
+                ("nginx", &steps.nginx.local, &steps.nginx.server),
+                ("health", &steps.health.local, &steps.health.server),
+                ("done", &steps.done.local, &steps.done.server),
+                ("rollback", &steps.rollback.local, &steps.rollback.server),
+                ("failed", &steps.failed.local, &steps.failed.server),
+            ],
+        );
     }
 
-    fn files(&mut self, config: &DeployConfigFile) {
-        let pack = &config.pipeline.pack;
-        let files = &pack.files;
-        let reserved: Vec<String> = config
-            .service
-            .as_ref()
-            .map_or_else(|| vec![MANIFEST_FILE.to_string()], reserved);
-        if let Some(binary) = &pack.binary {
-            if binary.trim().is_empty() {
-                self.fail(
-                    &["pipeline", "pack", "binary"],
-                    "`pipeline.pack.binary` is empty",
-                    "empty",
-                    "",
-                );
-            } else if reserved.contains(&file_name(binary)) {
-                self.fail(
-                    &["pipeline", "pack", "binary"],
-                    format!("{} belongs to shipdeck", file_name(binary)),
-                    "reserved",
-                    "rename the binary",
-                );
-            }
-        }
-        let ships_something = pack.binary.is_some()
-            || [&files.include.project, &files.include.deploy]
-                .iter()
-                .any(|list| list.iter().any(|p| !p.starts_with('!')));
-        if !ships_something {
-            self.fail(
-                &["pipeline", "pack"],
-                "nothing to ship",
-                "empty",
-                "set `pipeline.pack.binary` (a compiled program), `pipeline.pack.files.include` (build output such as dist), or both",
-            );
-        }
-
-        for (list, source, entries) in [
-            ("include", "project", &files.include.project),
-            ("include", "deploy", &files.include.deploy),
-            ("exclude", "project", &files.exclude.project),
-            ("exclude", "deploy", &files.exclude.deploy),
-        ] {
-            let mut literals: Vec<String> = Vec::new();
-            for (index, text) in entries.iter().enumerate() {
-                let index = index.to_string();
-                let at = ["pipeline", "pack", "files", list, source, &index];
-                let pattern = match Pattern::parse(text) {
-                    Ok(pattern) => pattern,
-                    Err(why) => {
-                        let help = if why.contains("..") {
-                            "a pattern stays inside its source; move the file, or point `project` higher"
-                        } else {
-                            ""
-                        };
-                        self.fail(&at, format!("{text:?} {why}"), "not a usable pattern", help);
-                        continue;
-                    }
-                };
-                let Some(literal) = pattern.literal() else {
-                    continue;
-                };
-                if list == "include" && reserved.contains(&literal) {
-                    self.fail(
-                        &at,
-                        format!("{literal} belongs to shipdeck"),
-                        "reserved",
-                        "",
-                    );
-                } else if list == "include" && literal.is_empty() && source == "deploy" {
-                    // `.` is fine: shipdeck.yaml itself is always left out.
-                } else if literals.contains(&literal) {
-                    self.fail(
-                        &at,
-                        format!("{text:?} is listed twice"),
-                        "again",
-                        "remove one",
-                    );
-                } else if list == "include"
-                    && let Some(shared) = config
-                        .service
-                        .as_ref()
-                        .into_iter()
-                        .flat_map(|service| service.shared.iter())
-                        .map(|s| release_path(s))
-                        .find(|shared| !literal.is_empty() && overlaps(shared, &literal))
-                {
-                    self.fail(
-                        &at,
-                        format!("{literal:?} is in `service.shared`, so it cannot be shipped too"),
-                        "shared across releases",
-                        &format!("every release links {shared} to shared/{shared}; leave it out of the pack"),
-                    );
-                } else {
-                    literals.push(literal);
-                }
-            }
+    fn apps(&mut self) {
+        for (name, app) in &self.deploy.apps {
+            self.app(name, app);
         }
     }
 }
 
-/// The files shipdeck writes into every release.
-fn reserved(service: &Service) -> Vec<String> {
-    let mut files = vec![MANIFEST_FILE.to_string()];
-    files.extend(service.own_file());
-    files
+impl Rules<'_> {
+    fn steps(&mut self) {
+        let _ = &self.deploy.release.steps;
+        let _ = &self.deploy.apps;
+    }
+
+    fn process_name(&self, app: &str) -> String {
+        self.deploy
+            .apps
+            .get(app)
+            .and_then(|app| app.process.as_ref())
+            .and_then(|process| process.name.clone())
+            .unwrap_or_else(|| format!("{}-{app}", self.deploy.name))
+    }
+
+    /// Every placeholder in every string, with the scope of its place.
+    fn placeholders(&mut self) {
+        let Some(root) = self.root else {
+            return;
+        };
+        let mut path = Vec::new();
+        self.walk(root, &mut path);
+    }
+
+    fn walk(&mut self, node: &Node, path: &mut Vec<String>) {
+        match &node.value {
+            Value::Scalar { text, .. } => {
+                let scope = self.scope(path);
+                if let Err(bad) = placeholders::check(text, scope) {
+                    let refs: Vec<&str> = path.iter().map(String::as_str).collect();
+                    let mut problem = Problem::new(bad.message).at(Some(node.span)).label("here");
+                    if let Some(help) = bad.help {
+                        problem = problem.help(help);
+                    }
+                    let _ = refs;
+                    self.problems.push(problem);
+                }
+            }
+            Value::Seq(items) => {
+                for item in items {
+                    self.walk(item, path);
+                }
+            }
+            Value::Map(entries) => {
+                for (key, child) in entries {
+                    path.push(key.text.clone());
+                    self.walk(child, path);
+                    path.pop();
+                }
+            }
+        }
+    }
+
+    /// Where a string at `path` is, and which names have a value there.
+    fn scope(&self, path: &[String]) -> Scope {
+        let in_app = path.first().is_some_and(|part| part == "apps") && path.len() > 1;
+        let app_name = in_app.then(|| path[1].as_str());
+        let app_has_process = app_name
+            .and_then(|name| self.deploy.apps.get(name))
+            .is_some_and(|app| app.process.is_some());
+        let preflight = path
+            .windows(2)
+            .any(|pair| pair[0] == "steps" && pair[1] == "preflight");
+        let early = preflight
+            || path.first().is_some_and(|part| part == "server")
+            || path.first().is_some_and(|part| part == "name");
+        let release = !early;
+        if in_app {
+            Scope::app(app_has_process, release)
+        } else if release {
+            Scope::RELEASE
+        } else {
+            Scope::EARLY
+        }
+    }
 }
 
-/// The settings shipdeck writes into the PM2 app itself.
-const PM2_OWN_OPTIONS: [(&str, &str); 3] = [
-    ("name", "set `service.pm2.app`"),
-    ("cwd", "the app runs in `current`"),
-    ("env", "set `service.env` or `service.env_file`"),
-];
+/// A YAML option value a unit line can carry: text, a number or a list.
+pub(super) fn is_option_value(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Null
+        | serde_json::Value::String(_)
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_) => true,
+        serde_json::Value::Array(items) => items.iter().all(|item| {
+            matches!(
+                item,
+                serde_json::Value::String(_)
+                    | serde_json::Value::Number(_)
+                    | serde_json::Value::Bool(_)
+            )
+        }),
+        serde_json::Value::Object(_) => false,
+    }
+}
 
-/// `a` and `a/b` overlap; `a` and `ab` do not.
-fn overlaps(a: &str, b: &str) -> bool {
-    let (a, b) = (Path::new(a), Path::new(b));
-    a.starts_with(b) || b.starts_with(a)
+/// `a` when `path` is `a` or inside it; `path` itself when `a` is empty.
+pub(super) fn inside(base: &str, path: &str) -> bool {
+    if base.is_empty() || base == "." {
+        return true;
+    }
+    path == base || path.starts_with(&format!("{base}/"))
+}
+
+/// The first part of a pattern that has no wildcard.
+pub(super) fn wildcard_base(text: &str) -> String {
+    let mut parts = Vec::new();
+    for part in text.split('/') {
+        if paths::has_wildcard(part) {
+            break;
+        }
+        parts.push(part);
+    }
+    parts.join("/")
 }
 
 #[cfg(test)]
-#[path = "rules_test.rs"]
+#[path = "rules_tests.rs"]
 mod tests;

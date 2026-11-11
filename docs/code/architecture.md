@@ -5,16 +5,19 @@ workspace: the engine does the work, the frontends show what it reports.
 
 ## Crates and apps
 
-- `crates/engine/` (`shipdeck-engine`): `config` (shipdeck.yaml: types that
-  are the JSON Schema, the line-aware YAML tree, the launch check, globs),
-  `build` (version, local commands, ELF checks), `bundle` (picking files,
-  their hashes, the fingerprint and the receipt, tar.zst, unit), `ssh` (sessions,
-  login, host keys, `~/.ssh/config` aliases), `remote` (server scripts; the backup and which files go in it;
-  the delta and its check at unpack; the service by hand),
-  `release` (ids, release.json), `setup` (the server-setup.sh URL),
-  `deploy` (the deploy and rollback flows, `report` for progress),
-  `init` (the presets and the new deployable folder), `rpc` (the engine
-  process: the loop, the methods, and what it reports).
+- `crates/engine/` (`shipdeck-engine`): `config` (the project file and the
+  deploy file: the types that are the JSON Schema, the line-aware YAML tree,
+  the launch check, placeholders, paths, globs), `build` (version, local
+  commands, runners, ELF checks), `bundle` (the release plan: paths, hashes,
+  the fingerprint and the receipt, tar.zst, the unit and PM2 file), `ssh`
+  (sessions, login, host keys, `~/.ssh/config` aliases), `remote` (server
+  scripts; the backup and which files go in it; the delta and its check at
+  upload; the process by hand), `release` (ids, release.json), `setup` (the
+  server-setup.sh URL), `deploy` (one pipeline, split by step: preflight,
+  build, upload, backup, activation, rollback, `report` for progress), `tree`
+  (the next release's paths), `init` (the presets and the project and deploy
+  files), `rpc` (the engine process: the loop, the methods, and what it
+  reports).
 - `crates/protocol/` (`shipdeck-protocol`): every message between the engine
   and an app, the JSON Schema made from those types, and the connection both
   ends use. No engine logic lives here. See [protocol.md](protocol.md).

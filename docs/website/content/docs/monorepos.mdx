@@ -3,63 +3,67 @@ title: Monorepos
 description: Deploy several apps as one release.
 ---
 
-A monorepo deploy has one `name`, one top-level `dir`, and named `apps`.
-Use `dir` and `apps` instead of a single `service` block.
+A deploy can hold several apps. They share one release, one switch and one health gate, and
+each app has its own folder in it: `apps/<app>`.
 
 ```yaml
 name: product
-ssh: {host: prod, user: deploy}
-dir: /opt/product
-process_manager: {name: systemd}
-pipeline:
-  pack: {files: {include: {project: [server.js]}}}
-  backup: {keep: {open: 3, compressed: 15}}
+server:
+  ssh: { host: prod, user: deploy }
+  dir: /opt/product
+
+release:
+  files: [package.json, packages]        # shared by every app
+  steps:
+    backup:
+      keep: { open: 3, compressed: 15 }
+    health:
+      timeout_secs: 20
+
 apps:
   api:
-    project: api
-    start: node server.js
-    env: {PORT: '3000'}
-    process_manager: {name: pm2}
+    source: services/api
+    files: [services/api/dist]
+    process:
+      start: node dist/main.js
+      env: { PORT: "3000" }
+      pm2: {}
+
   web:
-    project: web
-    static: {root: dist}
-    pipeline: {pack: {files: {include: {project: [dist]}}}}
+    source: apps/web
+    files: [apps/web/dist]
+    static: true
 ```
 
 A `static` app has files and no process. `web` is served from
-`/opt/product/current/apps/web/dist`; point nginx there once. One release can
-mix process and static apps.
+`/opt/product/current/apps/web/dist`; point your own web server there. One release can mix
+process and static apps.
 
-An app can also name a YAML file relative to the main deploy file:
-`api: configs/api.yaml`. App projects must stay inside the repository project.
-An app manager replaces the whole global manager section. Other pipeline fields
-inherit defaults and replace matching fields. Lists replace lists.
+Rules that keep it predictable:
 
-Global commands run once, then explicit app commands run in app-name order.
-Local commands use the repository or app project folder. Setup commands use the
-new release root or `apps/<app>`. Health and done use the corresponding live
-folders. Preflight server commands use the shared deployment folder.
+- Apps run in name order, everywhere: commands, restarts and health checks.
+- Nothing is copied from `release` into an app. A setting that applies to one app is written
+  under that app.
+- Process names default to `<name>-<app>`, so two apps in one deploy never share a unit:
+  `product-api`, `product-web`.
+- A static app in a mixed deploy is skipped by restart; the others still restart.
 
-One archive carries every app, process file, and saved release setting.
-Shipdeck verifies it, runs setup, creates one backup, switches once, restarts
-each process app, and checks every app. Global retention and rollback policy apply to
-the shared release. App backup rules select paths inside each app folder.
+Deploying only one app is not a mode: it is a deploy with one app. When you want a single app
+to move on its own, give it its own deploy file and list both in the project file:
 
-A static app accepts `project`, `static` and `pipeline`. It has no `start`,
-`process_manager`, `env`, `env_file` or `shared`. Its `static.root` is relative
-to `apps/<app>` and must be in the packed files.
+```yaml
+deploys:
+  api: deploy/api.yaml
+  web: deploy/web.yaml
+```
 
-App `shared` folders live under `shared/apps/<app>` and survive release changes.
-They are excluded from backups. Rollback preserves shared data.
+Rollback restores the whole release, apps included, from the settings saved with it. An app
+added or removed since then is handled: it is installed or retired as the restored settings
+say. See [Releases](/docs/guides/releases).
 
-Manual and automatic rollback use saved release settings, including removed or
-added apps and manager changes. Compressed backups are unpacked and set up again.
-External changes, such as database migrations, are not undone.
+## Next
 
-Use the normal `deploy`, `rollback`, and `releases` commands, or open the TUI.
-Status and service controls cover the process apps. A static app shows
-`static` and has no logs or controls. Combined logs label each process app.
-Run `shipdeck man details monorepo` for execution details.
-
-Nginx routing and oxmgr remain future work. A static app still needs its nginx
-`root` set once, outside shipdeck.
+<Cards>
+  <Card title="Examples" href="/docs/guides/examples" description="A full two-app deploy file." />
+  <Card title="Pipeline" href="/docs/guides/pipeline" description="Where each app's commands run." />
+</Cards>

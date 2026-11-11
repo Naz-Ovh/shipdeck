@@ -1,16 +1,19 @@
-//! `shipdeck init`: a new deployable folder under the deploy root, with a
-//! `shipdeck.yaml` written from a preset. What it writes goes through the same
-//! checks as a launch before anything touches the disk.
+//! `shipdeck init`: a project file and a deploy file, written from a preset.
+//! What it writes goes through the same checks as a launch.
 
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
-use crate::config::{Deployable, FILE_NAMES, FileProblems, Manager, config_file, schema};
+use crate::config::{DeployFile, FileProblems, Manager, parse_deploy};
 
 /// The `.env` every preset ships; it starts empty and stays out of git.
 const ENV_FILE: &str = ".env";
+/// The deploy file's name, beside the project file.
+const DEPLOY_FILE: &str = "deploy.yaml";
+/// Where the README lists every field.
+const DOCS: &str = concat!(env!("CARGO_PKG_REPOSITORY"), "#the-deploy-file");
 
 /// What the app is written in, and so how it is built and run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,6 +74,15 @@ impl Preset {
             Preset::Python => "the source ships; the server builds its virtualenv",
         }
     }
+
+    /// A port for the example health URL.
+    fn port(self) -> u16 {
+        match self {
+            Preset::Node | Preset::Bun => 3000,
+            Preset::Python => 8000,
+            _ => 8080,
+        }
+    }
 }
 
 impl fmt::Display for Preset {
@@ -79,10 +91,10 @@ impl fmt::Display for Preset {
     }
 }
 
-/// Everything `init` needs to write a deployable.
+/// Everything `init` needs to write a deploy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewDeployable {
-    /// The folder's name, also `name` and `service.name`.
+    /// The deploy's name, also the default process name.
     pub name: String,
     pub preset: Preset,
     pub manager: Manager,
@@ -90,135 +102,139 @@ pub struct NewDeployable {
     pub host: String,
     /// Left out to use the alias's `User`.
     pub user: Option<String>,
-    /// The source folder, relative to the new folder.
+    /// The app's source folder, as the config file sees it.
     pub project: String,
 }
 
 impl NewDeployable {
-    /// The `shipdeck.yaml` text, with a short comment on each field.
+    /// The deploy file's text.
     #[must_use]
     pub fn yaml(&self) -> String {
         let mut y = Yaml::default();
-        y.raw(&schema::modeline());
+        y.raw(&crate::config::schema::modeline());
         y.raw(&format!("# {}", self.comment()));
         y.raw(&format!("# Every field: {DOCS}"));
         y.raw("");
-        y.line(
-            0,
-            &format!("name: {}", quote(&self.name)),
-            "shown in shipdeck and as the service's description",
-        );
-        y.line(
-            0,
-            &format!("project: {}", quote(&self.project)),
-            "your source, relative to this file; local commands run there",
-        );
-        y.line(
-            0,
-            &format!("dir: {}", quote(&format!("/opt/{}", self.name))),
-            "on the server: current/, releases/, backups/, shared/",
-        );
-        y.raw("");
-        self.ssh(&mut y);
-        self.service(&mut y);
-        y.raw("");
-        y.raw("pipeline:");
-        self.pipeline(&mut y);
-        self.pipeline_notes(&mut y);
+        self.name_and_server(&mut y);
+        self.release(&mut y);
+        self.app(&mut y);
         y.0
     }
 
-    /// The `ssh:` block: where to connect and as whom.
-    fn ssh(&self, y: &mut Yaml) {
-        y.raw("ssh:");
+    /// `name`, `server` and the blank line after them.
+    fn name_and_server(&self, y: &mut Yaml) {
         y.line(
-            2,
+            0,
+            &format!("name: {}", quote(&self.name)),
+            "the deploy's name; process names start with it",
+        );
+        y.raw("");
+        y.raw("server:");
+        y.raw("  ssh:");
+        y.line(
+            4,
             &format!("host: {}", quote(&self.host)),
             "an address, or an alias from ~/.ssh/config",
         );
         match &self.user {
             Some(user) => y.line(
-                2,
+                4,
                 &format!("user: {}", quote(user)),
                 "logs in and deploys as this user",
             ),
-            None => y.line(2, "# user: deploy", "default: the alias's User"),
+            None => y.line(4, "# user: deploy", "default: the alias's User"),
         }
-        y.line(2, "# port: 22", "default: the alias's Port, else 22");
+        y.line(
+            2,
+            &format!("dir: {}", quote(&format!("/opt/{}", self.name))),
+            "current/, releases/, backups/, shared/",
+        );
+        y.raw("");
     }
 
-    /// The `service:` block: what runs, where, and its environment.
-    fn service(&self, y: &mut Yaml) {
-        let name = &self.name;
-        let pm2 = self.manager == Manager::Pm2;
-        y.raw("service:");
-        let unit = if pm2 {
-            "the PM2 app's name".to_string()
-        } else {
-            format!("the unit: {name}.service")
-        };
-        y.line(2, &format!("name: {}", quote(name)), &unit);
-        if pm2 {
+    /// `release:`: the requires, the build and the rollback mode.
+    fn release(&self, y: &mut Yaml) {
+        y.raw("release:");
+        y.raw("  steps:");
+        if let Some(tool) = self.requires() {
+            y.raw("    preflight:");
             y.line(
-                2,
-                "manager: pm2",
-                "runs as the SSH user, no sudo; the server needs pm2",
-            );
-        } else {
-            y.line(
-                2,
-                "manager: systemd",
-                "or pm2: runs as the SSH user, no sudo",
+                6,
+                &format!("requires: [{tool}]"),
+                "the server must have these",
             );
         }
-        self.start(y);
-        y.line(
-            2,
-            &format!("env_file: {ENV_FILE}"),
-            "the app's environment: fill in the .env next to this file",
-        );
-        y.line(
-            2,
-            "# shared: [uploads]",
-            "folders kept across releases, in shared/",
-        );
-        if pm2 {
-            y.line(2, "# pm2:", "");
-            y.line(2, "#   options:", "PM2's own app properties:");
+        if let Some(build) = self.build() {
+            y.raw("    build:");
             y.line(
-                2,
-                "#     max_memory_restart: 300M",
-                "https://pm2.keymetrics.io/docs/usage/application-declaration/",
+                6,
+                &format!("local: {build}"),
+                "runs here, before the files are collected",
             );
         }
+        y.raw("    rollback:");
+        y.line(6, "mode: ask", "ask | auto | off");
+        y.raw("");
     }
 
-    /// The commented pipeline fields that are left off by default.
-    fn pipeline_notes(&self, y: &mut Yaml) {
-        y.raw("  # What of each release stays for rollback once its folder goes.");
-        y.raw("  # backup:");
-        y.raw("  #   files:");
+    /// `apps:`: one app with its source, files, process and steps.
+    fn app(&self, y: &mut Yaml) {
+        y.raw("apps:");
+        y.raw(&format!("  {}:", self.name));
         y.line(
-            2,
-            "#     include: [data]",
-            "files setup made that it cannot make again",
+            4,
+            &format!("source: {}", quote(&self.project)),
+            "your source, on your PC",
         );
+        let files = self.files();
+        if !files.is_empty() {
+            y.line(
+                4,
+                &format!("files: [{}]", files.join(", ")),
+                "what reaches the server",
+            );
+        }
+        if let Some(binary) = self.binary() {
+            y.line(
+                4,
+                &format!("binary: {binary}"),
+                "lands in the app folder with mode 0755",
+            );
+        }
+        y.raw("    process:");
+        if let Some(start) = self.start() {
+            y.line(
+                6,
+                &format!("start: {}", quote(&start)),
+                "runs in the app folder",
+            );
+        }
+        if let Some(env) = self.env() {
+            y.line(
+                6,
+                &format!("env: {{ {env} }}"),
+                "set for the app and its commands",
+            );
+        }
+        match self.manager {
+            Manager::Systemd => y.raw("      systemd: {}"),
+            Manager::Pm2 => y.raw("      pm2: {}"),
+            Manager::Oxmgr => y.raw("      oxmgr: {}"),
+        }
+        y.raw("    steps:");
+        if let Some(setup) = self.setup() {
+            y.raw("      setup:");
+            y.line(
+                8,
+                &format!("server: {}", quote(&setup)),
+                "runs on the server in the new release",
+            );
+        }
+        y.raw("      health:");
         y.line(
-            2,
-            "#   keep: { open: 5, compressed: 15 }",
-            "releases kept unpacked, then as backups",
-        );
-        y.raw("  # Waits for the service to be active; with a url, also until it answers 2xx.");
-        y.raw("  # health:");
-        y.raw(&format!(
-            "  #   url: http://127.0.0.1:{}/health",
-            self.port()
-        ));
-        y.raw("  # failed:");
-        y.line(
-            2,
-            "#   rollback: ask",
-            "or auto: roll back at once when it fails",
+            8,
+            &format!("url: http://127.0.0.1:{}/", self.preset.port()),
+            "must answer 2xx before the release is live",
         );
     }
 
@@ -236,66 +252,18 @@ impl NewDeployable {
         format!("{what}: {}.", self.preset.summary())
     }
 
-    /// A port for the example health url.
-    fn port(&self) -> u16 {
+    fn requires(&self) -> Option<&'static str> {
         match self.preset {
-            Preset::Node | Preset::Bun => 3000,
-            Preset::Python => 8000,
-            _ => 8080,
-        }
-    }
-
-    /// `start` and `env` under `service`.
-    fn start(&self, y: &mut Yaml) {
-        let name = &self.name;
-        match self.preset {
-            Preset::Node => {
-                y.line(
-                    2,
-                    "start: node dist/main.js",
-                    "run in the release; node is looked up on the server",
-                );
-                y.line(
-                    2,
-                    "env: { NODE_ENV: production }",
-                    "set for the app and server commands",
-                );
-            }
-            Preset::Java | Preset::Kotlin => y.line(
-                2,
-                &format!("start: build/install/{name}/bin/{name}"),
-                "the script installDist writes; it runs java",
-            ),
-            Preset::Python => y.line(
-                2,
-                "start: .venv/bin/python main.py",
-                "run in the release; point it at your entry point",
-            ),
-            Preset::Go | Preset::Rust | Preset::Dart | Preset::Bun => y.line(
-                2,
-                &format!("# start: ./{name} --port {}", self.port()),
-                "default: the binary below, with no arguments",
-            ),
-        }
-    }
-
-    fn pipeline(&self, y: &mut Yaml) {
-        let name = &self.name;
-        let requires = match self.preset {
             Preset::Node => Some("npm"),
             Preset::Java | Preset::Kotlin => Some("java"),
             Preset::Python => Some("python3"),
             _ => None,
-        };
-        if let Some(tool) = requires {
-            y.raw("  preflight:");
-            y.line(
-                4,
-                &format!("requires: [{tool}]"),
-                "the server must have these; checked before the build",
-            );
         }
-        let build = match self.preset {
+    }
+
+    fn build(&self) -> Option<String> {
+        let name = &self.name;
+        match self.preset {
             Preset::Node => Some("[npm ci, npm run build]".to_string()),
             Preset::Go => Some(format!(
                 "CGO_ENABLED=0 GOOS=linux go build -o dist/{name} ."
@@ -309,75 +277,57 @@ impl NewDeployable {
             )),
             Preset::Java | Preset::Kotlin => Some("./gradlew installDist".to_string()),
             Preset::Python => None,
-        };
-        if let Some(build) = build {
-            y.raw("  build:");
-            y.raw("    run:");
-            y.raw("      # Runs here, in project; $SHIPDECK_VERSION holds the release's version.");
-            y.raw(&format!("      local: {build}"));
         }
-        y.raw("  pack:");
-        let binary = match self.preset {
-            Preset::Go | Preset::Dart | Preset::Bun => Some(format!("dist/{name}")),
-            Preset::Rust => Some(format!("target/release/{name}")),
-            _ => None,
-        };
-        if let Some(binary) = binary {
-            y.line(
-                4,
-                &format!("binary: {binary}"),
-                "what the build makes; checked against the server's CPU",
-            );
-        }
-        y.raw("    files:");
-        y.raw("      include:");
-        let project = match self.preset {
-            Preset::Node => Some("[dist, package.json, package-lock.json]".to_string()),
-            Preset::Java | Preset::Kotlin => Some(format!("[build/install/{name}]")),
-            Preset::Python => Some("[.]".to_string()),
-            _ => None,
-        };
-        match project {
-            Some(list) => y.line(
-                8,
-                &format!("project: {list}"),
-                "from project, at the same paths",
-            ),
-            None => y.line(
-                8,
-                "# project: [templates]",
-                "files from project, at the same paths",
-            ),
-        }
-        y.line(
-            8,
-            &format!("deploy: [{ENV_FILE}]"),
-            "files next to this shipdeck.yaml",
-        );
-        if self.preset == Preset::Python {
-            y.raw("      exclude:");
-            y.line(
-                8,
-                "project: [.venv, \"**/__pycache__\", \"**/*.pyc\"]",
-                "left out of include",
-            );
-        }
-        let setup: &[&str] = match self.preset {
-            Preset::Node => &["npm ci --omit=dev"],
-            Preset::Python => &[
-                "python3 -m venv .venv",
-                ".venv/bin/pip install -q -r requirements.txt",
+    }
+
+    fn files(&self) -> Vec<String> {
+        let name = &self.name;
+        let mut files: Vec<String> = match self.preset {
+            Preset::Node => vec![
+                "dist".into(),
+                "package.json".into(),
+                "package-lock.json".into(),
             ],
-            _ => &[],
+            Preset::Java | Preset::Kotlin => vec![format!("build/install/{name}")],
+            Preset::Python => vec![".".into()],
+            _ => Vec::new(),
         };
-        if !setup.is_empty() {
-            y.raw("  setup:");
-            y.raw("    run:");
-            y.raw("      # Runs on the server in the new release, before it goes live.");
-            y.raw("      server:");
-            for command in setup {
-                y.raw(&format!("        - {command}"));
+        files.push(ENV_FILE.into());
+        files
+    }
+
+    fn binary(&self) -> Option<String> {
+        match self.preset {
+            Preset::Go | Preset::Dart | Preset::Bun => Some(format!("dist/{}", self.name)),
+            Preset::Rust => Some(format!("target/release/{}", self.name)),
+            _ => None,
+        }
+    }
+
+    fn start(&self) -> Option<String> {
+        let name = &self.name;
+        match self.preset {
+            Preset::Node => Some("node dist/main.js".into()),
+            Preset::Java | Preset::Kotlin => Some(format!("build/install/{name}/bin/{name}")),
+            Preset::Python => Some(".venv/bin/python main.py".into()),
+            Preset::Go | Preset::Rust | Preset::Dart | Preset::Bun => None,
+        }
+    }
+
+    fn env(&self) -> Option<&'static str> {
+        match self.preset {
+            Preset::Node => Some("NODE_ENV: production"),
+            _ => None,
+        }
+    }
+
+    fn setup(&self) -> Option<String> {
+        match self.preset {
+            Preset::Node => Some("npm ci --omit=dev".into()),
+            Preset::Python => {
+                Some("python3 -m venv .venv && .venv/bin/pip install -r requirements.txt".into())
             }
+            _ => None,
         }
     }
 }
@@ -388,7 +338,7 @@ struct Yaml(String);
 
 impl Yaml {
     /// The column comments start at, when the value leaves room.
-    const COMMENT_AT: usize = 36;
+    const COMMENT_AT: usize = 40;
 
     fn raw(&mut self, line: &str) {
         self.0.push_str(line);
@@ -405,31 +355,29 @@ impl Yaml {
     }
 }
 
-/// Where the README lists every field.
-const DOCS: &str = concat!(env!("CARGO_PKG_REPOSITORY"), "#deployyaml");
-
 /// A YAML double-quoted scalar. JSON's string syntax is a subset of it.
 fn quote(text: &str) -> String {
     serde_json::Value::String(text.to_string()).to_string()
 }
 
-/// Why `name` cannot be a new deployable's folder, if it cannot.
+/// Why `name` cannot be a new deploy's folder, if it cannot.
 #[must_use]
 pub fn name_problem(root: &Path, name: &str) -> Option<String> {
-    // It names the unit and `/opt/<name>`, so it must suit both.
     if !crate::config::is_plain_name(name) || name.starts_with('.') {
         return Some("use letters, digits, `.`, `_` and `-`, not starting with `.`".to_string());
     }
     let folder = root.join(name);
-    config_file(&folder).map(|file| format!("{} already exists", file.display()))
+    if folder.exists() {
+        return Some(format!("{} already exists", folder.display()));
+    }
+    None
 }
 
-/// `project` as the new folder `root/name` sees it. Both paths must exist
-/// except the new folder itself.
+/// `project` as the new deploy file sees it, from `root`.
 ///
 /// # Errors
-/// Returns an error when either path is missing, not a folder, or on another drive.
-pub fn project_from(root: &Path, name: &str, project: &Path) -> Result<String> {
+/// Returns an error when either path is missing or not a folder.
+pub fn project_from(root: &Path, project: &Path) -> Result<String> {
     let root = root
         .canonicalize()
         .with_context(|| format!("{} is not a folder", root.display()))?;
@@ -441,20 +389,19 @@ pub fn project_from(root: &Path, name: &str, project: &Path) -> Result<String> {
     }
     if root.components().next() != project.components().next() {
         bail!(
-            "{} is on another drive than {}; a deploy folder reaches its project by a relative path",
+            "{} is on another drive than {}; a deploy file reaches its project by a relative path",
             project.display(),
             root.display()
         );
     }
-    // shipdeck.yaml writes paths with `/` on every OS.
-    let parts: Vec<String> = relative(&root.join(name), &project)
+    let parts: Vec<String> = relative(&root, &project)
         .components()
         .map(|part| part.as_os_str().to_string_lossy().into_owned())
         .collect();
     Ok(parts.join("/"))
 }
 
-/// The path from the folder `from` to `to`; both absolute and without `..`.
+/// The path from the folder `from` to `to`.
 #[must_use]
 pub fn relative(from: &Path, to: &Path) -> PathBuf {
     let from: Vec<Component> = from.components().collect();
@@ -473,36 +420,44 @@ pub fn relative(from: &Path, to: &Path) -> PathBuf {
     path
 }
 
-/// The new deployable's `shipdeck.yaml`, checked as a launch would check it.
+/// The new deploy file's text, checked as a launch would check it.
 ///
 /// # Errors
 /// Returns every problem the generated config has.
 pub fn check(root: &Path, new: &NewDeployable) -> Result<String, FileProblems> {
-    let folder = root.join(&new.name);
     let yaml = new.yaml();
-    Deployable::from_text(&folder, &folder.join(FILE_NAMES[0]), yaml.clone())?;
+    let file = root.join(DEPLOY_FILE);
+    parse_deploy(&yaml).map_err(|problems| FileProblems {
+        path: file.clone(),
+        source: Some(yaml.clone()),
+        problems,
+    })?;
     Ok(yaml)
 }
 
-/// Writes the folder: `shipdeck.yaml`, an empty `.env` and a `.gitignore`
-/// that keeps it out of git. Files already there are left alone, and an
-/// existing `shipdeck.yaml` is never replaced. Returns the files it wrote.
+/// Writes the project file, the deploy file, an empty `.env` and a
+/// `.gitignore`. Files already there are left alone.
 ///
 /// # Errors
-/// Returns an error when a config file is already there, or the folder or a file cannot be written.
+/// Returns an error when a config file is already there, or one cannot be
+/// written.
 pub fn write(root: &Path, name: &str, yaml: &str) -> Result<Vec<PathBuf>> {
-    let folder = root.join(name);
-    if let Some(file) = config_file(&folder) {
-        bail!("{} already exists", file.display());
+    let project_file = root.join(crate::config::PROJECT_NAMES[0]);
+    if project_file.exists() {
+        bail!("{} already exists", project_file.display());
     }
-    std::fs::create_dir_all(&folder).with_context(|| format!("creating {}", folder.display()))?;
-    let mut written = Vec::new();
-    for (file, text) in [
-        (FILE_NAMES[0], yaml),
-        (ENV_FILE, ""),
-        (".gitignore", ".env\n"),
-    ] {
-        let path = folder.join(file);
+    let deploy = root.join(DEPLOY_FILE);
+    let project_yaml = format!(
+        "# The project file: its deploys, by name.\n# Every field: {DOCS}\n\ndeploys:\n  {}: {}\n",
+        quote(name),
+        DEPLOY_FILE
+    );
+    std::fs::write(&project_file, project_yaml)
+        .with_context(|| format!("writing {}", project_file.display()))?;
+    std::fs::write(&deploy, yaml).with_context(|| format!("writing {}", deploy.display()))?;
+    let mut written = vec![project_file, deploy];
+    for (file, text) in [(ENV_FILE, ""), (".gitignore", ".env\n")] {
+        let path = root.join(file);
         if path.exists() {
             continue;
         }
@@ -512,6 +467,18 @@ pub fn write(root: &Path, name: &str, yaml: &str) -> Result<Vec<PathBuf>> {
     Ok(written)
 }
 
+/// The parsed deploy file, for callers that want it.
+///
+/// # Errors
+/// Returns every problem in the text.
+pub fn deploy_file(yaml: &str) -> Result<DeployFile, FileProblems> {
+    parse_deploy(yaml).map_err(|problems| FileProblems {
+        path: PathBuf::from(DEPLOY_FILE),
+        source: Some(yaml.to_string()),
+        problems,
+    })
+}
+
 #[cfg(test)]
-#[path = "init_test.rs"]
+#[path = "init_tests.rs"]
 mod tests;

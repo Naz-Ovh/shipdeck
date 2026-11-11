@@ -82,7 +82,7 @@ impl Server {
             return Ok((String::new(), None));
         }
         let out = out.check("pm2 jlist")?;
-        app_state(&out.stdout, &self.pm2_app).map_err(anyhow::Error::msg)
+        app_state(&out.stdout, self.process_name()).map_err(anyhow::Error::msg)
     }
 }
 

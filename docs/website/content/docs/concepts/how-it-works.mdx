@@ -3,8 +3,8 @@ title: How it works
 description: The engine, SSH agent, release lifecycle, and recovery boundaries.
 ---
 
-Shipdeck runs a CLI or terminal UI on your computer, an engine child process,
-and a matching Linux agent over SSH. Your app stays under its service manager.
+Shipdeck runs a CLI or terminal UI on your computer, an engine child process, and a matching
+Linux agent over SSH. Your apps stay under their process manager.
 
 ## Who does what
 
@@ -15,75 +15,75 @@ and a matching Linux agent over SSH. Your app stays under its service manager.
 | Protocol | Typed requests, progress, logs, events, and outcomes. |
 | Server agent | Files, backups, services, project locks, and event history. |
 
-The engine reuses an SSH session per endpoint. On each connection it checks
-the installed agent's major version. Same-major minor and patch differences are
-allowed. A newer agent major refuses the connection. A newer engine major clears
-older versions and installs its release. A missing agent is installed under
-`/opt/shipdeck/agent/v<version>/agent` as root, then started through sudo on an
-SSH channel.
+The engine reuses an SSH session per endpoint. On each connection it checks the installed
+agent's major version. Same-major minor and patch differences are allowed. A newer agent
+major refuses the connection. A newer engine major clears older versions and installs its
+release. A missing agent is installed under `/opt/shipdeck/agent/v<version>/agent` as root,
+then started through sudo on an SSH channel.
 
-The agent uses stdin/stdout for requests and stderr for diagnostics. It opens
-no port and exits on disconnect. The account needs root or password-free sudo;
-a missing right stops the connection before anything changes.
+The agent uses stdin/stdout for requests and stderr for diagnostics. It opens no port and
+exits on disconnect. The account needs root or password-free sudo; a missing right stops the
+connection before anything changes.
 
-If preparation or the handshake fails, the connection stops. The engine does
-not use an incompatible agent or a plain SSH fallback to bypass the rules. Your
-configured server commands still run as shell commands under the deploy user.
+If preparation or the handshake fails, the connection stops. The engine does not use an
+incompatible agent or a plain SSH fallback to bypass the rules. Your configured server
+commands still run as shell commands under the deploy user.
 
 ## Prepare before activation
 
-The engine builds locally and hashes selected files. The server hashes candidate
-files from the live release; matches can be copied instead of uploaded.
-Copied files are independent files, so preparing a release does not modify the
-old release. Verification checks the result before activation.
+The engine builds locally and hashes the selected files. The server hashes candidate files
+from the live release; matches can be copied instead of uploaded. Copied files are
+independent files, so preparing a release does not modify the old release. Verification
+checks the result before activation.
 
-The agent receives uploads on a separate SSH channel using a one-use ticket
-bound to the project lock. It checks size and checksum. Archive extraction
-checks paths, links, modes, entry counts, sizes, and file hashes.
+The agent receives uploads on a separate SSH channel using a one-use ticket bound to the
+project lock. It checks size and checksum. Archive extraction checks paths, links, modes,
+entry counts, sizes, and file hashes.
 
-The pipeline stages a new release, runs setup there, and saves a backup of the
-shipped files. Setup-generated dependencies are recreated when restoring a
-compressed backup. Your setup commands can affect databases or other outside
-state, so give them their own recovery plan.
+The pipeline stages a new release, runs `setup` there, and saves a backup of the uploaded
+files. Setup-generated dependencies are recreated when restoring a release from its backup.
+Your setup commands can affect databases or other outside state, so give them their own
+recovery plan.
 
 ## Activate and check
 
-The server creates a new symlink and renames it over `current`.
-Readers see a complete old or new release folder. Shipdeck then installs the
-saved service configuration, restarts services, and checks health.
+The server creates a new symlink and renames it over `current`. Readers see a complete old or
+new release folder. Shipdeck then installs the process files, restarts every process, and
+checks each app's health.
 
-The folder switch is atomic; restarts are separate actions and may cause
-downtime. In a monorepo, all apps share the folder switch, then each service
-restarts. Health failure follows the rollback policy and is never a success.
+The folder switch is atomic; restarts are separate actions and may cause downtime. In a
+deploy with several apps, all apps share the folder switch, then each process restarts.
+Health failure follows the rollback policy and is never a success.
 
-Manual rollback reads the chosen release's saved settings. An unpacked release
-can switch directly; a compressed backup is restored and set up first.
-Rollback restores app files and service settings, not database changes.
+Manual rollback reads the chosen release's `.shipdeck/settings.json`. An unpacked release can
+switch directly; a release kept only as its backup is restored and set up first. Rollback
+restores app files and the restored release's own setup state, not database changes.
 
 ## Locks and interrupted work
 
-A project lock covers deploy, rollback, cleanup, and service control. The
-connected agent holds the lock. Upload tickets require the same lock token.
-Configured server commands record a process lease; another operation refuses
-while that command is alive, even after an agent disconnect.
+A project lock covers deploy, rollback, cleanup, and service control. The connected agent
+holds the lock. Upload tickets require the same lock token. Configured server commands record
+a process lease; another operation refuses while that command is alive, even after an agent
+disconnect.
 
 The agent records numbered events in the SSH user's `~/.shipdeck/state.db`.
-`shipdeck events --after N` replays them; `shipdeck work` shows current facts,
-unfinished files, recent events, and an activation without a confirmed health pass.
+`shipdeck events --after N` replays them; `shipdeck work` shows current facts, unfinished
+files, recent events, and an activation without a confirmed health pass.
 
-Interrupted files stay for inspection. `work --cleanup` is explicit approval:
-the agent rechecks the reported paths and refuses live releases, other releases,
-backups, or paths outside the project. A lost connection during activation is
-an uncertain result. Reconnect and inspect services and the live release.
+Interrupted files stay for inspection. `work --cleanup` is explicit approval: the agent
+rechecks the reported paths and refuses live releases, other releases, backups, or paths
+outside the project. A lost connection during activation is an uncertain result. Reconnect
+and inspect services and the live release.
 
 ## Boundaries
 
-The agent runs as root because it manages protected files, systemd, and system
-dependencies. App and PM2 commands use an explicit service user. Deployment
-files keep the deploy user's ownership. Guided setup changes privileges only
-through its access choice. There is no detached worker to finish deployments
-after disconnect.
+The agent runs as root because it manages protected files, systemd, and system dependencies.
+App and PM2 commands use an explicit service user. Release files keep the deploy user's
+ownership. Guided setup changes privileges only through its access choice. There is no
+detached worker to finish deployments after disconnect.
 
-See [server layout](/docs/reference/server-layout),
-[security](/docs/concepts/security), and
+nginx management and oxmgr are parsed and checked, but not built: a deploy that uses either
+stops at preflight.
+
+See [server layout](/docs/reference/server-layout), [security](/docs/concepts/security), and
 [server access](/docs/guides/server-access) for the exact boundaries.

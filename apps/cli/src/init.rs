@@ -61,9 +61,9 @@ pub fn run(given: Given) -> Result<ExitCode> {
         println!("wrote {}", path.display());
     }
     println!(
-        "Fill in {}, then run: shipdeck {}",
-        root.join(&new.name).join(".env").display(),
-        root.display()
+        "Fill in {}, then run: shipdeck deploy {}",
+        root.join(".env").display(),
+        new.name
     );
     Ok(ExitCode::SUCCESS)
 }
@@ -164,7 +164,7 @@ fn answers(root: &Path, given: Given) -> Result<NewDeployable, Stop> {
         ),
         None => PathBuf::from("."),
     };
-    let project = init::project_from(root, &name, &project)?;
+    let project = init::project_from(root, &project)?;
     Ok(NewDeployable {
         name,
         preset,
@@ -215,7 +215,7 @@ impl fmt::Display for Shown<Manager> {
         match self.0 {
             Manager::Systemd => f.write_str("systemd  a unit installed and restarted with sudo"),
             Manager::Pm2 => f.write_str("pm2      runs as the SSH user, no sudo"),
-            Manager::Static => f.write_str("static   files served by nginx, no process"),
+            Manager::Oxmgr => f.write_str("oxmgr    parsed and checked; not built yet"),
         }
     }
 }

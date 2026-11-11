@@ -17,6 +17,7 @@ fn deployable(slug: &str, name: &str) -> DeployableInfo {
         port: 22,
         dir: format!("/opt/{slug}"),
         folder: format!("deploy/{slug}"),
+        apps: Vec::new(),
     }
 }
 
@@ -24,7 +25,7 @@ fn choices() -> Choices {
     Choices {
         trust_new_host: false,
         allow_unchanged: false,
-        on_failure: OnFailure::Rollback,
+        on_failure: None,
     }
 }
 
@@ -158,7 +159,10 @@ async fn a_deploy_says_how_it_ended() {
         let asked = engine.next().await;
         assert_eq!(asked["method"], "deploy/start");
         assert_eq!(asked["params"]["deployable"], "api");
-        assert_eq!(asked["params"]["on_failure"], "rollback");
+        assert!(
+            asked["params"].get("on_failure").is_none(),
+            "no flag sends no override"
+        );
         engine
             .answer(
                 &asked,
@@ -249,7 +253,7 @@ async fn an_unchanged_question_is_answered_from_the_flag() {
 #[tokio::test]
 async fn a_rollback_question_is_answered_from_the_flag() {
     let mut choices = choices();
-    choices.on_failure = OnFailure::Keep;
+    choices.on_failure = Some(OnFailure::Keep);
     let (mut console, mut engine) = FakeEngine::pair(choices);
     let script = tokio::spawn(async move {
         let asked = engine.next().await;

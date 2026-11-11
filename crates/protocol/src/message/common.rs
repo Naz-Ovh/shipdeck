@@ -142,9 +142,12 @@ pub struct DeployableInfo {
     /// `dir`: where the project lives on the server.
     #[serde(default)]
     pub dir: String,
-    /// The project's folder on this PC, where its `shipdeck.yaml` is.
+    /// The deploy file on this PC.
     #[serde(default)]
     pub folder: String,
+    /// The app names, in the order they run.
+    #[serde(default)]
+    pub apps: Vec<String>,
 }
 
 /// SSH's own port, for a project that does not say.

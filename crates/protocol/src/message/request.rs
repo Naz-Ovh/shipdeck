@@ -32,11 +32,14 @@ pub struct InitializeResult {
     pub capabilities: Vec<String>,
 }
 
-/// `workspace/open`: pick the folder of projects, and how to log in.
+/// `workspace/open`: pick the folder shipdeck runs in, and how to log in.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceOpen {
-    /// The folder whose subfolders each hold a `shipdeck.yaml`.
+    /// The folder shipdeck runs in: the project folder.
     pub root: String,
+    /// A deploy file named by `--shipdeckfile`; the project file is not read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shipdeckfile: Option<String>,
     pub login: Login,
     /// Server commands skip the login shell's startup files, on every server.
     #[serde(default)]

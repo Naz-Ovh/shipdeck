@@ -3,11 +3,11 @@ title: Server access
 description: The SSH user and service permissions.
 ---
 
-Shipdeck logs in as `ssh.user`. That user must already exist and accept your
-key or password. The first connection prepares the agent, so the account must
-be root or have password-free sudo (`NOPASSWD`). The agent then runs as root
-from `/opt/shipdeck/agent/v<version>/agent`. App and PM2 commands still run as
-the configured service user.
+Shipdeck logs in as `server.ssh.user`. That user must already exist and accept
+your key or password. The first connection prepares the agent, so the account
+must be root or have password-free sudo (`NOPASSWD`). The agent then runs as
+root from `/opt/shipdeck/agent/v<version>/agent`. App and PM2 commands still
+run as the configured user.
 
 ## Required permissions
 
@@ -15,31 +15,32 @@ the configured service user.
   The installer writes only under `/opt/shipdeck/agent` and removes older agent
   versions there. A rule limited to the five service commands cannot prepare or
   start the agent; root or full password-free sudo is required.
-- Write to the configured server folder, or permission to create it.
+- Write to `server.dir`, or permission to create it.
 - For **systemd**, permission to install the unit, reload systemd, enable,
-  restart, stop, start, and inspect its service and logs. Removing old systemd
-  apps in a monorepo also requires disabling their units.
-- For **PM2**, a usable PM2 installation for the service user (the SSH user by
-  default) and write access to the project folder. PM2 operations run as that
+  restart, stop, start, and inspect its journal. Removing a systemd process
+  from a later release also requires disabling its unit.
+- For **PM2**, a usable PM2 installation for the process user (the SSH user by
+  default) and write access to the deploy folder. PM2 operations run as that
   user through `runuser`, not as the root agent.
-- Read access to the release for `service.run_as`, if different from the SSH user.
+- Read access to the release for `systemd.user`, if different from the SSH user.
 
 Service commands use `sudo -n` for a non-root user: deployment never waits for a
 sudo prompt. Missing permissions stop preflight or the requested control action.
 
 The built-in systemd unit blocks access to home folders. Install a runtime
-system-wide or provide a custom unit if the service needs one from a home folder.
-PM2 runs as the service user (the SSH user by default) and can use that user's login environment.
+system-wide or provide a custom template if the process needs one from a home
+folder. PM2 runs as the process user (the SSH user by default) and can use that
+user's login environment.
 
 ## Server tools
 
 The agent install needs outbound HTTPS, `curl` or `wget`, `sha256sum`, `awk`,
 `tar`, `find`, `install`, `stat`, `chown`, `chmod`, `mktemp`, and either
 `flock` or `mkdir` for the install lock. It also needs `timeout`. Your app needs
-its own runtime and service manager. Preflight names missing tools before
+its own runtime and process manager. Preflight names missing tools before
 activation. If the account cannot run the required sudo commands, the
 connection stops with the account and the missing permission.
 
 Logging in as root runs file operations and your server commands as root.
 With another user, custom commands run as that user; they may explicitly invoke
-sudo if you wrote them that way. Treat `shipdeck.yaml` as executable code.
+sudo if you wrote them that way. Treat a deploy file as executable code.

@@ -10,7 +10,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use shipdeck_protocol::message::request::{SetupAccess, SetupReport};
 
-use crate::config::{Manager, Service};
+use crate::config::Manager;
 use crate::remote::{control_commands, sudo_commands};
 use crate::ssh::{Session, sh_quote};
 
@@ -53,6 +53,17 @@ pub fn raw_url(file: &str) -> String {
 #[path = "setup_test.rs"]
 mod tests;
 
+/// One process whose rights guided setup prepares.
+#[derive(Debug, Clone)]
+pub struct SetupProcess {
+    /// The systemd unit or PM2 app.
+    pub name: String,
+    /// The manager, or `None` for a static app.
+    pub manager: Option<Manager>,
+    /// The user that runs it.
+    pub user: String,
+}
+
 /// Prepares a server once: packages, the project folder, and sudo access.
 ///
 /// # Errors
@@ -60,15 +71,15 @@ mod tests;
 /// password, or a setup command fails.
 pub async fn guided(
     dir: &str,
-    services: &[Service],
+    processes: &[SetupProcess],
     session: &Arc<Session>,
     access: SetupAccess,
     sudo_password: Option<&str>,
 ) -> Result<SetupReport> {
-    if services.is_empty() {
-        bail!("guided setup has no service to prepare");
+    if processes.iter().all(|process| process.manager.is_none()) {
+        bail!("guided setup has no process to prepare");
     }
-    let script = guided_script(dir, services, access);
+    let script = guided_script(dir, processes, access);
     let input = sudo_password
         .filter(|password| !password.is_empty())
         .map(|password| format!("{password}\n"));
@@ -127,38 +138,40 @@ pub async fn guided(
 }
 
 /// The script guided setup runs; every value it carries is checked before.
-fn guided_script(dir: &str, services: &[Service], access: SetupAccess) -> String {
+fn guided_script(dir: &str, processes: &[SetupProcess], access: SetupAccess) -> String {
     let mut script = String::from(BASE_SCRIPT);
-    if has_manager(services, Manager::Systemd) {
+    if has_manager(processes, Manager::Systemd) {
         script.push_str("need systemctl systemd\n");
     }
     script.push_str(&PACKAGES_AND_DIR.replace("{dir}", &sh_quote(dir)));
-    if has_manager(services, Manager::Systemd) {
+    if has_manager(processes, Manager::Systemd) {
         match access {
             SetupAccess::Full => script.push_str(FULL_SUDO_SCRIPT),
             SetupAccess::Commands => {
-                script.push_str(&COMMAND_RULE.replace("{list}", &command_list(dir, services)));
+                script.push_str(&COMMAND_RULE.replace("{list}", &command_list(dir, processes)));
             }
         }
     }
-    if has_manager(services, Manager::Pm2) {
+    if has_manager(processes, Manager::Pm2) {
         script.push_str(PM2_SCRIPT);
     }
     script.push_str(FINAL_SCRIPT);
     script
 }
 
-fn has_manager(services: &[Service], manager: Manager) -> bool {
-    services.iter().any(|service| service.manager == manager)
+fn has_manager(processes: &[SetupProcess], manager: Manager) -> bool {
+    processes
+        .iter()
+        .any(|process| process.manager == Some(manager))
 }
 
 /// The sudoers entries for every systemd unit, in the script's here-doc.
-fn command_list(dir: &str, services: &[Service]) -> String {
+fn command_list(dir: &str, processes: &[SetupProcess]) -> String {
     let mut commands = Vec::new();
-    for service in services {
-        if service.manager == Manager::Systemd {
-            commands.extend(sudo_commands(dir, &service.name));
-            commands.extend(control_commands(&service.name));
+    for process in processes {
+        if process.manager == Some(Manager::Systemd) {
+            commands.extend(sudo_commands(dir, &process.name));
+            commands.extend(control_commands(&process.name));
         }
     }
     commands.join("\n")

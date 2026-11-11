@@ -4,37 +4,39 @@
 mod endpoint;
 mod handler;
 mod login;
+mod pool;
 mod shell_env;
+mod splitter;
 pub mod ssh_config;
 
 pub use endpoint::Endpoint;
 pub use login::{Login, PASSPHRASE_ENV, Question};
+pub use pool::Pool;
 pub use shell_env::ShellEnv;
+use splitter::{Lines, Splitter};
 
-use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
-use russh::client::{self, Handle};
+use russh::client::Handle;
 use russh::{ChannelMsg, Disconnect};
 use russh_sftp::client::SftpSession;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
-use tokio::sync::mpsc::UnboundedSender;
 
 use handler::Client;
 
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
-const UPLOAD_CHUNK: usize = 256 * 1024;
+pub(super) const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+pub(super) const UPLOAD_CHUNK: usize = 256 * 1024;
 /// A raw command, such as an agent probe, gets this long.
-const RAW_TIMEOUT: Duration = Duration::from_secs(15);
+pub(super) const RAW_TIMEOUT: Duration = Duration::from_secs(15);
 /// Starting the agent's two-way channel gets this long.
-const OPEN_TIMEOUT: Duration = Duration::from_secs(15);
+pub(super) const OPEN_TIMEOUT: Duration = Duration::from_secs(15);
 /// The whole mandatory agent preparation, download included.
-const AGENT_START_TIMEOUT: Duration = Duration::from_secs(180);
+pub(super) const AGENT_START_TIMEOUT: Duration = Duration::from_secs(180);
 /// How long a timed-out remote command gets between TERM and KILL.
-const TIMEOUT_GRACE: Duration = Duration::from_secs(3);
+pub(super) const TIMEOUT_GRACE: Duration = Duration::from_secs(3);
 
 /// Closes its channel when dropped. This is only a backstop: a channel close
 /// does not stop a non-PTY process, so limited commands also carry a remote
@@ -549,243 +551,6 @@ impl Session {
             .handle
             .disconnect(Disconnect::ByApplication, "bye", "en")
             .await;
-    }
-}
-
-/// One target's session, or `None` until the first connect. The async lock
-/// makes a second caller wait for the first connection instead of opening another.
-type Slot = Arc<tokio::sync::Mutex<Option<Arc<Session>>>>;
-
-/// Opens sessions on demand and keeps them for the rest of the run.
-pub struct Pool {
-    login: Login,
-    asker: UnboundedSender<Question>,
-    secrets: Arc<login::Secrets>,
-    slots: Mutex<HashMap<Endpoint, Slot>>,
-    /// False with `--no-shell-env`, whatever `ssh.shell_env` says.
-    shell_env: bool,
-}
-
-impl Pool {
-    #[must_use]
-    pub fn new(login: Login, asker: UnboundedSender<Question>) -> Self {
-        Self {
-            login,
-            asker,
-            secrets: Arc::default(),
-            slots: Mutex::default(),
-            shell_env: true,
-        }
-    }
-
-    /// Runs commands without the login shell's environment on every server.
-    #[must_use]
-    pub fn without_shell_env(mut self) -> Self {
-        self.shell_env = false;
-        self
-    }
-
-    /// Unlocks an encrypted key with `passphrase` instead of asking.
-    #[must_use]
-    pub fn with_passphrase(self, passphrase: Option<String>) -> Self {
-        if let Some(passphrase) = passphrase {
-            self.secrets.give_passphrase(&passphrase);
-        }
-        self
-    }
-
-    pub fn login(&self) -> &Login {
-        &self.login
-    }
-
-    /// The open session for `target`, connecting first if needed. Two callers
-    /// for the same target share one connection attempt.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the server cannot be reached or the login is refused.
-    ///
-    /// # Panics
-    ///
-    /// Panics when the pool's slot lock is poisoned.
-    pub async fn get(&self, target: &Endpoint) -> Result<Arc<Session>> {
-        self.get_with(target, |_| {}, |_, _| {}).await
-    }
-
-    /// Opens a connection, naming each slow phase to `status`.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the server cannot be reached or the login is refused.
-    ///
-    /// # Panics
-    ///
-    /// Panics when the pool's slot lock is poisoned.
-    pub async fn get_with<F, G>(
-        &self,
-        target: &Endpoint,
-        status: F,
-        bytes: G,
-    ) -> Result<Arc<Session>>
-    where
-        F: Fn(&str) + Sync,
-        G: Fn(u64, u64) + Sync,
-    {
-        let slot = {
-            let mut slots = self.slots.lock().expect("pool lock");
-            slots.entry(target.clone()).or_default().clone()
-        };
-        let mut slot = slot.lock().await;
-        if let Some(session) = slot.as_ref()
-            && !session.is_closed()
-        {
-            return Ok(session.clone());
-        }
-        let session = Arc::new(self.connect(target, &status, &bytes).await?);
-        *slot = Some(session.clone());
-        Ok(session)
-    }
-
-    async fn connect(
-        &self,
-        target: &Endpoint,
-        status: &(dyn Fn(&str) + Sync),
-        bytes: &(dyn Fn(u64, u64) + Sync),
-    ) -> Result<Session> {
-        let label = target.label();
-        // Errors name the alias and the address it stands for.
-        let place = if target.is_alias() {
-            format!("{label} ({})", target.address())
-        } else {
-            label.clone()
-        };
-        let config = Arc::new(client::Config {
-            keepalive_interval: Some(Duration::from_secs(15)),
-            keepalive_max: 4,
-            ..Default::default()
-        });
-        let client = Client::new(target.host.clone(), target.port, self.asker.clone());
-        let rejected = client.rejection();
-        status("opening the SSH connection");
-        let connecting = client::connect(config, (target.host.as_str(), target.port), client);
-        let mut handle = match tokio::time::timeout(CONNECT_TIMEOUT, connecting).await {
-            Err(_) => bail!(
-                "connecting to {place} timed out after {}s",
-                CONNECT_TIMEOUT.as_secs()
-            ),
-            Ok(Err(err)) => {
-                if let Some(reason) = rejected.lock().expect("rejection lock").take() {
-                    bail!("{reason}");
-                }
-                return Err(anyhow!(err).context(format!("connecting to {place}")));
-            }
-            Ok(Ok(handle)) => handle,
-        };
-        status("logging in");
-        login::authenticate(&mut handle, target, &self.login, &self.asker, &self.secrets).await?;
-        status("connected");
-        let mut session = Session {
-            handle,
-            label,
-            user: target.user.clone(),
-            shell_env: ShellEnv::Off,
-            prelude: String::new(),
-            agent: Mutex::new(None),
-        };
-        if self.shell_env && target.shell_env {
-            status("reading the login shell's environment");
-            session.load_shell_env().await;
-        }
-        session
-            .start_agent_with(status, bytes)
-            .await
-            .context("preparing the shipdeck agent")?;
-        Ok(session)
-    }
-
-    /// Closes the session for `target`, if one is open; the next `get`
-    /// connects again.
-    ///
-    /// # Panics
-    ///
-    /// Panics when the pool's slot lock is poisoned.
-    pub async fn close(&self, target: &Endpoint) {
-        let slot = self.slots.lock().expect("pool lock").get(target).cloned();
-        if let Some(slot) = slot
-            && let Some(session) = slot.lock().await.take()
-        {
-            session.close().await;
-        }
-    }
-
-    /// Closes every open session; the next `get` connects again.
-    ///
-    /// # Panics
-    ///
-    /// Panics when the pool's slot lock is poisoned.
-    pub async fn close_all(&self) {
-        let slots: Vec<_> = self
-            .slots
-            .lock()
-            .expect("pool lock")
-            .values()
-            .cloned()
-            .collect();
-        for slot in slots {
-            if let Some(session) = slot.lock().await.take() {
-                session.close().await;
-            }
-        }
-    }
-}
-
-/// Splits a byte stream into lines.
-#[derive(Default)]
-struct Splitter {
-    partial: Vec<u8>,
-}
-
-impl Splitter {
-    fn feed(&mut self, bytes: &[u8], mut emit: impl FnMut(&str)) {
-        for &byte in bytes {
-            if byte == b'\n' {
-                emit(String::from_utf8_lossy(&self.partial).trim_end());
-                self.partial.clear();
-            } else {
-                self.partial.push(byte);
-            }
-        }
-    }
-
-    fn flush(&mut self, mut emit: impl FnMut(&str)) {
-        if !self.partial.is_empty() {
-            emit(String::from_utf8_lossy(&self.partial).trim_end());
-            self.partial.clear();
-        }
-    }
-}
-
-/// Splits a byte stream into lines, keeping the whole text too.
-#[derive(Default)]
-struct Lines {
-    split: Splitter,
-    /// Every byte, decoded once at the end: a packet can end inside a
-    /// character.
-    all: Vec<u8>,
-}
-
-impl Lines {
-    fn feed(&mut self, bytes: &[u8], emit: impl FnMut(&str)) {
-        self.all.extend_from_slice(bytes);
-        self.split.feed(bytes, emit);
-    }
-
-    fn flush(&mut self, emit: impl FnMut(&str)) {
-        self.split.flush(emit);
-    }
-
-    fn text(&self) -> String {
-        String::from_utf8_lossy(&self.all).into_owned()
     }
 }
 

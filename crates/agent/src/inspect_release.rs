@@ -51,7 +51,7 @@ fn contents_sync(request: &AgentReleaseContentsRequest) -> Result<AgentReleaseCo
                 entry.header().size()?,
                 entry.link_name()?,
             );
-            if info.path == "release.json" {
+            if info.path == ".shipdeck/release.json" {
                 let mut text = String::new();
                 entry.take(MAX_READ).read_to_string(&mut text)?;
                 manifest = Some(text);
@@ -62,7 +62,7 @@ fn contents_sync(request: &AgentReleaseContentsRequest) -> Result<AgentReleaseCo
     } else {
         let release = crate::paths::real_release(&root, &request.release)?;
         walk(&release, &release, &mut files)?;
-        if let Ok(text) = fs::read_to_string(release.join("release.json")) {
+        if let Ok(text) = fs::read_to_string(release.join(".shipdeck/release.json")) {
             manifest = Some(text);
         }
     }

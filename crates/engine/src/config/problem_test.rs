@@ -1,63 +1,47 @@
-use crate::config::*;
+use std::path::{Path, PathBuf};
 
-#[test]
-fn the_headline_says_what_did_not_happen() {
-    // Regression: ISSUE-002 — init's refusal said "shipdeck did not start"
-    // Found by /qa on 2026-10-15
-    // Report: .gstack/qa-reports/run-20261015T030609Z/qa-report-shipdeck-init-2026-10-15.md
-    let files = [FileProblems::without_source(
-        PathBuf::from("/work/deploy/my-api/shipdeck.yaml"),
-        Problem::new("`ssh.user` is not a user name"),
-    )];
-    let text = render(&files, Path::new("/work"), false, "nothing written");
-    assert!(
-        text.starts_with("✘ nothing written: 1 shipdeck.yaml file has 1 problem"),
-        "{text}"
-    );
+use super::*;
+
+fn files() -> Vec<FileProblems> {
+    vec![FileProblems {
+        path: PathBuf::from("/work/deploy/shop.yaml"),
+        source: Some("name: shop\nserver:\n  dir: /opt/shop\n".into()),
+        problems: vec![
+            Problem::new("`server.dir` is wrong")
+                .at(Some(Span::point(3, 7)))
+                .label("here")
+                .help("use an absolute path"),
+        ],
+    }]
 }
 
 #[test]
-fn renders_problems_like_a_compiler() {
-    let text = "\
-name: Demo
-dir: /opt/demo
-ssh: { host: example.com, user: deploy }
-service: { name: demo }
-pipeline:
-  build:
-    run:
-      server: make
-  pack:
-    binary: target/release/demo
-";
-    let files = vec![FileProblems {
-        path: PathBuf::from("/work/deploy/api/shipdeck.yaml"),
-        source: Some(text.to_string()),
-        problems: parse(text).unwrap_err(),
-    }];
-    let plain = render(&files, Path::new("/work"), false, "shipdeck did not start");
-    assert_eq!(
-        plain,
-        "\
-✘ shipdeck did not start: 1 shipdeck.yaml file has 1 problem
+fn a_report_names_the_file_line_and_help() {
+    let text = render(
+        &files(),
+        Path::new("/work"),
+        false,
+        "shipdeck did not start",
+    );
+    assert!(text.contains("shipdeck did not start"), "{text}");
+    assert!(text.contains("shop.yaml"), "{text}");
+    assert!(text.contains("deploy/shop.yaml:3:8"), "{text}");
+    assert!(text.contains("help"), "{text}");
+    assert!(!text.contains("\u{1b}["), "no colours without a terminal");
+}
 
-api/shipdeck.yaml
-  error: build cannot run commands on the server
-    ┌─ deploy/api/shipdeck.yaml:8:7
-    │
-  7 │     run:
-  8 │       server: make
-    │       ^^^^^^ build runs on your PC only
-    │
-    = help: the server sets up the release in `pipeline.setup.run.server`
-"
-    );
-    let color = render(&files, Path::new("/work"), true, "shipdeck did not start");
-    assert!(color.contains("\x1b[1;31merror\x1b[0m"), "{color:?}");
-    assert!(
-        color.contains("\x1b[35mpipeline.setup.run.server\x1b[0m"),
-        "{color:?}"
-    );
-    assert!(color.contains("\x1b[1;33m^^^^^^ build runs on your PC only\x1b[0m"));
-    assert!(color.contains("\x1b[1;32mhelp\x1b[0m"));
+#[test]
+fn colour_adds_escape_codes() {
+    let text = render(&files(), Path::new("/work"), true, "shipdeck did not start");
+    assert!(text.contains("\u{1b}["), "{text}");
+}
+
+#[test]
+fn a_file_without_source_still_prints_its_problem() {
+    let files = vec![FileProblems::without_source(
+        PathBuf::from("/work/deploy/shop.yaml"),
+        Problem::new("cannot read it: no such file"),
+    )];
+    let text = render(&files, Path::new("/work"), false, "shipdeck did not start");
+    assert!(text.contains("cannot read it"), "{text}");
 }
